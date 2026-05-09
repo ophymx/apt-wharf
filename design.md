@@ -59,7 +59,14 @@ Versioning: `YYYY.MM.DD.N` — easy to reason about, no manual bumps.
 
 Key rotation strategy: the bootstrap keyring ships **current + next** keys, so
 a future rotation only requires switching the active signer after a soak
-period — installed clients already trust the next key.
+period — installed clients already trust the next key. Concretely, point
+`signing.next_pubkey_file` at the public half of the upcoming key; the
+loader checks that its fingerprint differs from the active key and bundles
+both into the keyring.
+
+For local trial / first-run UX, `signing.auto_generate: true` materializes
+a fresh unencrypted RSA key at `signing.key_file` on first start. Production
+deployments should generate the key offline and copy it in.
 
 ## URL layout
 
@@ -84,7 +91,10 @@ preserved so adding more is non-structural.
 
 Pure Go, no CGO.
 
-- **`github.com/goreleaser/nfpm/v2`** — building the bootstrap `.deb`.
+- **`github.com/goreleaser/nfpm/v2`** — used as a library to build the
+  bootstrap `.deb` at runtime, and as a CLI (via `nfpm.yaml`) to package
+  signpost itself.
+- **`github.com/google/go-github/v86`** — GitHub Releases API client.
 - **`pault.ag/go/debian`** — reading upstream `.deb` files and parsing
   control stanzas (saves rolling our own ar+tar+control parser).
 - **`github.com/ProtonMail/go-crypto/openpgp`** — in-process clearsign for
@@ -99,14 +109,15 @@ Pure Go, no CGO.
 ```
 state/
   sources/<source-id>.json           # latest known state per source
-  sources/<source-id>.history.jsonl  # optional append-only log of changes
   bootstrap.json                     # input-hash + current version
   bootstrap/<version>.deb            # cached bootstrap .deb bytes
 ```
 
-Per-source state captures: discovered URL, version, hashes (sha256/sha1/md5),
-size, full control stanza for `Packages`, last-checked / last-changed
-timestamps.
+Per-source state captures: the discoverer's opaque change-detection token
+(`discovery_token`), discovered URL, full control stanza for `Packages`,
+asset size, asset SHA256, and last-checked / last-changed timestamps. For
+github_release the `release_id` is also stored as a human-readable mirror
+of the token.
 
 These files are the **only** durable state. Everything served — `Packages`,
 `Release`, `InRelease`, the bootstrap `.deb` bytes, the redirect map — is
@@ -178,7 +189,7 @@ consistent view of metadata + redirects for the rest of the request.
                write state/sources/<id>.json (tmp + rename)
          on error at any sub-step: log, leave prior state file untouched.
   3. Bootstrap rebuild check (input-hash compare):
-       inputs = base_url ⊕ bootstrap.* ⊕ suites ⊕ pubkey-bytes
+       inputs = base_url ⊕ bootstrap.* ⊕ suite.* ⊕ keyring-bytes
        if hash(inputs) == state/bootstrap.json.input_hash: reuse cached .deb
        else: nfpm-build, bump version, persist state/bootstrap.json + .deb.
   4. Build new snapshot:
@@ -187,7 +198,6 @@ consistent view of metadata + redirects for the rest of the request.
        sign → InRelease (clearsigned) + Release.gpg (detached)
        compose files map + redirects map.
   5. current.Store(newSnapshot).
-  6. Append history entries for changed sources (best-effort).
 [release refresh lock]
 ```
 
@@ -249,6 +259,11 @@ discovery:
 - Token preference order: final resolved URL → `ETag` → `Last-Modified`.
 - If none of those are available, token is empty and refresher always fetches
   (cheap behind the caching proxy).
+- The HEAD also sends `x-amz-checksum-mode: ENABLED`. If the resolved host
+  is on AWS S3 (`*.amazonaws.com` with an `s3` label) and the response
+  carries `x-amz-checksum-sha256`, that value is base64-decoded into the
+  Probe's asset digest so the refresher can skip the streaming hash.
+  Non-S3 hosts and malformed checksums silently fall back to streaming.
 
 ### Built-in: `github_release`
 
@@ -263,7 +278,10 @@ discovery:
 - `GET /repos/<repo>/releases/latest` (or list+filter for prereleases).
 - Token = release `id`; URL = matching asset's `browser_download_url`.
 - Sends `If-None-Match` with cached API `ETag` — most ticks return 304.
-- Optional `GITHUB_TOKEN` env for higher rate limits.
+- Per-credential token bucket honors `X-RateLimit-*` headers; the
+  unauthenticated bucket is shared across sources without a token.
+- Optional GitHub token via `discovery.token_env` / `discovery.token_file`
+  (per-source) or the global `github.token_env` / `github.token_file`.
 
 ### Built-in: `external`
 
@@ -277,21 +295,51 @@ discovery:
   timeout: 30s
 ```
 
-- Stitcher executes `command` with a clean environment (allowlist:
-  `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, plus per-source `env` config).
+- signpost executes `command` with a clean environment (allowlist:
+  `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and their lowercase variants,
+  plus per-source `env` config). `command[0]` must be an absolute path
+  because PATH is not in the allowlist.
 - **stdin**: one JSON object — `{"prev": {"url": "...", "token": "..."}}`
   (`prev` omitted on cold start).
 - **stdout**: one JSON object — either `{"url": "...", "token": "..."}` or
   `{"unchanged": true}`.
-- **stderr**: free-form, captured into signpost logs.
+- **stderr**: free-form, captured into signpost logs at DEBUG on success
+  and INFO on error; the trailing 1 KiB also rides the returned error.
 - **exit code**: 0 success, non-zero error (source holds at previous state,
   error logged).
-- Hard kill on timeout.
+- Hard kill on timeout: the child runs in its own process group on unix
+  and the entire group is SIGKILLed when `timeout` elapses, so wrapper
+  shells can't shield long-running grandchildren. `WaitDelay` caps how
+  long Wait can hang on dangling pipes as a belt-and-suspenders.
 
 External commands return discovery metadata only. They do **not** download
 the `.deb` themselves — the refresher owns all HTTP, hashing, and error
 handling. If a vendor needs auth headers to fetch, that goes in a separate
 fetch-options config, not in the script.
+
+#### Secrets convention
+
+For external sources, signpost never needs the secret content — only the
+external tool does. The convention is to pass **file paths** through
+`env:`, not values:
+
+```yaml
+env:
+  BAZ_TOKEN_FILE: "/var/lib/signpost/secrets/baz.token"
+```
+
+This keeps secrets out of signpost's memory, the child's `/proc/<pid>/environ`,
+and any structured logs that capture exec arguments. signpost doesn't enforce
+the convention because non-secret env values (e.g. `BAZ_REGION: us-west-2`)
+are still legitimate.
+
+#### Go helper package
+
+Tools written in Go can import `github.com/ophymx/apt-signpost/external` for
+the wire-format types (`Input`, `Probe`, `Output`), `Output.Validate`, and a
+`Run(ProbeFunc) error` helper that wires `os.Stdin`/`os.Stdout` to a
+SIGINT/SIGTERM-cancellable context. `cmd/discover-zoom` ships as a working
+example covering the full contract.
 
 ## GPG / signing
 
@@ -307,18 +355,23 @@ Signing is in-process via `github.com/ProtonMail/go-crypto/openpgp`. No
 external `gpg` binary, no `gpg-agent`. Smartcard / hardware-key support is
 explicitly out of scope.
 
-## Suggested package layout
+## Package layout
 
 ```
 cmd/signpost/         main, flag/config wiring
-internal/config/      YAML schema, validation
-internal/source/      Discoverer interface + built-in impls
-internal/refresh/     poll loop, change detection, control extraction
+cmd/discover-zoom/    sample external discoverer (Zoom Linux client)
+external/             public Go helper for tools implementing the external contract
+internal/config/      YAML schema, validation, env interpolation
+internal/source/      Discoverer interface + built-in impls (github_release, latest_url, external)
+internal/refresh/     poll loop, change detection, control extraction, snapshot composition
 internal/index/       Packages, Release, InRelease writers
-internal/sign/        openpgp wrapper (key load, clearsign, detach)
+internal/sign/        openpgp wrapper (key load, optional auto-generate, clearsign, detach)
 internal/bootstrap/   nfpm-driven keyring/.sources package builder
 internal/store/       per-source JSON state read/write
+internal/fetch/       range-fetch + control extraction from upstream .debs
 internal/server/      http: static metadata, redirector, /release/... endpoints
+nfpm.yaml + packaging/  nfpm config, systemd unit, and maintainer scripts
+                      for packaging signpost itself as a .deb
 ```
 
 ## Configuration
@@ -331,14 +384,19 @@ schema semantics that aren't obvious from the example.
 
 ```
 repository:    # Origin/Label/base_url for the published Release file and bootstrap .sources
-suites:        # map of suite name → { codename, description, components, architectures }
+suite:         # the single served suite: { codename, description, architectures }
 bootstrap:     # bootstrap .deb metadata (package_name, maintainer, description)
-signing:       # key_file + at most one of passphrase_env | passphrase_file
-server:        # listen address, access log mode
+signing:       # key_file (+ optional auto_generate, next_pubkey_file, passphrase_*)
+server:        # listen address
 refresh:       # interval, jitter, http_timeout
+github:        # global github token + rate-limit budget shared across github_release sources
 paths:         # state_dir
 sources:       # map of source name → per-source config (see below)
 ```
+
+The MVP serves a single suite; the URL layout (`/dists/<codename>/...`)
+preserves room for adding more without restructuring. Components are not
+configurable in v1 — every package lands under `main`.
 
 ### Per-source shape
 
@@ -346,19 +404,18 @@ sources:       # map of source name → per-source config (see below)
 sources:
   <source-name>:                   # key matches ^[a-z0-9][a-z0-9._-]*$
     enabled: true                  # default
-    suite: stable                  # default; must exist in suites:
-    component: main                # default; must be in that suite's components
     discovery: { type: ..., ... }  # required, discriminated union (below)
-    fetch:                         # optional
-      headers: { ... }             # sent on the .deb fetch
 ```
 
 Sources are a map keyed by name (not a list with an `id` field) — the YAML
-parser rejects duplicates in strict mode, and the structure mirrors `suites:`.
-The Debian package name, version, architecture, and full control stanza all
-come from introspecting the downloaded `.deb` — they are not declared in
-config. The map key is purely an internal handle for state filenames and pool
-paths.
+parser rejects duplicates in strict mode. The Debian package name, version,
+architecture, and full control stanza all come from introspecting the
+downloaded `.deb` — they are not declared in config. The map key is purely
+an internal handle for state filenames and pool paths.
+
+`sources:` must contain at least one entry; signpost refuses to start
+otherwise (this is the desired fail-fast behavior on a freshly-installed
+default config).
 
 ### Discovery union
 
@@ -366,24 +423,25 @@ paths.
 validated against the matching variant. In Go terms:
 
 ```go
-type Discovery interface{ Type() string }
-
 type LatestURL struct { URL string }
+
 type GitHubRel struct {
     Repo string; Asset string         // asset is a Go regex over asset names
     IncludePrerelease bool
-    TokenEnv string                   // optional
+    TokenEnv string                   // optional; overrides github.token_env
+    TokenFile string                  // optional; mutually exclusive with TokenEnv
 }
-type External  struct {
+
+type External struct {
     Command []string
-    Timeout time.Duration
-    Env     map[string]string         // explicit allowlist passed to the child
+    Timeout time.Duration             // default 30s when omitted
+    Env     map[string]string         // explicit allowlist layered on top of HTTP_PROXY/HTTPS_PROXY/NO_PROXY
 }
 ```
 
-A wrapper type implements `UnmarshalYAML`, peeks at `type`, and decodes into
-the right concrete struct. Unknown `type` values fail config validation at
-startup.
+In the actual implementation, `Discovery` is a single flat struct holding
+the union of fields; the validator branches on `type` and rejects fields
+that don't belong. Unknown `type` values fail config validation at startup.
 
 ### Env var interpolation
 
@@ -392,28 +450,42 @@ tokens that should not sit in plaintext config (`GITHUB_TOKEN`, vendor
 download tokens, external-command env). Missing vars fail loud at startup,
 not silently to empty string.
 
-Scope: applied during YAML decode for all `string` and `[]string` fields.
-Not applied inside `discovery.external.command` argv values — commands can
-do their own env expansion if they want, which keeps the contract clean.
+Scope: applied to the raw config bytes before YAML decode, so it is uniform
+across every value — including `discovery.external.command` argv. Tools that
+want literal `${VAR}` strings should pass them through `env:` rather than
+embedding them in command arguments.
 
 ### Validation rules (enforced at startup, hard-fail)
 
 - `repository.base_url` is a valid `http`/`https` URL with no path or
   trailing slash.
+- `suite.codename` matches `^[a-z0-9][a-z0-9._-]*$`; `suite.architectures`
+  is non-empty and does not contain `"all"` (handled implicitly).
+- `bootstrap.package_name` matches Debian's package-name grammar.
+- `signing.key_file` is an absolute path. When `signing.auto_generate` is
+  false (the default), the file must exist and pass the secure-file check
+  (mode `0400`, owned by the service user). With `auto_generate: true`,
+  the check is deferred until after first-start key materialization.
+- `signing.passphrase_env` and `signing.passphrase_file` are mutually
+  exclusive; the file (when used) passes the secure-file check.
+- `signing.next_pubkey_file` (when set) is absolute; fingerprint distinctness
+  vs. the active key is enforced at key-load time.
+- `server.listen` is non-empty.
+- `refresh.interval > 0`, `refresh.jitter >= 0`, `refresh.http_timeout > 0`.
+- `github.token_env` and `github.token_file` are mutually exclusive; the
+  file (when used) passes the secure-file check.
+- `paths.state_dir` is an absolute path.
+- `sources` has at least one entry.
 - Each source map key matches `^[a-z0-9][a-z0-9._-]*$`. Uniqueness is
   enforced by the YAML parser (strict mode rejects duplicate keys).
-- `suite` referenced by every source exists in `suites`.
-- `component` referenced by every source is in that suite's `components`.
-- `discovery.type` is one of the registered types.
-- `signing.passphrase_env` and `signing.passphrase_file` are mutually
-  exclusive.
-- `signing.key_file` exists, mode `0400`, owned by the service user.
-- All durations parse via `time.ParseDuration`.
-- For `latest_url`: `url` is a valid http(s) URL.
+- `discovery.type` is one of `github_release`, `latest_url`, `external`.
+  Type-specific fields belonging to other variants are rejected.
+- For `latest_url`: `url` is a valid http(s) URL with a host.
 - For `github_release`: `repo` matches `^[^/]+/[^/]+$`; `asset` compiles
-  as a Go regex.
-- For `external`: `command` non-empty, `command[0]` exists and is
-  executable.
+  as a Go regex; `token_env`/`token_file` are mutually exclusive.
+- For `external`: `command` is non-empty; `command[0]` is absolute, exists,
+  is not a directory, and has at least one executable bit. `timeout >= 0`.
+  `env` keys do not contain `=` or `\0`.
 
 ### Intentionally not configurable in v1
 
@@ -428,10 +500,22 @@ do their own env expansion if they want, which keeps the contract clean.
 
 - **Operational surface** — CLI for "force refresh source X", "show state",
   "rotate key"? `/status` HTTP endpoint for monitoring? Not yet decided.
-- **Bootstrap keyring contents during rotation** — confirm "current + next"
-  is the policy (vs. "current only" or "current + previous").
-- **`Architecture: all` packaging** — bootstrap is `all`, so it should land
-  in every `binary-<arch>/Packages`. Confirm vs. a separate `binary-all`
-  listed only in `Components`.
+  Today there is `signpost check --source NAME` for one-off probe+fetch
+  verification, and `signpost serve` for the daemon — nothing else.
 - **Failure visibility** — how do persistent discovery failures surface?
-  Log only, structured metric, or also reflected in a `/status` endpoint?
+  Today: structured slog records on every per-source error and a tick-level
+  summary log. No `/status` endpoint, no metrics. Revisit when an operator
+  asks for it.
+- **Multi-suite support** — the on-disk URL layout (`/dists/<codename>/`)
+  preserves room, but the config schema is single-suite (`suite:`). Promote
+  to a map when there's a concrete need.
+- **Multi-component support** — every package currently lands under `main`.
+  Same story: layout-ready, schema-deferred.
+
+Resolved since the initial design:
+
+- **Bootstrap keyring contents during rotation** — current + next, exposed
+  as `signing.next_pubkey_file`. Loader rejects same-fingerprint pubkeys.
+- **`Architecture: all` packaging** — fans into every
+  `binary-<arch>/Packages` listed in `suite.architectures`; no separate
+  `binary-all` listing.
