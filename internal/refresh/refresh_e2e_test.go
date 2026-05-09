@@ -143,7 +143,7 @@ func TestRefresh_EndToEnd(t *testing.T) {
 		Store:       st,
 		Fetcher:     fetcher,
 		HTTPClient:  httpClient,
-		Discoverers: map[string]*source.GitHubReleaseDiscoverer{"vendor-widget-amd64": disc},
+		Discoverers: map[string]source.Discoverer{"vendor-widget-amd64": disc},
 		Holder:      holder,
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

@@ -82,15 +82,21 @@ func (s *Source) IsEnabled() bool {
 	return *s.Enabled
 }
 
-// Discovery is the github_release variant. The discriminated union scaffolding
-// from design.md is deferred until v1 introduces additional types.
+// Discovery is a flat-union over the supported discovery types. Type-specific
+// fields not relevant to the chosen Type must be unset; validateDiscovery
+// enforces that mutual exclusion.
 type Discovery struct {
-	Type              string `yaml:"type"`
+	Type string `yaml:"type"`
+
+	// github_release fields
 	Repo              string `yaml:"repo"`
 	Asset             string `yaml:"asset"`
 	IncludePrerelease bool   `yaml:"include_prerelease"`
 	TokenEnv          string `yaml:"token_env"`
 	TokenFile         string `yaml:"token_file"`
+
+	// latest_url fields
+	URL string `yaml:"url"`
 }
 
 type Duration time.Duration

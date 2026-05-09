@@ -83,7 +83,7 @@ paths:
 # an empty sources map. Source names appear in state filenames, log lines,
 # and pool paths and must match ^[a-z0-9][a-z0-9._-]*$.
 #
-# MVP supports a single discovery type: github_release. Uncomment and adapt:
+# Supported discovery types: github_release, latest_url. Uncomment and adapt:
 sources: {}
 #
 # sources:
@@ -95,3 +95,13 @@ sources: {}
 #       asset: 'foo_.*_amd64\.deb'              # Go regex over release asset names
 #       include_prerelease: false
 #       # token_env: "GITHUB_TOKEN"             # overrides github.token_env for this source
+#
+#   vendor-bar:
+#     discovery:
+#       type: "latest_url"
+#       # A stable URL that either returns the current .deb directly or 302s
+#       # to the versioned download. signpost HEADs it each tick; token
+#       # comes from the resolved URL after redirects, falling back to ETag
+#       # then Last-Modified. When the resolved URL lives on AWS S3, the
+#       # x-amz-checksum-sha256 metadata is used to skip the streaming hash.
+#       url: "https://downloads.vendor-bar.example/bar-latest_amd64.deb"

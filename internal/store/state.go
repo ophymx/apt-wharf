@@ -23,17 +23,23 @@ import (
 )
 
 // SourceState is the per-source on-disk record. Schema mirrors design-mvp.md.
+//
+// DiscoveryToken is the opaque "has it changed" string returned by whichever
+// discoverer owns the source — release id for github_release, resolved-URL or
+// validator for latest_url. ReleaseID is kept for github-flavored visibility
+// in the JSON but the refresher reads DiscoveryToken first.
 type SourceState struct {
-	Name        string    `json:"id"` // "id" preserved for human readability
-	ReleaseID   int64     `json:"release_id"`
-	ReleaseTag  string    `json:"release_tag"`
-	AssetURL    string    `json:"asset_url"`
-	AssetSize   int64     `json:"asset_size"`
-	AssetSHA256 string    `json:"asset_sha256"`
-	APIEtag     string    `json:"api_etag,omitempty"`
-	Control     string    `json:"control"`
-	LastChecked time.Time `json:"last_checked"`
-	LastChanged time.Time `json:"last_changed"`
+	Name           string    `json:"id"` // "id" preserved for human readability
+	DiscoveryToken string    `json:"discovery_token,omitempty"`
+	ReleaseID      int64     `json:"release_id,omitempty"`
+	ReleaseTag     string    `json:"release_tag,omitempty"`
+	AssetURL       string    `json:"asset_url"`
+	AssetSize      int64     `json:"asset_size"`
+	AssetSHA256    string    `json:"asset_sha256"`
+	APIEtag        string    `json:"api_etag,omitempty"`
+	Control        string    `json:"control"`
+	LastChecked    time.Time `json:"last_checked"`
+	LastChanged    time.Time `json:"last_changed"`
 }
 
 // BootstrapState records the cached bootstrap .deb's identity. The .deb bytes

@@ -27,7 +27,7 @@ type Refresher struct {
 	store       *store.Store
 	fetcher     *fetch.Fetcher
 	httpClient  *http.Client
-	discoverers map[string]*source.GitHubReleaseDiscoverer
+	discoverers map[string]source.Discoverer
 
 	holder      *Holder
 	tickMu      sync.Mutex // single writer; fires-while-held are dropped
@@ -45,7 +45,7 @@ type Options struct {
 	Store       *store.Store
 	Fetcher     *fetch.Fetcher
 	HTTPClient  *http.Client
-	Discoverers map[string]*source.GitHubReleaseDiscoverer
+	Discoverers map[string]source.Discoverer
 	Holder      *Holder
 	Parallelism int
 	Logger      *slog.Logger
@@ -262,15 +262,16 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 
 	now := time.Now().UTC()
 	state := &store.SourceState{
-		Name:        name,
-		ReleaseTag:  res.Probe.ReleaseTag,
-		AssetURL:    res.Probe.URL,
-		AssetSize:   fr.Size,
-		AssetSHA256: sha,
-		APIEtag:     res.Probe.APIEtag,
-		Control:     string(fr.Control),
-		LastChecked: now,
-		LastChanged: now,
+		Name:           name,
+		DiscoveryToken: res.Probe.Token,
+		ReleaseTag:     res.Probe.ReleaseTag,
+		AssetURL:       res.Probe.URL,
+		AssetSize:      fr.Size,
+		AssetSHA256:    sha,
+		APIEtag:        res.Probe.APIEtag,
+		Control:        string(fr.Control),
+		LastChecked:    now,
+		LastChanged:    now,
 	}
 	if rid := releaseIDFromToken(res.Probe.Token); rid != 0 {
 		state.ReleaseID = rid
@@ -288,8 +289,12 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 }
 
 // tokenFromState reconstructs the Probe token from the persisted state.
-// For github_release the token is the release ID; we store it as int.
+// Prefers the opaque DiscoveryToken; falls back to the legacy ReleaseID for
+// state files written before that field was introduced.
 func tokenFromState(s *store.SourceState) string {
+	if s.DiscoveryToken != "" {
+		return s.DiscoveryToken
+	}
 	if s.ReleaseID == 0 {
 		return ""
 	}

@@ -222,9 +222,20 @@ func validateSources(c *Config) error {
 }
 
 func validateDiscovery(sourceName string, d *Discovery) error {
-	if d.Type != "github_release" {
-		return fmt.Errorf("source %s: discovery.type %q is not supported (MVP supports github_release)",
+	switch d.Type {
+	case "github_release":
+		return validateGitHubRelease(sourceName, d)
+	case "latest_url":
+		return validateLatestURL(sourceName, d)
+	default:
+		return fmt.Errorf("source %s: discovery.type %q is not supported (supported: github_release, latest_url)",
 			sourceName, d.Type)
+	}
+}
+
+func validateGitHubRelease(sourceName string, d *Discovery) error {
+	if d.URL != "" {
+		return fmt.Errorf("source %s: discovery.url is not valid for type github_release", sourceName)
 	}
 	if !githubRepoPattern.MatchString(d.Repo) {
 		return fmt.Errorf("source %s: discovery.repo %q must match owner/name", sourceName, d.Repo)
@@ -249,6 +260,29 @@ func validateDiscovery(sourceName string, d *Discovery) error {
 			fmt.Sprintf("source %s: discovery.token_file", sourceName)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateLatestURL(sourceName string, d *Discovery) error {
+	if d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
+		d.TokenEnv != "" || d.TokenFile != "" {
+		return fmt.Errorf(
+			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file are not valid for type latest_url",
+			sourceName)
+	}
+	if d.URL == "" {
+		return fmt.Errorf("source %s: discovery.url is required for type latest_url", sourceName)
+	}
+	u, err := url.Parse(d.URL)
+	if err != nil {
+		return fmt.Errorf("source %s: discovery.url %q: %w", sourceName, d.URL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("source %s: discovery.url %q must be http or https", sourceName, d.URL)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("source %s: discovery.url %q is missing host", sourceName, d.URL)
 	}
 	return nil
 }

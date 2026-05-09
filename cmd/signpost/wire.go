@@ -19,11 +19,11 @@ type Wired struct {
 	Signer         *sign.Signer
 	Store          *store.Store
 	Fetcher        *fetch.Fetcher
-	Discoverers    map[string]*source.GitHubReleaseDiscoverer
-	HTTPClient     *http.Client
-	GlobalToken    *config.Secret // may be nil
+	Discoverers     map[string]source.Discoverer
+	HTTPClient      *http.Client
+	GlobalToken     *config.Secret            // may be nil
 	PerSourceTokens map[string]*config.Secret // may be empty
-	BucketRegistry *source.Registry
+	BucketRegistry  *source.Registry
 }
 
 // Wire reads secrets, loads the signing key, and builds discoverers. It does
@@ -73,44 +73,49 @@ func Wire(cfg *config.Config) (*Wired, error) {
 	}
 
 	registry := source.NewRegistry(cfg.GitHub.RateLimit.UnauthenticatedPerHour, cfg.GitHub.RateLimit.AuthenticatedPerHour)
-	discoverers := map[string]*source.GitHubReleaseDiscoverer{}
+	discoverers := map[string]source.Discoverer{}
 	perSrcTokens := map[string]*config.Secret{}
 
 	for name, src := range cfg.Sources {
 		if !src.IsEnabled() {
 			continue
 		}
-		var tok *config.Secret
-		if src.Discovery.TokenEnv != "" || src.Discovery.TokenFile != "" {
-			tok, err = config.LoadSecret(src.Discovery.TokenEnv, src.Discovery.TokenFile,
-				fmt.Sprintf("source %s discovery.token_env", name),
-				fmt.Sprintf("source %s discovery.token_file", name))
+		switch src.Discovery.Type {
+		case "github_release":
+			tok, err := loadDiscoveryToken(name, src, globalTok)
 			if err != nil {
 				return nil, err
 			}
-		} else {
-			tok = globalTok
+			var tokBytes []byte
+			if tok != nil {
+				tokBytes = tok.Value
+			}
+			bucket := registry.BucketFor(tokBytes)
+			bucketID := registry.CredentialID(tokBytes)
+			client := source.NewGitHubClient(httpClient, tokBytes)
+			d, err := source.NewGitHubReleaseDiscoverer(
+				src.Discovery.Repo,
+				src.Discovery.Asset,
+				src.Discovery.IncludePrerelease,
+				bucket,
+				bucketID,
+				client,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("source %s: %w", name, err)
+			}
+			discoverers[name] = d
+			perSrcTokens[name] = tok
+		case "latest_url":
+			d, err := source.NewLatestURLDiscoverer(src.Discovery.URL, httpClient)
+			if err != nil {
+				return nil, fmt.Errorf("source %s: %w", name, err)
+			}
+			discoverers[name] = d
+		default:
+			// validateDiscovery already rejects unknown types; this is defensive.
+			return nil, fmt.Errorf("source %s: unsupported discovery.type %q", name, src.Discovery.Type)
 		}
-		var tokBytes []byte
-		if tok != nil {
-			tokBytes = tok.Value
-		}
-		bucket := registry.BucketFor(tokBytes)
-		bucketID := registry.CredentialID(tokBytes)
-		client := source.NewGitHubClient(httpClient, tokBytes)
-		d, err := source.NewGitHubReleaseDiscoverer(
-			src.Discovery.Repo,
-			src.Discovery.Asset,
-			src.Discovery.IncludePrerelease,
-			bucket,
-			bucketID,
-			client,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("source %s: %w", name, err)
-		}
-		discoverers[name] = d
-		perSrcTokens[name] = tok
 	}
 
 	st := store.New(cfg.Paths.StateDir)
@@ -126,6 +131,17 @@ func Wire(cfg *config.Config) (*Wired, error) {
 		PerSourceTokens: perSrcTokens,
 		BucketRegistry:  registry,
 	}, nil
+}
+
+// loadDiscoveryToken resolves the per-source token, falling back to the global
+// one when the source declares neither token_env nor token_file.
+func loadDiscoveryToken(name string, src *config.Source, global *config.Secret) (*config.Secret, error) {
+	if src.Discovery.TokenEnv == "" && src.Discovery.TokenFile == "" {
+		return global, nil
+	}
+	return config.LoadSecret(src.Discovery.TokenEnv, src.Discovery.TokenFile,
+		fmt.Sprintf("source %s discovery.token_env", name),
+		fmt.Sprintf("source %s discovery.token_file", name))
 }
 
 // Zero best-effort wipes secret material owned by w.

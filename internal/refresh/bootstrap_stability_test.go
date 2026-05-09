@@ -84,7 +84,7 @@ func TestRefresh_BootstrapVersionStableAcrossTicks(t *testing.T) {
 		Cfg: cfg, Signer: signer, Store: st,
 		Fetcher:     fetch.New(httpClient),
 		HTTPClient:  httpClient,
-		Discoverers: map[string]*source.GitHubReleaseDiscoverer{"widget": disc},
+		Discoverers: map[string]source.Discoverer{"widget": disc},
 		Holder:      &Holder{},
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
