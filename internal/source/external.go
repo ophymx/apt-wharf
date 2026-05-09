@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/ophymx/apt-signpost/external"
 )
 
 // envAllowlist names process env vars that are forwarded to external
@@ -64,21 +66,6 @@ func NewExternalDiscoverer(command []string, timeout time.Duration, env map[stri
 	}, nil
 }
 
-type externalInput struct {
-	Prev *externalProbe `json:"prev,omitempty"`
-}
-
-type externalProbe struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
-}
-
-type externalOutput struct {
-	URL       string `json:"url,omitempty"`
-	Token     string `json:"token,omitempty"`
-	Unchanged bool   `json:"unchanged,omitempty"`
-}
-
 func (d *ExternalDiscoverer) Probe(ctx context.Context, in ProbeInput) (*ProbeResult, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, d.Timeout)
 	defer cancel()
@@ -92,9 +79,9 @@ func (d *ExternalDiscoverer) Probe(ctx context.Context, in ProbeInput) (*ProbeRe
 	setProcAttrs(cmd)
 	cmd.WaitDelay = 2 * time.Second
 
-	payload := externalInput{}
+	payload := external.Input{}
 	if in.Prev != nil {
-		payload.Prev = &externalProbe{URL: in.Prev.URL, Token: in.Prev.Token}
+		payload.Prev = &external.Probe{URL: in.Prev.URL, Token: in.Prev.Token}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -121,7 +108,7 @@ func (d *ExternalDiscoverer) Probe(ctx context.Context, in ProbeInput) (*ProbeRe
 		return nil, fmt.Errorf("external %s: %w", d.Command[0], runErr)
 	}
 
-	out := externalOutput{}
+	out := external.Output{}
 	trimmed := bytes.TrimSpace(stdoutBuf)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("external %s: empty stdout", d.Command[0])
@@ -130,6 +117,9 @@ func (d *ExternalDiscoverer) Probe(ctx context.Context, in ProbeInput) (*ProbeRe
 		return nil, fmt.Errorf("external %s: parse stdout: %w (raw=%q)",
 			d.Command[0], err, snippet(trimmed))
 	}
+	if err := out.Validate(); err != nil {
+		return nil, fmt.Errorf("external %s: %w", d.Command[0], err)
+	}
 
 	if out.Unchanged {
 		if in.Prev == nil {
@@ -137,10 +127,6 @@ func (d *ExternalDiscoverer) Probe(ctx context.Context, in ProbeInput) (*ProbeRe
 				d.Command[0])
 		}
 		return &ProbeResult{Probe: *in.Prev, Unchanged: true}, nil
-	}
-
-	if out.URL == "" || out.Token == "" {
-		return nil, fmt.Errorf("external %s: response must include both url and token", d.Command[0])
 	}
 
 	res := &ProbeResult{Probe: Probe{URL: out.URL, Token: out.Token}}

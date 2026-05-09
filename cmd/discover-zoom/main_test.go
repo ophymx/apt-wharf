@@ -1,13 +1,14 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ophymx/apt-signpost/external"
 )
 
 const sampleMetadata = `{
@@ -23,56 +24,52 @@ const sampleMetadata = `{
   }
 }`
 
-func newMetaServer(t *testing.T, body string, status int) *httptest.Server {
+// withMetaServer spins up a fake Zoom metadata endpoint and points the
+// package-level metadataURL/httpTimeout at it for the duration of the test.
+// Tests must not run in parallel because of the shared package state.
+func withMetaServer(t *testing.T, body string, status int) {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
 	}))
+	origURL, origTimeout := metadataURL, httpTimeout
+	metadataURL = srv.URL
+	httpTimeout = time.Second
+	t.Cleanup(func() {
+		metadataURL = origURL
+		httpTimeout = origTimeout
+		srv.Close()
+	})
 }
 
-func decodeOutput(t *testing.T, b []byte) output {
-	t.Helper()
-	var out output
-	if err := json.Unmarshal(b, &out); err != nil {
-		t.Fatalf("decode output %q: %v", b, err)
-	}
-	return out
-}
+func TestDiscover_ColdStartEmitsURLAndToken(t *testing.T) {
+	withMetaServer(t, sampleMetadata, http.StatusOK)
 
-func TestColdStartEmitsURLAndToken(t *testing.T) {
-	srv := newMetaServer(t, sampleMetadata, http.StatusOK)
-	defer srv.Close()
-
-	var stdout bytes.Buffer
-	if err := run(strings.NewReader(""), &stdout, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second); err != nil {
-		t.Fatalf("run: %v", err)
+	got, err := discover(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
 	}
-	got := decodeOutput(t, stdout.Bytes())
 	if got.Token != "6.5.7.3298" {
 		t.Errorf("Token = %q, want 6.5.7.3298", got.Token)
 	}
 	if got.URL != "https://zoom.us/client/6.5.7.3298/zoom_amd64.deb" {
-		t.Errorf("URL = %q, want substituted asset URL", got.URL)
+		t.Errorf("URL = %q, want substituted production asset URL", got.URL)
 	}
 	if got.Unchanged {
 		t.Errorf("Unchanged = true on cold start")
 	}
 }
 
-func TestUnchangedWhenPrevTokenMatches(t *testing.T) {
-	srv := newMetaServer(t, sampleMetadata, http.StatusOK)
-	defer srv.Close()
+func TestDiscover_UnchangedWhenPrevTokenMatches(t *testing.T) {
+	withMetaServer(t, sampleMetadata, http.StatusOK)
 
-	stdin := strings.NewReader(`{"prev":{"url":"...","token":"6.5.7.3298"}}`)
-	var stdout bytes.Buffer
-	if err := run(stdin, &stdout, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second); err != nil {
-		t.Fatalf("run: %v", err)
+	prev := &external.Probe{URL: "...", Token: "6.5.7.3298"}
+	got, err := discover(context.Background(), prev)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
 	}
-	got := decodeOutput(t, stdout.Bytes())
 	if !got.Unchanged {
 		t.Errorf("Unchanged = false, want true (token matches)")
 	}
@@ -81,17 +78,14 @@ func TestUnchangedWhenPrevTokenMatches(t *testing.T) {
 	}
 }
 
-func TestChangedWhenPrevTokenDiffers(t *testing.T) {
-	srv := newMetaServer(t, sampleMetadata, http.StatusOK)
-	defer srv.Close()
+func TestDiscover_ChangedWhenPrevTokenDiffers(t *testing.T) {
+	withMetaServer(t, sampleMetadata, http.StatusOK)
 
-	stdin := strings.NewReader(`{"prev":{"url":"...","token":"6.5.6.0000"}}`)
-	var stdout bytes.Buffer
-	if err := run(stdin, &stdout, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second); err != nil {
-		t.Fatalf("run: %v", err)
+	prev := &external.Probe{URL: "...", Token: "6.5.6.0000"}
+	got, err := discover(context.Background(), prev)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
 	}
-	got := decodeOutput(t, stdout.Bytes())
 	if got.Unchanged {
 		t.Errorf("Unchanged = true, want false (token differs)")
 	}
@@ -100,15 +94,10 @@ func TestChangedWhenPrevTokenDiffers(t *testing.T) {
 	}
 }
 
-func TestStatusFalseIsError(t *testing.T) {
-	srv := newMetaServer(t,
-		`{"status": false, "errorMessage": "rate limited"}`,
-		http.StatusOK)
-	defer srv.Close()
+func TestDiscover_StatusFalseIsError(t *testing.T) {
+	withMetaServer(t, `{"status": false, "errorMessage": "rate limited"}`, http.StatusOK)
 
-	var stdout bytes.Buffer
-	err := run(strings.NewReader(""), &stdout, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second)
+	_, err := discover(context.Background(), nil)
 	if err == nil {
 		t.Fatalf("expected error on status=false")
 	}
@@ -117,56 +106,27 @@ func TestStatusFalseIsError(t *testing.T) {
 	}
 }
 
-func TestNon2xxIsError(t *testing.T) {
-	srv := newMetaServer(t, "boom", http.StatusServiceUnavailable)
-	defer srv.Close()
-
-	var stdout bytes.Buffer
-	if err := run(strings.NewReader(""), &stdout, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second); err == nil {
+func TestDiscover_Non2xxIsError(t *testing.T) {
+	withMetaServer(t, "boom", http.StatusServiceUnavailable)
+	if _, err := discover(context.Background(), nil); err == nil {
 		t.Fatalf("expected error on 503")
 	}
 }
 
-func TestInvalidVersionRejected(t *testing.T) {
-	srv := newMetaServer(t,
+func TestDiscover_InvalidVersionRejected(t *testing.T) {
+	withMetaServer(t,
 		`{"status": true, "result": {"downloadVO": {"zoom": {"version": "../etc/passwd"}}}}`,
 		http.StatusOK)
-	defer srv.Close()
-
-	var stdout bytes.Buffer
-	err := run(strings.NewReader(""), &stdout, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second)
-	if err == nil {
+	if _, err := discover(context.Background(), nil); err == nil {
 		t.Fatalf("expected error on bogus version")
 	}
 }
 
-func TestMissingVersionRejected(t *testing.T) {
-	srv := newMetaServer(t,
+func TestDiscover_MissingVersionRejected(t *testing.T) {
+	withMetaServer(t,
 		`{"status": true, "result": {"downloadVO": {"zoom": {}}}}`,
 		http.StatusOK)
-	defer srv.Close()
-
-	var stdout bytes.Buffer
-	if err := run(strings.NewReader(""), &stdout, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second); err == nil {
+	if _, err := discover(context.Background(), nil); err == nil {
 		t.Fatalf("expected error on missing version")
-	}
-}
-
-func TestAssetURLMustHaveSubstitution(t *testing.T) {
-	if err := run(strings.NewReader(""), &bytes.Buffer{}, "http://x", "no-substitution-here", time.Second); err == nil {
-		t.Fatalf("expected error when asset URL has no %%s")
-	}
-}
-
-func TestStdinJSONErrorReported(t *testing.T) {
-	srv := newMetaServer(t, sampleMetadata, http.StatusOK)
-	defer srv.Close()
-
-	if err := run(strings.NewReader("{not json"), &bytes.Buffer{}, srv.URL,
-		"https://zoom.us/client/%s/zoom_amd64.deb", time.Second); err == nil {
-		t.Fatalf("expected error on malformed stdin JSON")
 	}
 }
