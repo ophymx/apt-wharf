@@ -83,8 +83,8 @@ paths:
 # an empty sources map. Source names appear in state filenames, log lines,
 # and pool paths and must match ^[a-z0-9][a-z0-9._-]*$.
 #
-# Supported discovery types: github_release, latest_url, external. Uncomment
-# and adapt:
+# Supported discovery types: github_release, latest_url, json_url, external.
+# Uncomment and adapt:
 sources: {}
 #
 # sources:
@@ -106,6 +106,18 @@ sources: {}
 #       # then Last-Modified. When the resolved URL lives on AWS S3, the
 #       # x-amz-checksum-sha256 metadata is used to skip the streaming hash.
 #       url: "https://downloads.vendor-bar.example/bar-latest_amd64.deb"
+#
+#   vendor-zoom:
+#     discovery:
+#       type: "json_url"
+#       # GET this endpoint, parse the JSON response, extract the token via
+#       # gjson, render the asset URL by interpolating {token} or any
+#       # {gjson.path}. Absorbs vendor download endpoints that publish JSON
+#       # metadata (Discord, Slack, Zoom, Cypress, Postman, ...) without
+#       # needing an external shim binary. Body is capped at 1 MiB.
+#       url: "https://zoom.us/rest/download?os=linux"
+#       token_path: "result.downloadVO.zoom.version"
+#       asset_url: "https://zoom.us/client/{token}/zoom_amd64.deb"
 #
 #   vendor-baz:
 #     discovery:

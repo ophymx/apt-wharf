@@ -228,17 +228,20 @@ func validateDiscovery(sourceName string, d *Discovery) error {
 		return validateGitHubRelease(sourceName, d)
 	case "latest_url":
 		return validateLatestURL(sourceName, d)
+	case "json_url":
+		return validateJSONURL(sourceName, d)
 	case "external":
 		return validateExternal(sourceName, d)
 	default:
-		return fmt.Errorf("source %s: discovery.type %q is not supported (supported: github_release, latest_url, external)",
+		return fmt.Errorf("source %s: discovery.type %q is not supported (supported: github_release, latest_url, json_url, external)",
 			sourceName, d.Type)
 	}
 }
 
 func validateGitHubRelease(sourceName string, d *Discovery) error {
-	if d.URL != "" || len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
-		return fmt.Errorf("source %s: discovery.url/command/timeout/env are not valid for type github_release", sourceName)
+	if d.URL != "" || d.TokenPath != "" || d.AssetURL != "" ||
+		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
+		return fmt.Errorf("source %s: discovery.url/token_path/asset_url/command/timeout/env are not valid for type github_release", sourceName)
 	}
 	if !githubRepoPattern.MatchString(d.Repo) {
 		return fmt.Errorf("source %s: discovery.repo %q must match owner/name", sourceName, d.Repo)
@@ -270,9 +273,10 @@ func validateGitHubRelease(sourceName string, d *Discovery) error {
 func validateLatestURL(sourceName string, d *Discovery) error {
 	if d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
 		d.TokenEnv != "" || d.TokenFile != "" ||
+		d.TokenPath != "" || d.AssetURL != "" ||
 		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
 		return fmt.Errorf(
-			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/command/timeout/env are not valid for type latest_url",
+			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/token_path/asset_url/command/timeout/env are not valid for type latest_url",
 			sourceName)
 	}
 	if d.URL == "" {
@@ -291,11 +295,42 @@ func validateLatestURL(sourceName string, d *Discovery) error {
 	return nil
 }
 
+func validateJSONURL(sourceName string, d *Discovery) error {
+	if d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
+		d.TokenEnv != "" || d.TokenFile != "" ||
+		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
+		return fmt.Errorf(
+			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/command/timeout/env are not valid for type json_url",
+			sourceName)
+	}
+	if d.URL == "" {
+		return fmt.Errorf("source %s: discovery.url is required for type json_url (the JSON metadata endpoint)", sourceName)
+	}
+	u, err := url.Parse(d.URL)
+	if err != nil {
+		return fmt.Errorf("source %s: discovery.url %q: %w", sourceName, d.URL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("source %s: discovery.url %q must be http or https", sourceName, d.URL)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("source %s: discovery.url %q is missing host", sourceName, d.URL)
+	}
+	if d.TokenPath == "" {
+		return fmt.Errorf("source %s: discovery.token_path is required for type json_url (gjson path resolving to the change-detection token)", sourceName)
+	}
+	if d.AssetURL == "" {
+		return fmt.Errorf("source %s: discovery.asset_url is required for type json_url (URL template; {token} resolves to token_path's value, {gjson.path} interpolates other JSON fields)", sourceName)
+	}
+	return nil
+}
+
 func validateExternal(sourceName string, d *Discovery) error {
 	if d.URL != "" || d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
-		d.TokenEnv != "" || d.TokenFile != "" {
+		d.TokenEnv != "" || d.TokenFile != "" ||
+		d.TokenPath != "" || d.AssetURL != "" {
 		return fmt.Errorf(
-			"source %s: discovery.url/repo/asset/include_prerelease/token_env/token_file are not valid for type external",
+			"source %s: discovery.url/repo/asset/include_prerelease/token_env/token_file/token_path/asset_url are not valid for type external",
 			sourceName)
 	}
 	if len(d.Command) == 0 {

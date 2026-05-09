@@ -99,6 +99,8 @@ Pure Go, no CGO.
   bootstrap `.deb` at runtime, and as a CLI (via `nfpm.yaml`) to package
   signpost itself.
 - **`github.com/google/go-github/v86`** — GitHub Releases API client.
+- **`github.com/tidwall/gjson`** — path expressions over JSON metadata
+  responses for the `json_url` discoverer.
 - **`pault.ag/go/debian`** — reading upstream `.deb` files and parsing
   control stanzas (saves rolling our own ar+tar+control parser).
 - **`github.com/ProtonMail/go-crypto/openpgp`** — in-process clearsign for
@@ -297,6 +299,28 @@ discovery:
 - Optional GitHub token via `discovery.token_env` / `discovery.token_file`
   (per-source) or the global `github.token_env` / `github.token_file`.
 
+### Built-in: `json_url`
+
+```yaml
+discovery:
+  type: json_url
+  url: https://zoom.us/rest/download?os=linux
+  token_path: result.downloadVO.zoom.version
+  asset_url: https://zoom.us/client/{token}/zoom_amd64.deb
+```
+
+- HTTP `GET` against the metadata endpoint; response body is capped at 1 MiB.
+- `token_path` is a [gjson](https://github.com/tidwall/gjson) path resolved
+  against the response. Its string form becomes the change-detection token.
+- `asset_url` is a URL template. `{token}` substitutes the resolved
+  `token_path` value; any other `{gjson.path}` interpolates an arbitrary
+  field from the same response. The rendered URL must be `http`/`https` or
+  the probe fails (defense against `file://` from a hostile JSON).
+- Absorbs vendor download endpoints that publish JSON metadata
+  (Discord, Slack, Zoom, Cypress, Postman, ...) without needing an
+  external shim binary. `cmd/discover-zoom` is now redundant for the
+  Zoom case — the same mapping fits in five lines of YAML.
+
 ### Built-in: `external`
 
 Escape hatch for vendors with bespoke discovery needs. Language-agnostic
@@ -376,7 +400,7 @@ cmd/signpost/         main, flag/config wiring
 cmd/discover-zoom/    sample external discoverer (Zoom Linux client)
 external/             public Go helper for tools implementing the external contract
 internal/config/      YAML schema, validation, env interpolation
-internal/source/      Discoverer interface + built-in impls (github_release, latest_url, external)
+internal/source/      Discoverer interface + built-in impls (github_release, latest_url, json_url, external)
 internal/refresh/     poll loop, change detection, control extraction, snapshot composition
 internal/index/       Packages, Release, InRelease writers
 internal/sign/        openpgp wrapper (key load, optional auto-generate, clearsign, detach)

@@ -95,8 +95,14 @@ type Discovery struct {
 	TokenEnv          string `yaml:"token_env"`
 	TokenFile         string `yaml:"token_file"`
 
-	// latest_url fields
+	// latest_url and json_url share the URL field — the upstream HTTP
+	// endpoint to GET. For latest_url it's the asset URL itself; for
+	// json_url it's the metadata endpoint that returns JSON.
 	URL string `yaml:"url"`
+
+	// json_url fields
+	TokenPath string `yaml:"token_path"`
+	AssetURL  string `yaml:"asset_url"`
 
 	// external fields
 	Command []string          `yaml:"command"`

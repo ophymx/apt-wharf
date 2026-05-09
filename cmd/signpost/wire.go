@@ -118,6 +118,17 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 				return nil, fmt.Errorf("source %s: %w", name, err)
 			}
 			discoverers[name] = d
+		case "json_url":
+			d, err := source.NewLatestJSONDiscoverer(
+				src.Discovery.URL,
+				src.Discovery.TokenPath,
+				src.Discovery.AssetURL,
+				httpClient,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("source %s: %w", name, err)
+			}
+			discoverers[name] = d
 		case "external":
 			d, err := source.NewExternalDiscoverer(
 				src.Discovery.Command,
