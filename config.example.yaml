@@ -1,0 +1,95 @@
+# apt-signpost example configuration.
+#
+# Schema notes, discovery-union semantics, env var interpolation, and the full
+# list of validation rules are documented in design.md (Configuration section).
+
+# ---- Repository identity --------------------------------------------------
+repository:
+  origin: "Acme"                          # Release: Origin
+  label: "Acme APT"                       # Release: Label
+  base_url: "https://apt.acme.example"    # public root, used in bootstrap .sources
+
+# ---- Suites ---------------------------------------------------------------
+# Keys are suite names. With just "stable" this is short; the structure
+# scales to multiple suites without rework.
+suites:
+  stable:
+    codename: "stable"                    # Release: Codename
+    description: "Acme stable channel"    # Release: Description
+    components: ["main"]
+    architectures: ["amd64", "arm64"]
+    # "all"-arch packages are emitted into every binary-<arch>/Packages
+    # listed above; no separate config needed.
+
+# ---- Bootstrap package ----------------------------------------------------
+bootstrap:
+  package_name: "acme-archive-keyring"    # apt install <this>
+  maintainer: "Acme Ops <ops@acme.example>"
+  description: |
+    Acme APT repository signing key and sources list.
+  # Generated payload (no need to declare files):
+  #   /usr/share/keyrings/<package_name>.gpg
+  #   /etc/apt/sources.list.d/<package_name>.sources   (deb822, Signed-By the keyring)
+  # Versioning is automatic: YYYY.MM.DD.N
+
+# ---- Signing --------------------------------------------------------------
+signing:
+  key_file: "/var/lib/signpost/secring.gpg"
+  # Pick at most one passphrase source. Omit both for an unencrypted key.
+  passphrase_env: "STITCHER_GPG_PASSPHRASE"
+  # passphrase_file: "/var/lib/signpost/passphrase"
+  # Startup enforces key_file mode 0400 and ownership match.
+
+# ---- HTTP server ----------------------------------------------------------
+server:
+  listen: ":8080"
+  # access_log: stdout | none   (default: stdout)
+
+# ---- Refresh loop ---------------------------------------------------------
+refresh:
+  interval: "1h"
+  jitter: "5m"
+  http_timeout: "60s"
+  # No per-source overrides in v1; can add later if a source proves noisy.
+
+# ---- Filesystem paths -----------------------------------------------------
+paths:
+  state_dir: "/var/lib/signpost/state"
+  # No public_dir: the served repository lives in memory and is rebuilt
+  # from state_dir at startup and after each refresh tick.
+
+# ---- Sources --------------------------------------------------------------
+# Keys are source names. Uniqueness is enforced by the YAML parser (strict
+# mode rejects duplicate keys). Names appear in state filenames, log lines,
+# and pool paths, so they must match ^[a-z0-9][a-z0-9._-]*$.
+sources:
+
+  vendor-foo-amd64:
+    # enabled: true        # default
+    # suite: "stable"      # default; must exist in suites:
+    # component: "main"    # default; must be in suites.<suite>.components
+    discovery:
+      type: "latest_url"
+      url: "https://foo.example/downloads/foo-latest.deb"
+    fetch:
+      headers:
+        User-Agent: "apt-signpost/1"
+
+  vendor-bar:
+    discovery:
+      type: "github_release"
+      repo: "bar-org/bar"
+      asset: 'bar_.*_amd64\.deb'        # regex over asset names
+      include_prerelease: false
+      token_env: "GITHUB_TOKEN"          # optional
+
+  vendor-baz:
+    discovery:
+      type: "external"
+      command: ["/usr/local/libexec/discover-baz", "--channel", "stable"]
+      timeout: "30s"
+      env:                               # explicit allowlist; nothing else passed through
+        BAZ_API_KEY: "${BAZ_API_KEY}"
+    fetch:
+      headers:
+        Authorization: "Bearer ${BAZ_DOWNLOAD_TOKEN}"

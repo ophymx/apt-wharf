@@ -1,0 +1,254 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+var (
+	sourceNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+	debianPkgPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9+\-.]+$`)
+	githubRepoPattern  = regexp.MustCompile(`^[^/]+/[^/]+$`)
+	suiteCodenameRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+)
+
+// Validate enforces every startup rule from design-mvp.md. All errors are
+// joined so a single run surfaces every problem rather than only the first.
+func Validate(c *Config) error {
+	var errs []error
+	collect := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	collect(validateRepository(&c.Repository))
+	collect(validateSuite(&c.Suite))
+	collect(validateBootstrap(&c.Bootstrap))
+	collect(validateSigning(&c.Signing))
+	collect(validateServer(&c.Server))
+	collect(validateRefresh(&c.Refresh))
+	collect(validateGitHub(&c.GitHub))
+	collect(validatePaths(&c.Paths))
+	collect(validateSources(c))
+
+	return errors.Join(errs...)
+}
+
+func validateRepository(r *Repository) error {
+	if r.Origin == "" {
+		return fmt.Errorf("repository.origin is required")
+	}
+	if r.Label == "" {
+		return fmt.Errorf("repository.label is required")
+	}
+	if r.BaseURL == "" {
+		return fmt.Errorf("repository.base_url is required")
+	}
+	u, err := url.Parse(r.BaseURL)
+	if err != nil {
+		return fmt.Errorf("repository.base_url %q: %w", r.BaseURL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("repository.base_url %q must be http or https", r.BaseURL)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("repository.base_url %q is missing host", r.BaseURL)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("repository.base_url %q must not have a path", r.BaseURL)
+	}
+	if strings.HasSuffix(r.BaseURL, "/") {
+		return fmt.Errorf("repository.base_url %q must not have a trailing slash", r.BaseURL)
+	}
+	return nil
+}
+
+func validateSuite(s *Suite) error {
+	if s.Codename == "" {
+		return fmt.Errorf("suite.codename is required")
+	}
+	if !suiteCodenameRegex.MatchString(s.Codename) {
+		return fmt.Errorf("suite.codename %q must match %s", s.Codename, suiteCodenameRegex)
+	}
+	if s.Description == "" {
+		return fmt.Errorf("suite.description is required")
+	}
+	if len(s.Architectures) == 0 {
+		return fmt.Errorf("suite.architectures must list at least one architecture")
+	}
+	seen := make(map[string]struct{}, len(s.Architectures))
+	for _, a := range s.Architectures {
+		if a == "" {
+			return fmt.Errorf("suite.architectures contains an empty entry")
+		}
+		if a == "all" {
+			return fmt.Errorf("suite.architectures must not contain %q (handled implicitly)", a)
+		}
+		if _, dup := seen[a]; dup {
+			return fmt.Errorf("suite.architectures contains duplicate %q", a)
+		}
+		seen[a] = struct{}{}
+	}
+	return nil
+}
+
+func validateBootstrap(b *Bootstrap) error {
+	if !debianPkgPattern.MatchString(b.PackageName) {
+		return fmt.Errorf("bootstrap.package_name %q is not a valid Debian package name", b.PackageName)
+	}
+	if strings.TrimSpace(b.Maintainer) == "" {
+		return fmt.Errorf("bootstrap.maintainer is required")
+	}
+	if strings.TrimSpace(b.Description) == "" {
+		return fmt.Errorf("bootstrap.description is required")
+	}
+	return nil
+}
+
+func validateSigning(s *Signing) error {
+	if s.KeyFile == "" {
+		return fmt.Errorf("signing.key_file is required")
+	}
+	if !filepath.IsAbs(s.KeyFile) {
+		return fmt.Errorf("signing.key_file %q must be absolute", s.KeyFile)
+	}
+	// When auto_generate is on, the file may not exist yet — defer the
+	// secure-file check until after sign.EnsureKey has had a chance to
+	// materialize it.
+	if !s.AutoGenerate {
+		if err := CheckSecureFile(s.KeyFile, "signing.key_file"); err != nil {
+			return err
+		}
+	}
+	if s.NextPubkeyFile != "" {
+		if !filepath.IsAbs(s.NextPubkeyFile) {
+			return fmt.Errorf("signing.next_pubkey_file %q must be absolute", s.NextPubkeyFile)
+		}
+		// Pubkey files don't need 0400 — they're public. Existence check only.
+		// Distinct-fingerprint check happens in internal/sign at load time.
+	}
+	if s.PassphraseEnv != "" && s.PassphraseFile != "" {
+		return fmt.Errorf("signing.passphrase_env and signing.passphrase_file are mutually exclusive")
+	}
+	if s.PassphraseFile != "" {
+		if !filepath.IsAbs(s.PassphraseFile) {
+			return fmt.Errorf("signing.passphrase_file %q must be absolute", s.PassphraseFile)
+		}
+		if err := CheckSecureFile(s.PassphraseFile, "signing.passphrase_file"); err != nil {
+			return err
+		}
+	}
+	// Empty-resolves-to-failure is enforced at LoadSecret time (called by
+	// internal/sign); we can't read the env here without forcing every
+	// `signpost check` invocation to have the env set.
+	return nil
+}
+
+func validateServer(s *Server) error {
+	if s.Listen == "" {
+		return fmt.Errorf("server.listen is required (e.g., :8080)")
+	}
+	return nil
+}
+
+func validateRefresh(r *Refresh) error {
+	if r.Interval.AsDuration() <= 0 {
+		return fmt.Errorf("refresh.interval must be > 0")
+	}
+	if r.Jitter.AsDuration() < 0 {
+		return fmt.Errorf("refresh.jitter must be >= 0")
+	}
+	if r.HTTPTimeout.AsDuration() <= 0 {
+		return fmt.Errorf("refresh.http_timeout must be > 0")
+	}
+	return nil
+}
+
+func validateGitHub(g *GitHub) error {
+	if g.TokenEnv != "" && g.TokenFile != "" {
+		return fmt.Errorf("github.token_env and github.token_file are mutually exclusive")
+	}
+	if g.TokenFile != "" {
+		if !filepath.IsAbs(g.TokenFile) {
+			return fmt.Errorf("github.token_file %q must be absolute", g.TokenFile)
+		}
+		if err := CheckSecureFile(g.TokenFile, "github.token_file"); err != nil {
+			return err
+		}
+	}
+	if g.RateLimit.UnauthenticatedPerHour <= 0 {
+		return fmt.Errorf("github.rate_limit.unauthenticated_per_hour must be > 0")
+	}
+	if g.RateLimit.AuthenticatedPerHour <= 0 {
+		return fmt.Errorf("github.rate_limit.authenticated_per_hour must be > 0")
+	}
+	return nil
+}
+
+func validatePaths(p *Paths) error {
+	if p.StateDir == "" {
+		return fmt.Errorf("paths.state_dir is required")
+	}
+	if !filepath.IsAbs(p.StateDir) {
+		return fmt.Errorf("paths.state_dir %q must be absolute", p.StateDir)
+	}
+	return nil
+}
+
+func validateSources(c *Config) error {
+	if len(c.Sources) == 0 {
+		return fmt.Errorf("sources must declare at least one entry")
+	}
+	var errs []error
+	for name, src := range c.Sources {
+		if !sourceNamePattern.MatchString(name) {
+			errs = append(errs, fmt.Errorf("source name %q must match %s", name, sourceNamePattern))
+			continue
+		}
+		if src == nil {
+			errs = append(errs, fmt.Errorf("source %s: empty configuration", name))
+			continue
+		}
+		if err := validateDiscovery(name, &src.Discovery); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validateDiscovery(sourceName string, d *Discovery) error {
+	if d.Type != "github_release" {
+		return fmt.Errorf("source %s: discovery.type %q is not supported (MVP supports github_release)",
+			sourceName, d.Type)
+	}
+	if !githubRepoPattern.MatchString(d.Repo) {
+		return fmt.Errorf("source %s: discovery.repo %q must match owner/name", sourceName, d.Repo)
+	}
+	if d.Asset == "" {
+		return fmt.Errorf("source %s: discovery.asset is required", sourceName)
+	}
+	if _, err := regexp.Compile(d.Asset); err != nil {
+		return fmt.Errorf("source %s: discovery.asset %q does not compile as Go regex: %w",
+			sourceName, d.Asset, err)
+	}
+	if d.TokenEnv != "" && d.TokenFile != "" {
+		return fmt.Errorf("source %s: discovery.token_env and discovery.token_file are mutually exclusive",
+			sourceName)
+	}
+	if d.TokenFile != "" {
+		if !filepath.IsAbs(d.TokenFile) {
+			return fmt.Errorf("source %s: discovery.token_file %q must be absolute",
+				sourceName, d.TokenFile)
+		}
+		if err := CheckSecureFile(d.TokenFile,
+			fmt.Sprintf("source %s: discovery.token_file", sourceName)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
