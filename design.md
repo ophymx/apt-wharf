@@ -177,6 +177,16 @@ consistent view of metadata + redirects for the rest of the request.
 - **Idle**: ticker armed, HTTP serving `current`.
 - **Refreshing**: single-writer mutex held; a tick that fires while held
   is dropped (logged), not queued.
+- **Reloading** (SIGHUP): re-read config, validate the diff against
+  hot-reloadable rules, build a fresh signer + discoverers + secrets, stop
+  the old refresh loop, swap in the new "generation," reseed the status
+  tracker, run a synchronous import + refresh, then start the new loop.
+  The HTTP listener and the in-memory snapshot survive the reload — if
+  the new tick fails, the prior snapshot keeps serving.
+  Reload-rejecting fields (require process restart): `server.listen`,
+  `paths.state_dir`. Everything else (sources, signing key contents,
+  refresh interval, github tokens, repository identity) hot-swaps on the
+  next tick.
 - **Stopping**: stop accepting new requests, let an in-flight refresh
   complete (bounded by config timeout), then exit.
 
@@ -504,8 +514,9 @@ embedding them in command arguments.
 
 - **Operational surface** — CLI for "force refresh source X", "rotate
   key"? Today there is `signpost check --source NAME` for one-off
-  probe+fetch verification, and `signpost serve` for the daemon — no
-  force-refresh, no key-rotate.
+  probe+fetch verification, `signpost serve` for the daemon, and `kill
+  -HUP <pid>` for reload+refresh-now. No per-source force-refresh, no
+  key-rotate command.
 - **Webhook-triggered refresh** — GitHub releases can webhook signpost to
   cut time-to-publish from up-to-an-hour to seconds; introduces an
   authenticated-write surface that doesn't exist today.
@@ -531,3 +542,6 @@ Resolved since the initial design:
   bootstrap version + last-built timestamp, and tick counters. `/metrics`
   is Prometheus text exposition over the same data plus snapshot-derived
   gauges. Both unauthenticated; ACL at the front proxy when exposed.
+- **SIGHUP reload + immediate refresh** — see *Process states / Reloading*
+  above. Most fields hot-swap; `server.listen` and `paths.state_dir`
+  changes are rejected and logged.

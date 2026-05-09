@@ -9,6 +9,11 @@ Type=simple
 User=signpost
 Group=signpost
 ExecStart=/usr/bin/signpost serve --config /etc/signpost/config.yaml
+# `systemctl reload signpost` → SIGHUP → re-read /etc/signpost/config.yaml
+# and run an immediate refresh tick. Reloads that touch immutable fields
+# (server.listen, paths.state_dir) are rejected with a logged error and
+# the prior generation keeps serving — restart is required for those.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
