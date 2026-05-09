@@ -1,0 +1,40 @@
+[Unit]
+Description=apt-signpost: signed apt repository that 302-redirects to upstream .debs
+Documentation=https://github.com/ophymx/apt-signpost
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=signpost
+Group=signpost
+ExecStart=/usr/bin/signpost serve --config /etc/signpost/config.yaml
+Restart=on-failure
+RestartSec=5
+
+# Filesystem
+StateDirectory=signpost
+ConfigurationDirectory=signpost
+ReadWritePaths=/var/lib/signpost
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+# Privileges
+NoNewPrivileges=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

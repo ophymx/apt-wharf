@@ -1,95 +1,97 @@
-# apt-signpost example configuration.
+# apt-signpost configuration.
 #
-# Schema notes, discovery-union semantics, env var interpolation, and the full
-# list of validation rules are documented in design.md (Configuration section).
+# Installed by the apt-signpost package as /etc/signpost/config.yaml. Conffile,
+# so dpkg will not overwrite local edits on upgrade. The signpost.service unit
+# loads this file as user signpost.
+#
+# Fields marked CHANGEME below must be edited before the daemon will start.
+# Env interpolation: $-brace references in values are expanded from the
+# process environment; unset or empty references are a fatal config error.
+# Schema reference: design.md (Configuration section).
 
 # ---- Repository identity --------------------------------------------------
+# Origin/Label appear in the signed Release file. base_url is the public root
+# under which apt clients will see /dists/ and /pool/ — no trailing slash, no
+# path component.
 repository:
-  origin: "Acme"                          # Release: Origin
-  label: "Acme APT"                       # Release: Label
-  base_url: "https://apt.acme.example"    # public root, used in bootstrap .sources
+  origin: "CHANGEME"                          # e.g. "Acme"
+  label: "CHANGEME"                           # e.g. "Acme APT"
+  base_url: "https://apt.example.invalid"     # CHANGEME — public root
 
-# ---- Suites ---------------------------------------------------------------
-# Keys are suite names. With just "stable" this is short; the structure
-# scales to multiple suites without rework.
-suites:
-  stable:
-    codename: "stable"                    # Release: Codename
-    description: "Acme stable channel"    # Release: Description
-    components: ["main"]
-    architectures: ["amd64", "arm64"]
-    # "all"-arch packages are emitted into every binary-<arch>/Packages
-    # listed above; no separate config needed.
+# ---- Suite ----------------------------------------------------------------
+# Single suite in the MVP. Codename appears in /dists/<codename>/.
+suite:
+  codename: "stable"
+  description: "stable channel"
+  architectures: ["amd64", "arm64"]           # do not include "all" — implicit
 
 # ---- Bootstrap package ----------------------------------------------------
+# The keyring/sources .deb that signpost builds and serves. Installs:
+#   /usr/share/keyrings/<package_name>.gpg
+#   /etc/apt/sources.list.d/<package_name>.sources   (deb822, Signed-By the keyring)
+# Versioning is automatic: YYYY.MM.DD.N
 bootstrap:
-  package_name: "acme-archive-keyring"    # apt install <this>
-  maintainer: "Acme Ops <ops@acme.example>"
+  package_name: "changeme-archive-keyring"    # CHANGEME — what users `apt install`
+  maintainer: "CHANGEME <ops@example.invalid>"
   description: |
-    Acme APT repository signing key and sources list.
-  # Generated payload (no need to declare files):
-  #   /usr/share/keyrings/<package_name>.gpg
-  #   /etc/apt/sources.list.d/<package_name>.sources   (deb822, Signed-By the keyring)
-  # Versioning is automatic: YYYY.MM.DD.N
+    APT repository signing key and sources list.
 
 # ---- Signing --------------------------------------------------------------
+# key_file must be readable by the signpost user (mode 0400, owner signpost).
+# To bootstrap a fresh install for local testing, flip auto_generate to true:
+# signpost will create an unencrypted RSA key at key_file on first start. For
+# any production deployment, generate the key offline and copy it in.
 signing:
   key_file: "/var/lib/signpost/secring.gpg"
+  auto_generate: false
   # Pick at most one passphrase source. Omit both for an unencrypted key.
-  passphrase_env: "STITCHER_GPG_PASSPHRASE"
+  # passphrase_env: "SIGNPOST_GPG_PASSPHRASE"
   # passphrase_file: "/var/lib/signpost/passphrase"
-  # Startup enforces key_file mode 0400 and ownership match.
+  # next_pubkey_file: "/var/lib/signpost/next.pub"   # ships in the keyring for rotation
 
 # ---- HTTP server ----------------------------------------------------------
+# Listen on loopback by default; front with a reverse proxy for TLS and
+# caching. Change to ":8080" to expose directly.
 server:
-  listen: ":8080"
-  # access_log: stdout | none   (default: stdout)
+  listen: "127.0.0.1:8080"
 
 # ---- Refresh loop ---------------------------------------------------------
 refresh:
   interval: "1h"
   jitter: "5m"
   http_timeout: "60s"
-  # No per-source overrides in v1; can add later if a source proves noisy.
+
+# ---- GitHub --------------------------------------------------------------
+# Optional. Without a token the unauthenticated rate limit (60/hr per IP)
+# applies and is shared across all github_release sources.
+github:
+  # token_env: "GITHUB_TOKEN"
+  # token_file: "/var/lib/signpost/github-token"
+  rate_limit:
+    unauthenticated_per_hour: 50
+    authenticated_per_hour: 4500
 
 # ---- Filesystem paths -----------------------------------------------------
+# state_dir is created under /var/lib/signpost (provisioned signpost:signpost
+# 0750 by the package postinstall). The served repository is held in memory
+# and rebuilt from state_dir on startup and after each refresh tick.
 paths:
   state_dir: "/var/lib/signpost/state"
-  # No public_dir: the served repository lives in memory and is rebuilt
-  # from state_dir at startup and after each refresh tick.
 
 # ---- Sources --------------------------------------------------------------
-# Keys are source names. Uniqueness is enforced by the YAML parser (strict
-# mode rejects duplicate keys). Names appear in state filenames, log lines,
-# and pool paths, so they must match ^[a-z0-9][a-z0-9._-]*$.
-sources:
-
-  vendor-foo-amd64:
-    # enabled: true        # default
-    # suite: "stable"      # default; must exist in suites:
-    # component: "main"    # default; must be in suites.<suite>.components
-    discovery:
-      type: "latest_url"
-      url: "https://foo.example/downloads/foo-latest.deb"
-    fetch:
-      headers:
-        User-Agent: "apt-signpost/1"
-
-  vendor-bar:
-    discovery:
-      type: "github_release"
-      repo: "bar-org/bar"
-      asset: 'bar_.*_amd64\.deb'        # regex over asset names
-      include_prerelease: false
-      token_env: "GITHUB_TOKEN"          # optional
-
-  vendor-baz:
-    discovery:
-      type: "external"
-      command: ["/usr/local/libexec/discover-baz", "--channel", "stable"]
-      timeout: "30s"
-      env:                               # explicit allowlist; nothing else passed through
-        BAZ_API_KEY: "${BAZ_API_KEY}"
-    fetch:
-      headers:
-        Authorization: "Bearer ${BAZ_DOWNLOAD_TOKEN}"
+# At least one source must be declared — signpost will refuse to start with
+# an empty sources map. Source names appear in state filenames, log lines,
+# and pool paths and must match ^[a-z0-9][a-z0-9._-]*$.
+#
+# MVP supports a single discovery type: github_release. Uncomment and adapt:
+sources: {}
+#
+# sources:
+#   vendor-foo:
+#     # enabled: true                           # default
+#     discovery:
+#       type: "github_release"
+#       repo: "vendor/foo"                      # owner/name
+#       asset: 'foo_.*_amd64\.deb'              # Go regex over release asset names
+#       include_prerelease: false
+#       # token_env: "GITHUB_TOKEN"             # overrides github.token_env for this source

@@ -1,3 +1,5 @@
 config.yml
 config.yaml
 /signpost
+/dist/
+*.deb
