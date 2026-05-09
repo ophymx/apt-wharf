@@ -74,6 +74,9 @@ func (r *Refresher) ensureBootstrap() (*store.BootstrapState, []byte, error) {
 	if err := r.store.WriteBootstrap(state); err != nil {
 		return nil, nil, fmt.Errorf("write bootstrap state: %w", err)
 	}
+	if r.tracker != nil {
+		r.tracker.RecordBootstrapBuild(state, time.Now().UTC())
+	}
 	r.log.Info("bootstrap rebuilt",
 		"version", newVersion,
 		"prev_version", prevVer,

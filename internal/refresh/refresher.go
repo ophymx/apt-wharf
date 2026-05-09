@@ -14,6 +14,7 @@ import (
 	"github.com/ophymx/apt-signpost/internal/fetch"
 	"github.com/ophymx/apt-signpost/internal/sign"
 	"github.com/ophymx/apt-signpost/internal/source"
+	"github.com/ophymx/apt-signpost/internal/status"
 	"github.com/ophymx/apt-signpost/internal/store"
 )
 
@@ -28,6 +29,7 @@ type Refresher struct {
 	fetcher     *fetch.Fetcher
 	httpClient  *http.Client
 	discoverers map[string]source.Discoverer
+	tracker     *status.Tracker
 
 	holder      *Holder
 	tickMu      sync.Mutex // single writer; fires-while-held are dropped
@@ -38,7 +40,8 @@ type Refresher struct {
 
 // Options controls construction. Discoverers must be keyed by source name;
 // only sources with discoverers are processed (disabled or unknown sources
-// are skipped).
+// are skipped). Tracker is optional — passing nil silences observability
+// without disabling the rest of the refresher.
 type Options struct {
 	Cfg         *config.Config
 	Signer      *sign.Signer
@@ -46,6 +49,7 @@ type Options struct {
 	Fetcher     *fetch.Fetcher
 	HTTPClient  *http.Client
 	Discoverers map[string]source.Discoverer
+	Tracker     *status.Tracker
 	Holder      *Holder
 	Parallelism int
 	Logger      *slog.Logger
@@ -68,6 +72,7 @@ func New(opts Options) *Refresher {
 		fetcher:     opts.Fetcher,
 		httpClient:  opts.HTTPClient,
 		discoverers: opts.Discoverers,
+		tracker:     opts.Tracker,
 		holder:      opts.Holder,
 		parallelism: opts.Parallelism,
 		log:         opts.Logger,
@@ -98,7 +103,7 @@ func (r *Refresher) SyncImportNew(ctx context.Context) error {
 	}
 	r.log.Info("syncImportNew", "count", len(missing), "sources", missing)
 	for _, name := range missing {
-		if err := r.processOne(ctx, name, nil); err != nil {
+		if err := r.processOneRecorded(ctx, name, nil); err != nil {
 			return fmt.Errorf("source %s: %w", name, err)
 		}
 	}
@@ -115,6 +120,25 @@ func (r *Refresher) Refresh(ctx context.Context) error {
 	}
 	defer r.tickMu.Unlock()
 
+	tickStart := time.Now()
+	if r.tracker != nil {
+		r.tracker.RecordTickStart(tickStart)
+	}
+	tickErr := r.refreshLocked(ctx)
+	if r.tracker != nil {
+		var files, redirects int
+		if snap := r.holder.Load(); snap != nil {
+			files = len(snap.Files)
+			redirects = len(snap.Redirects)
+		}
+		r.tracker.RecordTickEnd(time.Since(tickStart), files, redirects, tickErr)
+	}
+	return tickErr
+}
+
+// refreshLocked is the inner refresh body — extracted so Refresh can wrap
+// it with tracker bookkeeping without nesting a giant defer.
+func (r *Refresher) refreshLocked(ctx context.Context) error {
 	prevStates, err := r.store.LoadSources()
 	if err != nil {
 		return fmt.Errorf("load sources: %w", err)
@@ -182,7 +206,7 @@ func (r *Refresher) fanoutProcess(ctx context.Context, prev map[string]*store.So
 		go func() {
 			defer wg.Done()
 			for name := range work {
-				if err := r.processOne(ctx, name, prev[name]); err != nil {
+				if err := r.processOneRecorded(ctx, name, prev[name]); err != nil {
 					r.log.Error("source failed; holding prior state",
 						"source", name, "err", err)
 				}
@@ -205,12 +229,38 @@ func (r *Refresher) fanoutProcess(ctx context.Context, prev map[string]*store.So
 	wg.Wait()
 }
 
+// processOutcome distinguishes "fetched fresh" from "no-op tick" so the
+// caller can update observability state correctly. State is non-nil only
+// when Changed is true.
+type processOutcome struct {
+	Changed bool
+	State   *store.SourceState
+}
+
+// processOneRecorded wraps processOne with tracker bookkeeping.
+func (r *Refresher) processOneRecorded(ctx context.Context, name string, prev *store.SourceState) error {
+	outcome, err := r.processOne(ctx, name, prev)
+	if r.tracker == nil {
+		return err
+	}
+	now := time.Now().UTC()
+	switch {
+	case err != nil:
+		r.tracker.RecordSourceError(name, err, now)
+	case outcome.Changed:
+		r.tracker.RecordSourceOK(name, outcome.State, now)
+	default:
+		r.tracker.RecordSourceUnchanged(name, now)
+	}
+	return err
+}
+
 // processOne probes the source, fetches if changed, parses control, and
 // writes the per-source state file. Caller already holds the tick mutex.
-func (r *Refresher) processOne(ctx context.Context, name string, prev *store.SourceState) error {
+func (r *Refresher) processOne(ctx context.Context, name string, prev *store.SourceState) (processOutcome, error) {
 	disc, ok := r.discoverers[name]
 	if !ok {
-		return errors.New("no discoverer wired for this source")
+		return processOutcome{}, errors.New("no discoverer wired for this source")
 	}
 
 	var prevProbe *source.Probe
@@ -225,7 +275,7 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 
 	res, err := disc.Probe(ctx, source.ProbeInput{Prev: prevProbe, HTTPClient: r.httpClient})
 	if err != nil {
-		return fmt.Errorf("probe: %w", err)
+		return processOutcome{}, fmt.Errorf("probe: %w", err)
 	}
 	if res.Unchanged {
 		// State file already current; just bump last_checked.
@@ -233,10 +283,10 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 			updated := *prev
 			updated.LastChecked = time.Now().UTC()
 			if err := r.store.WriteSource(&updated); err != nil {
-				return fmt.Errorf("write last_checked: %w", err)
+				return processOutcome{}, fmt.Errorf("write last_checked: %w", err)
 			}
 		}
-		return nil
+		return processOutcome{}, nil
 	}
 
 	needHash := res.Probe.AssetDigest == ""
@@ -245,7 +295,7 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 		NeedHash: needHash,
 	})
 	if err != nil {
-		return fmt.Errorf("fetch: %w", err)
+		return processOutcome{}, fmt.Errorf("fetch: %w", err)
 	}
 
 	sha := fr.SHA256
@@ -253,10 +303,10 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 		sha = res.Probe.AssetDigest
 	}
 	if sha == "" {
-		return errors.New("no SHA256 available (digest missing and stream not hashed)")
+		return processOutcome{}, errors.New("no SHA256 available (digest missing and stream not hashed)")
 	}
 	if res.Probe.AssetDigest != "" && fr.SHA256 != "" && res.Probe.AssetDigest != fr.SHA256 {
-		return fmt.Errorf("digest mismatch: github=%s computed=%s",
+		return processOutcome{}, fmt.Errorf("digest mismatch: github=%s computed=%s",
 			res.Probe.AssetDigest, fr.SHA256)
 	}
 
@@ -277,7 +327,7 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 		state.ReleaseID = rid
 	}
 	if err := r.store.WriteSource(state); err != nil {
-		return fmt.Errorf("write state: %w", err)
+		return processOutcome{}, fmt.Errorf("write state: %w", err)
 	}
 	r.log.Info("source updated",
 		"source", name,
@@ -285,7 +335,7 @@ func (r *Refresher) processOne(ctx context.Context, name string, prev *store.Sou
 		"size", state.AssetSize,
 		"sha256", state.AssetSHA256[:12]+"...",
 		"hashed_locally", needHash)
-	return nil
+	return processOutcome{Changed: true, State: state}, nil
 }
 
 // tokenFromState reconstructs the Probe token from the persisted state.

@@ -23,7 +23,7 @@ func TestHandler_FileAndRedirect(t *testing.T) {
 		BuiltAt: time.Now(),
 	})
 
-	srv := httptest.NewServer(Handler(h, nil))
+	srv := httptest.NewServer(Handler(h, nil, nil))
 	defer srv.Close()
 
 	t.Run("file served as bytes", func(t *testing.T) {
@@ -71,7 +71,7 @@ func TestHandler_FileAndRedirect(t *testing.T) {
 
 func TestHandler_NoSnapshotYet(t *testing.T) {
 	h := &refresh.Holder{}
-	srv := httptest.NewServer(Handler(h, nil))
+	srv := httptest.NewServer(Handler(h, nil, nil))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/anything")
 	if err != nil {

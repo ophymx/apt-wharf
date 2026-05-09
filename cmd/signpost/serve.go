@@ -15,6 +15,7 @@ import (
 	"github.com/ophymx/apt-signpost/internal/config"
 	"github.com/ophymx/apt-signpost/internal/refresh"
 	"github.com/ophymx/apt-signpost/internal/server"
+	"github.com/ophymx/apt-signpost/internal/status"
 )
 
 func cmdServe(args []string, log *slog.Logger) error {
@@ -43,6 +44,24 @@ func cmdServe(args []string, log *slog.Logger) error {
 		return fmt.Errorf("state dirs: %w", err)
 	}
 
+	tracker := status.NewTracker()
+	enabled := map[string]bool{}
+	discoveryTypes := map[string]string{}
+	for name, src := range cfg.Sources {
+		enabled[name] = src.IsEnabled()
+		discoveryTypes[name] = src.Discovery.Type
+	}
+	if states, err := wired.Store.LoadSources(); err == nil {
+		tracker.Seed(states, enabled, discoveryTypes)
+	} else {
+		// Non-fatal — empty seed; the next tick will fill the tracker in.
+		log.Warn("status seed: load sources failed", "err", err)
+		tracker.Seed(nil, enabled, discoveryTypes)
+	}
+	if bs, err := wired.Store.LoadBootstrap(); err == nil {
+		tracker.SeedBootstrap(bs)
+	}
+
 	holder := &refresh.Holder{}
 	rf := refresh.New(refresh.Options{
 		Cfg:         cfg,
@@ -51,6 +70,7 @@ func cmdServe(args []string, log *slog.Logger) error {
 		Fetcher:     wired.Fetcher,
 		HTTPClient:  wired.HTTPClient,
 		Discoverers: wired.Discoverers,
+		Tracker:     tracker,
 		Holder:      holder,
 		Logger:      log,
 	})
@@ -67,7 +87,7 @@ func cmdServe(args []string, log *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              cfg.Server.Listen,
-		Handler:           server.Handler(holder, log),
+		Handler:           server.Handler(holder, tracker, log),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

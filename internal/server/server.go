@@ -1,5 +1,7 @@
 // Package server is the HTTP front end. One handler reads the atomic
 // snapshot once at the top of each request, then serves bytes / 302 / 404.
+// The /status and /metrics admin endpoints are routed off the snapshot
+// path; everything else falls through to the apt-repo serving logic.
 package server
 
 import (
@@ -9,21 +11,40 @@ import (
 	"time"
 
 	"github.com/ophymx/apt-signpost/internal/refresh"
+	"github.com/ophymx/apt-signpost/internal/status"
 )
 
-// Handler returns an http.Handler backed by the snapshot held in h.
+// Handler returns an http.Handler backed by the snapshot held in h, with
+// observability endpoints sourced from the status tracker (which may be
+// nil — handlers degrade to "no data" rather than panicking).
+//
 // Every request produces one access-log line at INFO with method, path,
-// status, bytes, kind (file/redirect/404/unavailable), duration, and
-// remote address — enough to debug "why did apt 404?" without flipping
-// to Debug.
-func Handler(h *refresh.Holder, log *slog.Logger) http.Handler {
+// status, bytes, kind (file/redirect/404/unavailable/status/metrics),
+// duration, and remote address.
+//
+// The admin endpoints are NOT authenticated — operators are expected to
+// ACL them at the front proxy if the listener is public.
+func Handler(h *refresh.Holder, tracker *status.Tracker, log *slog.Logger) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
+	statusH := statusHandler(h, tracker)
+	metricsH := metricsHandler(h, tracker)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &recordingWriter{ResponseWriter: w}
-		kind := serveSnapshot(rw, r, h)
+
+		var kind string
+		switch r.URL.Path {
+		case "/status":
+			statusH.ServeHTTP(rw, r)
+			kind = "status"
+		case "/metrics":
+			metricsH.ServeHTTP(rw, r)
+			kind = "metrics"
+		default:
+			kind = serveSnapshot(rw, r, h)
+		}
 
 		log.Info("http",
 			"method", r.Method,

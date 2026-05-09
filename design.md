@@ -82,6 +82,10 @@ deployments should generate the key offline and copy it in.
 /<repo>-archive-keyring.gpg                         # raw public key
 /release/<suite>/<arch>/latest.deb                  # 302 → versioned bootstrap .deb
 /release/<suite>/<arch>/latest                      # plain text version string
+
+# Observability (unauthenticated; ACL at the front proxy if exposed)
+/status                                             # JSON: per-source state, tick, bootstrap
+/metrics                                            # Prometheus text exposition
 ```
 
 Suite support starts at just `stable`, but the `dists/<suite>/` layout is
@@ -498,14 +502,17 @@ embedding them in command arguments.
 
 ## Open questions
 
-- **Operational surface** — CLI for "force refresh source X", "show state",
-  "rotate key"? `/status` HTTP endpoint for monitoring? Not yet decided.
-  Today there is `signpost check --source NAME` for one-off probe+fetch
-  verification, and `signpost serve` for the daemon — nothing else.
-- **Failure visibility** — how do persistent discovery failures surface?
-  Today: structured slog records on every per-source error and a tick-level
-  summary log. No `/status` endpoint, no metrics. Revisit when an operator
-  asks for it.
+- **Operational surface** — CLI for "force refresh source X", "rotate
+  key"? Today there is `signpost check --source NAME` for one-off
+  probe+fetch verification, and `signpost serve` for the daemon — no
+  force-refresh, no key-rotate.
+- **Webhook-triggered refresh** — GitHub releases can webhook signpost to
+  cut time-to-publish from up-to-an-hour to seconds; introduces an
+  authenticated-write surface that doesn't exist today.
+- **Upstream signature verification** — the trust chain currently bottoms
+  out at "we hashed what was at the URL." Vendor PGP detached sigs or
+  sigstore bundles, when available, would close the "compromised vendor"
+  gap.
 - **Multi-suite support** — the on-disk URL layout (`/dists/<codename>/`)
   preserves room, but the config schema is single-suite (`suite:`). Promote
   to a map when there's a concrete need.
@@ -519,3 +526,8 @@ Resolved since the initial design:
 - **`Architecture: all` packaging** — fans into every
   `binary-<arch>/Packages` listed in `suite.architectures`; no separate
   `binary-all` listing.
+- **`/status` and `/metrics`** — `/status` returns JSON with per-source
+  last-checked / last-changed / last-error / current package + version,
+  bootstrap version + last-built timestamp, and tick counters. `/metrics`
+  is Prometheus text exposition over the same data plus snapshot-derived
+  gauges. Both unauthenticated; ACL at the front proxy when exposed.
