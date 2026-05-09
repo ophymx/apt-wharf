@@ -33,7 +33,7 @@ func cmdServe(args []string, log *slog.Logger) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	wired, err := Wire(cfg)
+	wired, err := Wire(cfg, log)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -28,8 +29,13 @@ type Wired struct {
 
 // Wire reads secrets, loads the signing key, and builds discoverers. It does
 // not touch state files or perform any network IO (other than the optional
-// signing-key auto-generation when signing.auto_generate is set).
-func Wire(cfg *config.Config) (*Wired, error) {
+// signing-key auto-generation when signing.auto_generate is set). The logger
+// is forwarded to discoverers that emit diagnostics (currently the external
+// type, which captures child stderr).
+func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
+	if log == nil {
+		log = slog.Default()
+	}
 	pass, err := config.LoadSecret(cfg.Signing.PassphraseEnv, cfg.Signing.PassphraseFile,
 		"signing.passphrase_env", "signing.passphrase_file")
 	if err != nil {
@@ -108,6 +114,18 @@ func Wire(cfg *config.Config) (*Wired, error) {
 			perSrcTokens[name] = tok
 		case "latest_url":
 			d, err := source.NewLatestURLDiscoverer(src.Discovery.URL, httpClient)
+			if err != nil {
+				return nil, fmt.Errorf("source %s: %w", name, err)
+			}
+			discoverers[name] = d
+		case "external":
+			d, err := source.NewExternalDiscoverer(
+				src.Discovery.Command,
+				src.Discovery.Timeout.AsDuration(),
+				src.Discovery.Env,
+				name,
+				log,
+			)
 			if err != nil {
 				return nil, fmt.Errorf("source %s: %w", name, err)
 			}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -227,15 +228,17 @@ func validateDiscovery(sourceName string, d *Discovery) error {
 		return validateGitHubRelease(sourceName, d)
 	case "latest_url":
 		return validateLatestURL(sourceName, d)
+	case "external":
+		return validateExternal(sourceName, d)
 	default:
-		return fmt.Errorf("source %s: discovery.type %q is not supported (supported: github_release, latest_url)",
+		return fmt.Errorf("source %s: discovery.type %q is not supported (supported: github_release, latest_url, external)",
 			sourceName, d.Type)
 	}
 }
 
 func validateGitHubRelease(sourceName string, d *Discovery) error {
-	if d.URL != "" {
-		return fmt.Errorf("source %s: discovery.url is not valid for type github_release", sourceName)
+	if d.URL != "" || len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
+		return fmt.Errorf("source %s: discovery.url/command/timeout/env are not valid for type github_release", sourceName)
 	}
 	if !githubRepoPattern.MatchString(d.Repo) {
 		return fmt.Errorf("source %s: discovery.repo %q must match owner/name", sourceName, d.Repo)
@@ -266,9 +269,10 @@ func validateGitHubRelease(sourceName string, d *Discovery) error {
 
 func validateLatestURL(sourceName string, d *Discovery) error {
 	if d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
-		d.TokenEnv != "" || d.TokenFile != "" {
+		d.TokenEnv != "" || d.TokenFile != "" ||
+		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
 		return fmt.Errorf(
-			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file are not valid for type latest_url",
+			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/command/timeout/env are not valid for type latest_url",
 			sourceName)
 	}
 	if d.URL == "" {
@@ -283,6 +287,45 @@ func validateLatestURL(sourceName string, d *Discovery) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("source %s: discovery.url %q is missing host", sourceName, d.URL)
+	}
+	return nil
+}
+
+func validateExternal(sourceName string, d *Discovery) error {
+	if d.URL != "" || d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
+		d.TokenEnv != "" || d.TokenFile != "" {
+		return fmt.Errorf(
+			"source %s: discovery.url/repo/asset/include_prerelease/token_env/token_file are not valid for type external",
+			sourceName)
+	}
+	if len(d.Command) == 0 {
+		return fmt.Errorf("source %s: discovery.command must list at least one entry", sourceName)
+	}
+	if strings.TrimSpace(d.Command[0]) == "" {
+		return fmt.Errorf("source %s: discovery.command[0] must not be empty", sourceName)
+	}
+	if !filepath.IsAbs(d.Command[0]) {
+		return fmt.Errorf(
+			"source %s: discovery.command[0] %q must be an absolute path (PATH is unset for external commands)",
+			sourceName, d.Command[0])
+	}
+	info, err := os.Stat(d.Command[0])
+	if err != nil {
+		return fmt.Errorf("source %s: discovery.command[0] %q: %w", sourceName, d.Command[0], err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("source %s: discovery.command[0] %q is a directory", sourceName, d.Command[0])
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("source %s: discovery.command[0] %q is not executable", sourceName, d.Command[0])
+	}
+	if d.Timeout.AsDuration() < 0 {
+		return fmt.Errorf("source %s: discovery.timeout must be >= 0 (default 30s when omitted)", sourceName)
+	}
+	for k := range d.Env {
+		if strings.ContainsAny(k, "=\x00") {
+			return fmt.Errorf("source %s: discovery.env key %q contains '=' or NUL", sourceName, k)
+		}
 	}
 	return nil
 }

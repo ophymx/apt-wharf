@@ -97,6 +97,11 @@ type Discovery struct {
 
 	// latest_url fields
 	URL string `yaml:"url"`
+
+	// external fields
+	Command []string          `yaml:"command"`
+	Timeout Duration          `yaml:"timeout"`
+	Env     map[string]string `yaml:"env"`
 }
 
 type Duration time.Duration

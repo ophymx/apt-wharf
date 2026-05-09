@@ -83,7 +83,8 @@ paths:
 # an empty sources map. Source names appear in state filenames, log lines,
 # and pool paths and must match ^[a-z0-9][a-z0-9._-]*$.
 #
-# Supported discovery types: github_release, latest_url. Uncomment and adapt:
+# Supported discovery types: github_release, latest_url, external. Uncomment
+# and adapt:
 sources: {}
 #
 # sources:
@@ -105,3 +106,20 @@ sources: {}
 #       # then Last-Modified. When the resolved URL lives on AWS S3, the
 #       # x-amz-checksum-sha256 metadata is used to skip the streaming hash.
 #       url: "https://downloads.vendor-bar.example/bar-latest_amd64.deb"
+#
+#   vendor-baz:
+#     discovery:
+#       type: "external"
+#       # Escape hatch for vendors with bespoke discovery (custom JSON APIs,
+#       # signed manifests, etc). signpost spawns the command each tick with
+#       # a stripped environment (HTTP_PROXY/HTTPS_PROXY/NO_PROXY plus the
+#       # explicit env: map below) and pipes the stdio JSON contract from
+#       # design.md:
+#       #   stdin:  {"prev": {"url":"...","token":"..."}}   (omitted on cold start)
+#       #   stdout: {"url":"...","token":"..."}             on change
+#       #   stdout: {"unchanged": true}                     on no-op
+#       # command[0] must be an absolute path; PATH is unset for the child.
+#       command: ["/usr/local/libexec/discover-baz", "--channel", "stable"]
+#       timeout: "30s"                          # hard kill of the process group at this point
+#       env:                                    # explicit allowlist; nothing else passes through
+#         BAZ_API_KEY: "${BAZ_API_KEY}"
