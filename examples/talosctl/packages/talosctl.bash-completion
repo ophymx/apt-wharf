@@ -1,0 +1,3 @@
+# talosctl bash completion — sourced by /etc/bash_completion.d.
+# Defers to the binary's built-in completion generator at shell start.
+source <(talosctl completion bash)

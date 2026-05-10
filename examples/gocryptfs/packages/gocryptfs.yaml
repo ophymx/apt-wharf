@@ -1,0 +1,48 @@
+---
+# Doc 1 — cooper sidecar
+#
+# Upstream tarball is flat (no leading dir): gocryptfs, gocryptfs-xray,
+# README.md, etc., all at the top level. nfpm reads them via
+# ${ASSETS}/<basename>.
+source:
+  github:
+    repo: rfjakob/gocryptfs
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "gocryptfs_v${VERSION}_linux-static_amd64.tar.gz"
+  arm64:
+    asset: "gocryptfs_v${VERSION}_linux-static_arm64.tar.gz"
+
+---
+# Doc 2 — vanilla nfpm
+name: gocryptfs
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: |
+  An encrypted overlay filesystem written in Go. Files are stored
+  encrypted on the underlying filesystem and decrypted on the fly by
+  the FUSE mount.
+homepage: https://nuetzlich.net/gocryptfs/
+license: MIT
+section: utils
+contents:
+  - src: ${ASSETS}/gocryptfs
+    dst: /usr/bin/gocryptfs
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/gocryptfs-xray
+    dst: /usr/bin/gocryptfs-xray
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/gocryptfs.1
+    dst: /usr/share/man/man1/gocryptfs.1
+    file_info:
+      mode: 0644
+  - src: ${ASSETS}/gocryptfs-xray.1
+    dst: /usr/share/man/man1/gocryptfs-xray.1
+    file_info:
+      mode: 0644

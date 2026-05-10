@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+# Create the system user if it doesn't already exist.
+if ! getent passwd prometheus >/dev/null; then
+    adduser --quiet --system --group --disabled-login \
+        --home /var/lib/prometheus --shell /usr/sbin/nologin \
+        prometheus
+fi
+
+mkdir -p /etc/prometheus /var/lib/prometheus/data
+chown -R prometheus:prometheus /var/lib/prometheus
+
+# Install the example config on first install only.
+if [ ! -e /etc/prometheus/prometheus.yml ]; then
+    cp /usr/local/share/prometheus/examples/prometheus.yml /etc/prometheus/prometheus.yml
+fi
+
+systemctl daemon-reload || true

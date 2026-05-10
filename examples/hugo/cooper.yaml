@@ -1,0 +1,5 @@
+github:
+  token_env: GITHUB_TOKEN
+
+packages:
+  - ./packages/hugo.yaml

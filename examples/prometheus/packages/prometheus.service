@@ -1,0 +1,21 @@
+[Unit]
+Description=Prometheus monitoring system
+Documentation=https://prometheus.io/
+After=network.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+EnvironmentFile=-/etc/default/prometheus
+Environment="PROM_DATA_DIR=/var/lib/prometheus/data"
+Environment="PROM_LISTEN=0.0.0.0:9090"
+ExecStart=/usr/local/sbin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=${PROM_DATA_DIR} \
+  --web.listen-address=${PROM_LISTEN}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,37 @@
+---
+# Doc 1 — cooper sidecar
+source:
+  github:
+    repo: gohugoio/hugo
+    release: latest
+    include_prerelease: false
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "hugo_extended_${VERSION}_linux-amd64.tar.gz"
+  arm64:
+    asset: "hugo_extended_${VERSION}_linux-arm64.tar.gz"
+
+---
+# Doc 2 — vanilla nfpm
+name: hugo
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: A fast and flexible static site generator built with love.
+homepage: https://gohugo.io
+license: Apache-2.0
+section: utils
+contents:
+  - src: ${ASSETS}/hugo
+    dst: /usr/bin/hugo
+    file_info:
+      mode: 0755
+  - src: ./hugo.service
+    dst: /lib/systemd/system/hugo.service
+    file_info:
+      mode: 0644
+deb:
+  fields:
+    Bugs: https://github.com/gohugoio/hugo/issues

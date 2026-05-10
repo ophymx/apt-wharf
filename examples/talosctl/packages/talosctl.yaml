@@ -1,0 +1,40 @@
+---
+# Doc 1 — cooper sidecar
+#
+# Upstream ships a single ELF binary per arch (no archive). Cooper
+# leaves the asset at <staging>/asset/<asset.name>; nfpm reads it via
+# ${ASSETS}/<asset.name>. ${ARCH} substitution into the selector means
+# one entry per arch is enough.
+source:
+  github:
+    repo: siderolabs/talos
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "talosctl-linux-amd64"
+  arm64:
+    asset: "talosctl-linux-arm64"
+
+---
+# Doc 2 — vanilla nfpm
+name: talosctl
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: |
+  CLI for Talos, a modern OS for Kubernetes that secures and simplifies
+  your infrastructure.
+homepage: https://www.talos.dev/
+license: MPL-2.0
+section: utils
+contents:
+  - src: ${ASSETS}/talosctl-linux-${ARCH}
+    dst: /usr/local/bin/talosctl
+    file_info:
+      mode: 0755
+  - src: ./talosctl.bash-completion
+    dst: /etc/bash_completion.d/talosctl
+    file_info:
+      mode: 0644

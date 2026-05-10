@@ -1,0 +1,53 @@
+---
+# Doc 1 — cooper sidecar
+#
+# Upstream tarball unpacks to a versioned subdir,
+# `prometheus-${VERSION}.linux-${ARCH}/`, which becomes a top-level
+# directory under ${ASSETS}/ at build time. nfpm walks into it via the
+# explicit paths in contents[].src below.
+source:
+  github:
+    repo: prometheus/prometheus
+    release: latest
+    include_prerelease: false
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "prometheus-${VERSION}.linux-amd64.tar.gz"
+  arm64:
+    asset: "prometheus-${VERSION}.linux-arm64.tar.gz"
+
+---
+# Doc 2 — vanilla nfpm
+name: prometheus
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: |
+  Monitoring system and time series database. Collects metrics from
+  configured targets, evaluates rule expressions, and triggers alerts.
+homepage: https://prometheus.io/
+license: Apache-2.0
+section: net
+depends:
+  - adduser
+contents:
+  - src: ${ASSETS}/prometheus-${VERSION}.linux-${ARCH}/prometheus
+    dst: /usr/local/sbin/prometheus
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/prometheus-${VERSION}.linux-${ARCH}/promtool
+    dst: /usr/local/sbin/promtool
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/prometheus-${VERSION}.linux-${ARCH}/prometheus.yml
+    dst: /usr/local/share/prometheus/examples/prometheus.yml
+    file_info:
+      mode: 0644
+  - src: ./prometheus.service
+    dst: /lib/systemd/system/prometheus.service
+    file_info:
+      mode: 0644
+scripts:
+  postinstall: ./prometheus.postinstall
