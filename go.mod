@@ -4,8 +4,10 @@ go 1.25.0
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
+	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/google/go-github/v86 v86.0.0
 	github.com/goreleaser/nfpm/v2 v2.46.3
+	github.com/tidwall/gjson v1.19.0
 	gopkg.in/yaml.v3 v3.0.1
 	pault.ag/go/debian v0.19.0
 )
@@ -42,7 +44,6 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
