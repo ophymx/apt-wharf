@@ -1,0 +1,19 @@
+[Unit]
+Description=Ollama Service
+Documentation=https://github.com/ollama/ollama
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ollama
+Group=ollama
+EnvironmentFile=-/etc/default/ollama
+Environment="HOME=/var/lib/ollama"
+Environment="OLLAMA_MODELS=/var/lib/ollama/models"
+ExecStart=/usr/bin/ollama serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+---
+# Doc 1 — cooper sidecar
+#
+# .tar.zst is one of the archive extensions cooper unpacks at build
+# time (see internal/cooper/build/archive.go). The whole tarball is
+# extracted under ${ASSETS}/; doc 2 cherry-picks only the bits this
+# package owns.
+source:
+  github:
+    repo: ollama/ollama
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "ollama-linux-amd64.tgz"
+  arm64:
+    asset: "ollama-linux-arm64.tgz"
+
+---
+# Doc 2 — vanilla nfpm
+name: ollama
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: |
+  Get up and running with large language models locally. Run, manage,
+  and interact with Llama 3, Mistral, Phi 3, Gemma, and others from a
+  simple command-line interface.
+homepage: https://ollama.com/
+license: MIT
+section: utils
+depends:
+  - adduser
+recommends:
+  - libollama-nvidia
+contents:
+  - src: ${ASSETS}/bin/ollama
+    dst: /usr/bin/ollama
+    file_info:
+      mode: 0755
+  - src: ./ollama.service
+    dst: /lib/systemd/system/ollama.service
+    file_info:
+      mode: 0644
+scripts:
+  postinstall: ./ollama.postinstall

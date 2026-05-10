@@ -1,0 +1,46 @@
+---
+# Doc 1 — cooper sidecar
+#
+# Same upstream asset as the `ollama` package; this entry partitions a
+# different subset of the tarball into its own .deb. Cooper extracts
+# the whole archive at build time regardless; the actual filtering
+# happens via doc 2's contents: list (and so by *what we ship*, not by
+# what we extract).
+source:
+  github:
+    repo: ollama/ollama
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "ollama-linux-amd64.tgz"
+  arm64:
+    asset: "ollama-linux-arm64.tgz"
+
+---
+# Doc 2 — vanilla nfpm
+#
+# nfpm's `type: tree` walks a source directory recursively at build
+# time and copies every regular file under it. We use it twice — once
+# per CUDA major — so a future tarball that adds `cuda_v13/` doesn't
+# break the build (we'd just add a third entry).
+name: libollama-nvidia
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: |
+  NVIDIA GPU support libraries for Ollama. Provides the CUDA-flavored
+  ggml runners ollama loads at startup when an NVIDIA GPU is present.
+  Install alongside `ollama` to enable GPU-accelerated inference on
+  NVIDIA hardware.
+homepage: https://ollama.com/
+license: MIT
+section: libs
+contents:
+  - src: ${ASSETS}/lib/ollama/cuda_v12
+    dst: /usr/lib/ollama/cuda_v12
+    type: tree
+  - src: ${ASSETS}/lib/ollama/cuda_v13
+    dst: /usr/lib/ollama/cuda_v13
+    type: tree

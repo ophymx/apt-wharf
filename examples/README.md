@@ -1,6 +1,6 @@
 # cooper examples
 
-Four end-to-end example packages, each scoped to one cooper feature
+Five end-to-end example packages, each scoped to one cooper feature
 surface. Every example validates with:
 
 ```sh
@@ -8,8 +8,8 @@ cooper validate ./examples/<name>/cooper.yaml
 ```
 
 (no network required) and is meant to be a copy-paste starting point for
-a real package. Numbers below are degrees of complication, not order of
-preference — the `gocryptfs` case is what most cooper packages will look
+a real package. Order in the table below is roughly increasing
+complication; the `gocryptfs` case is what most cooper packages will look
 like.
 
 | Example | What it shows |
@@ -18,6 +18,7 @@ like.
 | [`talosctl/`](./talosctl) | single-binary asset (no archive); literal aux file (no template) |
 | [`gocryptfs/`](./gocryptfs) | flat-layout tarball with multiple binaries + man pages; no aux files |
 | [`prometheus/`](./prometheus) | tarball with versioned subdir; literal systemd unit + postinstall script |
+| [`ollama/`](./ollama) | one cooper.yaml producing **two** `.deb`s from the same upstream asset; nfpm `type: tree` for shipping subdirectories |
 
 ## How to run
 
@@ -97,6 +98,32 @@ explicitly:
 become literals in the plan JSON); `${ASSETS}` is substituted at
 build time by nfpm. The systemd unit and postinstall script are
 plain literal files in the package directory.
+
+### `ollama/` — one cooper.yaml, two `.deb`s, shared asset
+
+The most interesting layout. `cooper.yaml` lists two per-package
+files; both pull from the **same** GitHub release
+(`ollama/ollama` → `ollama-linux-${ARCH}.tgz`) and slice different
+paths out of the extracted tree:
+
+- `ollama` ships `bin/ollama` plus a literal systemd unit and a
+  postinstall script that creates the `ollama` system user.
+- `libollama-nvidia` ships the CUDA-flavored ggml runners under
+  `lib/ollama/cuda_v12/` and `lib/ollama/cuda_v13/` using nfpm's
+  `type: tree`, which walks a source directory recursively at build
+  time and copies every regular file under it. The two-tree pattern
+  means a future tarball that adds `cuda_v14/` is a one-line change.
+
+Cooper extracts the whole tarball regardless of which subset each
+package needs; the actual partitioning happens via doc 2's
+`contents:` list. nfpm only sees the files it's told to ship, and
+that's what ends up in each `.deb`. The two builds are independent
+artifacts with distinct `build_inputs_hash` values, so the
+orchestrator can dedup them separately against the target apt repo.
+
+`ollama` declares `Recommends: libollama-nvidia` so apt offers to
+pull GPU support alongside the binary on NVIDIA hosts but doesn't
+require it on CPU-only ones.
 
 ## What you'll need at runtime
 

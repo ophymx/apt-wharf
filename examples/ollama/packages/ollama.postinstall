@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if ! getent passwd ollama >/dev/null; then
+    adduser --quiet --system --group --disabled-login \
+        --home /var/lib/ollama --shell /usr/sbin/nologin \
+        ollama
+fi
+
+mkdir -p /var/lib/ollama/models
+chown -R ollama:ollama /var/lib/ollama
+
+systemctl daemon-reload || true
