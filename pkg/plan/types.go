@@ -44,11 +44,18 @@ type Source struct {
 
 // Artifact is one (package, arch) tuple — the unit at which cooper builds
 // .debs and at which orchestrators dedup against the target apt repo.
+//
+// Result/Error are populated only by `cooper build` when an artifact's
+// build fails — discover never sets them. Empty Result is "ok"; the
+// failure-isolation rule in cooper-design.md §"Phases · Build" lets
+// sibling artifacts in the same package finish even when one errors.
 type Artifact struct {
 	Arch      string    `json:"arch"`
 	Asset     Asset     `json:"asset"`
 	Deb       Deb       `json:"deb"`
 	BuildPlan BuildPlan `json:"build_plan"`
+	Result    string    `json:"result,omitempty"`
+	Error     *Error    `json:"error,omitempty"`
 }
 
 // Asset describes the upstream binary cooper will fetch.
