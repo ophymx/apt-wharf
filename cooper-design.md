@@ -182,9 +182,13 @@ emitting the JSON. Anything else in doc 2 is passed through verbatim.
 | `${ASSETS}`  | build       | left symbolic in JSON; build sets it as an env var when exec'ing nfpm |
 
 `${ASSETS}` is interpreted by **nfpm itself** at build time — nfpm
-already supports `${VAR}` expansion in its config values. Cooper just
-sets the env. The resolved nfpm config in the JSON keeps `${ASSETS}`
-verbatim so doc 2's literal form is preserved.
+already supports `${VAR}` expansion in its config values, but only on
+contents entries that opt in via `expand: true`. Cooper sets that flag
+on every contents entry as it writes `nfpm.yaml` to disk, so the user
+doesn't have to know about the knob. This adjustment happens at build
+time, against the on-disk YAML; `build_plan.nfpm` in the JSON is left
+untouched so it stays a faithful copy of doc 2 (and so `expand: true`
+doesn't perturb `build_inputs_hash`).
 
 That's the full set. There is no `${AUX}`, no `${TMPL_*}`, no
 cooper-specific env-var namespace beyond `${ASSETS}`.
@@ -473,11 +477,18 @@ Field notes:
   intentional.
 - **`deb.path` / `deb.sha256`** are `null` in discover output and
   populated in build output. Same JSON shape on both sides.
+- **Artifact-level `result` / `error`** are absent on discover output
+  (artifact failures collapse into a package-level error there) and
+  populated by build only when an individual artifact's pipeline
+  failed. Sibling artifacts in the same package finish regardless. An
+  empty `result` on an artifact means "ok" — the field uses
+  `omitempty`.
 - **`error.kind`** values: `discovery_failed` (GitHub API or asset
   resolution); `version_invalid` (resolved version doesn't match
   Debian's grammar); `aux_resolution_failed` (template render error,
   missing file, glob with no matches, etc.); `build_failed`
-  (build-only; nfpm exec returned non-zero).
+  (build-only; nfpm exec, asset SHA mismatch, archive sandbox
+  rejection, or any other build-pipeline failure).
 - **Filtering**: orchestrators may drop entire `packages[]` or
   `artifacts[]` entries. They MUST NOT edit any other field — build
   re-checks `build_inputs_hash` and rejects mismatches.
@@ -540,10 +551,14 @@ configs, and producers that wrap discover to mutate its output.
 Producers MUST emit a document whose `build_inputs_hash` recomputes
 identically on the build side. To keep hashes language-agnostic,
 cooper ships a Go helper package at
-**`github.com/ophymx/apt-cooper/pkg/plan`** (public, importable)
-exposing schema types, JCS canonicalizer, and the hash function.
-Producers in other languages reimplement against the spec above plus
-a published corpus of known-good vectors.
+**`github.com/ophymx/apt-signpost/pkg/plan`** (public, importable)
+exposing schema types, JCS canonicalizer, and the hash function. Cooper
+currently lives inside the apt-signpost module while it stabilizes; an
+eventual split to a standalone `github.com/ophymx/apt-cooper` module is
+post-v0 and will be a pure import-path rename. Producers in other
+languages reimplement against the spec above plus the conformance
+vector pinned in `pkg/plan/hash_test.go` (the
+`TestComputeBuildInputsHash_Golden` digest is the seed of that corpus).
 
 Producers MAY: emit any number of `packages[]`/`artifacts[]` entries;
 mark any package as `result: "error"`; set `tool.name` to their own.
@@ -600,8 +615,12 @@ Pure Go, no CGO.
   version is named in cooper's release notes.
 - **`github.com/google/go-github/v86`** — releases API.
 - **`gopkg.in/yaml.v3`** — multi-document YAML decode/encode.
-- **`github.com/bmatcuk/doublestar/v4`** — glob expansion. Same library
-  and version nfpm uses internally.
+- **`github.com/bmatcuk/doublestar/v4`** — glob expansion at discover
+  time (when cooper decides which files to inline into `aux_files`).
+  nfpm itself uses `goreleaser/fileglob` (gobwas/glob underneath); for
+  the simple `./completions/*`-style globs that cooper supports, the
+  match sets agree. If a divergence ever surfaces, switch cooper's
+  expansion to fileglob — the user-visible doc 2 is unchanged.
 - **`archive/tar`**, **`compress/gzip`**, **`github.com/ulikunitz/xz`**,
   **`github.com/klauspost/compress/zstd`**, **`archive/zip`** — archive
   readers.
@@ -615,16 +634,29 @@ feature in another tool to satisfy a cooper need.
 
 ## Package layout
 
+Cooper currently shares a Go module with apt-signpost, so its internal
+packages are namespaced under `internal/cooper/` to avoid colliding
+with the existing apt-signpost internals (`internal/config`,
+`internal/source`, etc.).
+
 ```
-cmd/cooper/           main, subcommand dispatch
-pkg/plan/             public: JSON contract types, JCS, build_inputs_hash
-                      (importable by external producers)
-internal/config/      cooper.yaml + multi-doc package file parsing/validation
-internal/source/      GitHub release discovery
-internal/asset/       download, hash, archive readers
-internal/stage/       per-artifact staging (extract, materialize aux, render templates)
-internal/build/       exec nfpm with controlled env, capture .deb + SHA256
+cmd/cooper/                 main, subcommand dispatch (validate, discover, build)
+pkg/plan/                   public: JSON contract types, JCS, build_inputs_hash
+                            (importable by external producers)
+internal/cooper/config/     cooper.yaml + multi-doc package file parsing/validation
+internal/cooper/source/     GitHub release + asset resolution
+internal/cooper/version/    version-string assembly per version_from + version_template
+internal/cooper/stage/      aux file walker, template renderer, doc 2 substitution,
+                            aux_files materialization (used by both discover and build)
+internal/cooper/discover/   per-package orchestrator emitting plan.Plan
+internal/cooper/build/      download, sandboxed archive extract, staging,
+                            mtime pin, exec nfpm, .deb hashing
 ```
+
+The earlier sketch grouped download + archive into a separate
+`internal/asset/`; in practice they only have one caller (`build`) and
+they share enough state with the rest of the build pipeline that
+folding them into `internal/cooper/build/` is cleaner.
 
 ## Security & sandboxing
 
@@ -691,7 +723,45 @@ How it's pinned:
 
 A CI self-check builds a fixed corpus of JSON plans twice and diffs
 SHA256s. Any drift fails the build, catching nfpm-upgrade or
-pipeline regressions before release.
+pipeline regressions before release. The current implementation of
+this check lives at `internal/cooper/build/run_e2e_test.go`
+(`TestRun_RealNfpm`); it skips automatically when nfpm isn't on PATH
+so the rest of the test suite stays portable.
+
+## Implementation status
+
+v0 is complete as of the implementation pass that landed
+`f17d3f6 add cooper build`. All three subcommands work end-to-end:
+
+- `cooper validate <CONFIG>` — network-free lint of cooper.yaml + every
+  per-package multi-doc file: doc 1 schema, doc 2 well-formedness,
+  aux-file path resolution, template parse + render against placeholder
+  Vars.
+- `cooper discover <CONFIG>` — emits a `plan.Plan` JSON document. One
+  GitHub API call per package (the cached release powers per-arch asset
+  matching). Token resolution via cooper.yaml's `github.token_env` /
+  `token_file` (mutually exclusive); unauthenticated when neither is
+  set.
+- `cooper build <JSON_FILE>` — produces reproducible `.deb` files.
+  Recomputes `build_inputs_hash` on every artifact before any I/O;
+  rejects mismatches. Per-artifact failure isolation. Real-nfpm e2e
+  test asserts byte-identical `.deb` output across two builds of the
+  same plan.
+
+Test coverage at v0 release:
+- `pkg/plan` — round-trip + JCS sort + golden hash vector + sensitivity
+  (every input flips the hash, excluded fields don't).
+- `internal/cooper/config` — 30+ validation cases.
+- `internal/cooper/stage` — every aux-resolution path-shape case from
+  the design plus traversal/symlink-escape rejection.
+- `internal/cooper/source` — httptest-mocked GitHub for all four
+  release modes plus prerelease opt-in.
+- `internal/cooper/version` — every version_from variant, plus
+  version_template substitution and Debian-grammar rejection.
+- `internal/cooper/build` — every archive-extraction security
+  rejection (traversal, absolute, setuid, device, symlink-out,
+  hardlink-out, byte cap, file cap), plus end-to-end orchestrator
+  (stub-exec) and end-to-end real-nfpm with reproducibility check.
 
 ## Deferred (post-v0)
 
