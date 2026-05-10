@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/google/go-github/v86 v86.0.0
 	github.com/goreleaser/nfpm/v2 v2.46.3
