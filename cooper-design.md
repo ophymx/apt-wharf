@@ -26,9 +26,9 @@ apt-cooper is a two-phase tool with a JSON contract between them:
                                                   │
                                                   ▼
                                             orchestrator (out of scope):
-                                            queries target repo via
-                                            build_inputs_hash, drops
-                                            already-imported entries
+                                            queries target repo, drops
+                                            duplicates and version
+                                            regressions
 ```
 
 `cooper discover <CONFIG>` reads YAML config (a top-level `cooper.yaml`
@@ -36,40 +36,127 @@ plus one multi-doc YAML file per package — doc 1 cooper-shaped, doc 2
 **vanilla nfpm**), resolves the GitHub release per package, and emits a
 JSON plan to stdout. `cooper build <JSON_FILE>` reads the plan, downloads
 assets, stages files at the paths doc 2 references, and exec's `nfpm pkg`
-per artifact to emit `.deb`s.
+per artifact to emit `.deb`s. The JSON between phases is the
+orchestration boundary **and** the plugin point: any program emitting
+valid JSON is a producer (see *External producers*).
 
-Cooper is **stateless** across runs. Every dedup decision lives in the
-orchestrator, which queries the target apt repo via `build_inputs_hash`
-(the artifact's import-identity key) before piping a filtered subset of
-the discover JSON into build. The trivial pipeline
-`cooper discover c.yaml | cooper build -` is the no-orchestrator case
-(always builds whatever discover found).
-
-The JSON between phases is the orchestration boundary **and** the plugin
-point: any program emitting valid JSON is a producer; cooper's built-in
-discover is just the GitHub case. GitHub is the only built-in source —
-non-GitHub feeds and "the nfpm doc isn't templatable enough" cases go
-through external producers of the same contract.
+The trivial pipeline `cooper discover c.yaml | cooper build -` is the
+no-orchestrator case — always builds whatever discover found, at the
+bare version with no revision. Dedup and version policy live in the
+orchestrator; see *Orchestrator dedup & version policy*.
 
 ## Output & downstream publishing
 
-Cooper's only outputs are `.deb` files in `--out-dir` and an annotated
-copy of the input JSON on stdout. Pushing those `.deb`s into a hosted
-apt repository is **out of scope** — a separate publisher tool (an
-`aptly`/`reprepro` wrapper, S3 sync, `dpkg-scanpackages`, etc.) consumes
-the output directory and the annotated JSON.
+Cooper's outputs are `.deb` files in `--out-dir` plus an annotated
+copy of the input JSON on stdout. Pushing those into a hosted repo
+is **out of scope** — a separate publisher tool (`aptly`/`reprepro`
+wrapper, S3 sync, `dpkg-scanpackages`, etc.) consumes the output
+directory and JSON. Cooper emits **unsigned** `.deb`s; per-`.deb`
+signing (`debsigs`) is the repo manager's concern.
 
 The contract cooper offers downstream:
 
 - Predictable filename `<name>_<version>_<arch>.deb`.
 - `build_inputs_hash` per artifact, stable across runs (see
-  *Reproducibility*) — orchestrator's import-identity key.
+  *Reproducibility*) — embedded into each `.deb` as the
+  `X-Cooper-Build-Inputs-Hash` control field for orchestrator-side
+  dedup (see *Orchestrator dedup & version policy*).
 - Process exit code 0 only when every requested artifact built cleanly.
 
-Cooper emits **unsigned** `.deb`s by design. Per-`.deb` signing
-(`debsigs`) is the repo manager's concern; the standard apt trust
-chain (signed `Release` → `Packages` hashes → `.deb` hashes) doesn't
-need it.
+## Orchestrator dedup & version policy
+
+Cooper never reaches into the target apt repository. Dedup and
+version policy live in the orchestrator — typically a thin wrapper
+around `aptly`, `reprepro`, or whichever repo manager owns the
+published tree.
+
+### Primary dedup key: `X-Cooper-Build-Inputs-Hash`
+
+Every `.deb` cooper produces carries an `X-Cooper-Build-Inputs-Hash`
+control field whose value is the artifact's `build_inputs_hash`
+verbatim (`"sha256:<hex>"`). Cooper-build injects it as one of
+three on-disk-only adjustments at `nfpm.yaml`-write time (see
+*Build*); it does not flow into `build_plan.nfpm`, so its presence
+doesn't self-reference into the hash. dpkg, apt, and aptly preserve
+unknown control fields verbatim and (in aptly's case) index them
+for `?q=` queries.
+
+Orchestrators use this field as the primary dedup test, one query
+per artifact in the plan:
+
+| Hash present in repo? | Action                                                |
+| --------------------- | ----------------------------------------------------- |
+| Yes                   | Skip — idempotent re-discovery                        |
+| No                    | Build and publish (see *Auto-bump* for version policy)|
+
+Because the hash excludes the orchestrator's revision choice (see
+*`--revision N` mechanics*), re-running discover after a revision
+bump still hits the skip branch.
+
+### Auto-bump: resolving a hash miss
+
+When the hash isn't in the repo, the orchestrator queries by
+`(Package, base-version, Architecture)` to pick a debian-revision
+that doesn't collide:
+
+| `(Package, base-version, Architecture)` in repo? | Publish at                                       |
+| ------------------------------------------------ | ------------------------------------------------ |
+| Absent                                           | Bare version (`1.0.0`)                           |
+| Present, max revision = N                        | `<bare>-(N+1)` (`1.0.0-1`, `1.0.0-2`, ...)       |
+
+wget's `filename.1` pattern lifted to apt. Recipe edits, upstream
+tag mutations (asset SHA changes under the same release), and
+`format_revision` bumps all flow through this path because each
+perturbs `build_inputs_hash` (see *`build_inputs_hash` inputs*).
+Bare (no debian-revision) counts as N=0 for the `(N+1)` formula, so
+publishing on top of a bare-only `(Package, base-version, Architecture)`
+yields `<bare>-1`. The orchestrator passes `N+1` to cooper via
+`cooper build --revision N+1 <plan.json>`; `pkg/plan` exposes
+`SplitDebianRevision` and `CompareVersions` so every implementation
+parses Debian versions the same way.
+
+### `--revision N` mechanics
+
+`cooper build --revision N` appends `-N` to every artifact's version
+at on-disk `nfpm.yaml`-write time — the third on-disk-only
+adjustment alongside `expand: true` and the
+`X-Cooper-Build-Inputs-Hash` injection. **The `build_inputs_hash`
+is unchanged.** The revision is post-discover metadata, not a build
+input; including it would mean re-discovery never hits the dedup
+branch (infinite re-bumping).
+
+`build_plan.nfpm.version` in the JSON stays bare; the published
+`.deb`'s Debian version and filename are `<bare>-N`. `cooper
+discover` is revision-unaware (no `--revision` flag, never emits
+`-N`). `--revision N` errors if any `build_plan.nfpm.version` already
+contains `-` (a recipe that bakes its own debian-revision opts out
+of auto-bump). Re-fed annotated plans (those with `deb.path`
+populated) are rejected unconditionally — see *Build*.
+
+### Version monotonicity
+
+apt clients upgrade only when a repo candidate sorts strictly newer
+than the installed version per `dpkg --compare-versions`
+(Policy §5.6.12). Publishing an older version of a package whose
+newer version already exists in the repo is silently a no-op for
+clients. Orchestrators MUST filter discover output against the
+repo's current "highest version per `(Package, Architecture)`" set
+and drop any artifact whose version sorts strictly older than that
+maximum. The shared comparator lives in `pkg/plan` (`CompareVersions`).
+
+### Audit & safety
+
+These are orchestrator concerns — cooper has no logging contract or
+strict-mode flag, since it doesn't make publish decisions.
+Orchestrator implementations should:
+
+- Log every auto-bump with prior hash, new hash, prior revision,
+  new revision.
+- Expose a strict-mode flag for environments that require human
+  gating; the default workflow is auto-bump.
+- Alert on revision counts per
+  `(Package, base-version, Architecture)` exceeding a threshold,
+  catching runaway rebuilds.
 
 ## Config
 
@@ -172,23 +259,19 @@ release's asset names. Zero or more-than-one matches → discover error.
 
 ### Cooper's substitution into doc 2
 
-Cooper substitutes a fixed set of three variables into doc 2 before
-emitting the JSON. Anything else in doc 2 is passed through verbatim.
+Cooper substitutes a fixed set of three variables into doc 2;
+anything else passes through verbatim.
 
 | Variable     | Resolved by | Where in JSON                                    |
 | ------------ | ----------- | ------------------------------------------------ |
 | `${VERSION}` | discover    | substituted to a literal in `build_plan.nfpm`    |
 | `${ARCH}`    | discover    | substituted to a literal in `build_plan.nfpm`    |
-| `${ASSETS}`  | build       | left symbolic in JSON; build sets it as an env var when exec'ing nfpm |
+| `${ASSETS}`  | build       | left symbolic; build sets it as an env var when exec'ing nfpm |
 
-`${ASSETS}` is interpreted by **nfpm itself** at build time — nfpm
-already supports `${VAR}` expansion in its config values, but only on
-contents entries that opt in via `expand: true`. Cooper sets that flag
-on every contents entry as it writes `nfpm.yaml` to disk, so the user
-doesn't have to know about the knob. This adjustment happens at build
-time, against the on-disk YAML; `build_plan.nfpm` in the JSON is left
-untouched so it stays a faithful copy of doc 2 (and so `expand: true`
-doesn't perturb `build_inputs_hash`).
+For nfpm to expand `${ASSETS}` at build time, every `contents[]`
+entry needs `expand: true`. Cooper sets that flag (preserving any
+explicit user value) when writing the on-disk `nfpm.yaml`; see
+*Build* step 4 for the full set of on-disk-only adjustments.
 
 That's the full set. There is no `${AUX}`, no `${TMPL_*}`, no
 cooper-specific env-var namespace beyond `${ASSETS}`.
@@ -203,12 +286,12 @@ referenced by relative path actually exist when nfpm runs:
    `scripts.postremove`
 
 Every other field — `name`, `description`, `depends`, `changelog`,
-`deb.fields.*`, `deb.signature.*`, `rpm.*`, `apk.*`, anything else — is
-**passthrough**. Cooper does not stage files for those fields. A user
-writing `changelog: ./CHANGELOG.md` is responsible for the file's
-existence at build time (cooper sets cwd to the staging dir, so a
-sibling-of-doc-2 path will resolve, but cooper itself isn't aware of
-it).
+`deb.fields.*`, `deb.signature.*`, `rpm.*`, `apk.*`, anything else —
+is **passthrough**. Cooper does not stage files for those fields,
+and nfpm runs with cwd set to the staging dir (which contains only
+files cooper materialized). A passthrough relative path like
+`changelog: ./CHANGELOG.md` will not resolve unless the user uses
+an absolute path; cooper doesn't touch these fields.
 
 Within the in-scope sections, cooper classifies each path by shape and
 acts:
@@ -281,7 +364,7 @@ run:
 `version_from`. Available substitutions: `{tag}`, `{tag_strip_v}`,
 `{date}` (UTC `YYYYMMDD` derived from `release.published_at`), and
 named regex groups from `version_regex` when
-`version_from: asset_filename`. Covers `${tag_strip_v}+ds1` etc.
+`version_from: asset_filename`. Covers `{tag_strip_v}+ds1` etc.
 without a full templating language.
 
 If the resulting version doesn't match Debian's
@@ -324,6 +407,16 @@ asset when SHA256 isn't on the release payload.
 
 ```
 parse JSON plan.
+reject plans whose artifacts have deb.path populated (re-fed
+  annotated build output is not valid input).
+verify build_inputs_hash on every artifact (rejects tampered/stale
+  plans). The hash is computed once at discover and never recomputed —
+  including by --revision (see *Orchestrator dedup & version policy*).
+if --revision N is set:
+  for each artifact with result: "ok":
+    if build_plan.nfpm.version contains "-", error. Otherwise the
+    revision is applied in step 4 below as an on-disk-only mutation;
+    build_plan.nfpm.version in the JSON stays bare.
 for each artifact (across packages[*].artifacts[*]) with result: "ok":
   staging = <work-dir>/<run-id>/<package-name>/<arch>/
         # <run-id> is a per-invocation random hex id; never appears in the .deb.
@@ -338,8 +431,19 @@ for each artifact (across packages[*].artifacts[*]) with result: "ok":
      ${ASSETS}/<asset.name>.
   3. Materialize aux_files: for each (key, content) in build_plan.aux_files,
      write content to <staging>/<key> (preserving the source-relative path).
-  4. Write resolved nfpm.yaml to <staging>/nfpm.yaml — verbatim
-     build_plan.nfpm.
+  4. Write resolved nfpm.yaml to <staging>/nfpm.yaml from
+     build_plan.nfpm with three on-disk-only adjustments:
+       (a) expand: true on every contents[] entry whose user did not
+           explicitly set the flag, so nfpm expands ${ASSETS} at exec
+           time.
+       (b) deb.fields["X-Cooper-Build-Inputs-Hash"] =
+           build_inputs_hash (already "sha256:<hex>" in the JSON), so
+           orchestrators and repo managers can query the published
+           .deb (see *Orchestrator dedup & version policy*).
+       (c) if --revision N is set: write the version field as
+           "<bare-version>-<N>" (the JSON stays bare).
+     None of these adjustments flow back into the JSON, so none of
+     them perturb build_inputs_hash.
   5. exec `nfpm pkg --packager deb -f nfpm.yaml -t <out-dir>/` with:
        cwd = <staging>
        env (everything else dropped):
@@ -352,9 +456,11 @@ clean <work-dir>/<run-id>/ (unless --keep-work).
 ```
 
 Build refuses entries with `result: "error"` (orchestrator drops them
-before piping). Build also recomputes `build_inputs_hash` from the
-JSON it received and refuses mismatches — defense against tampered or
-stale plans.
+before piping). The hash-verification preamble runs exactly once,
+against the incoming plan; the value it asserts is the value embedded
+into the `.deb` and re-emitted in the annotated JSON, regardless of
+whether `--revision` is in play (see *Orchestrator dedup & version
+policy*).
 
 Failures isolate per-artifact; a failed `foo amd64` does not block
 `bar amd64`. The re-emitted JSON marks failed artifacts
@@ -408,7 +514,6 @@ small enough to read by eye.
             "nfpm": {
               "name": "hugo",
               "version": "0.140.0",
-              "epoch": "0",
               "arch": "amd64",
               "platform": "linux",
               "maintainer": "Ophymx <ops@ophymx.com>",
@@ -499,9 +604,9 @@ Field notes:
 
 ### `build_inputs_hash` inputs
 
-Computed once per artifact. The hash is the orchestrator's
-import-identity key — same hash means byte-identical `.deb` (by the
-*Reproducibility* guarantee) means safe to skip re-import.
+Computed once per artifact at discover time, never recomputed.
+The orchestrator's primary dedup key (see *Orchestrator dedup &
+version policy*).
 
 ```
 build_inputs_hash = SHA256(JCS({
@@ -535,9 +640,9 @@ algorithm for one release cycle.
 
 ## External producers
 
-Any program emitting a valid JSON document on stdout is a producer that
-can pipe into `cooper build`. `cooper discover` is just the built-in
-producer for the GitHub case.
+Any program emitting a valid JSON document on stdout is a producer
+that can pipe into `cooper build`. `cooper discover` is just the
+built-in producer for the GitHub case.
 
 ```sh
 my-producer            | cooper build -                  # always-build
@@ -545,34 +650,41 @@ my-producer | filter   | cooper build -                  # dedup against repo
 cooper discover c.yaml | mutate-plan | cooper build -    # compose with built-in
 ```
 
-This is the extension surface for non-GitHub sources, generated nfpm
-configs, and producers that wrap discover to mutate its output.
-
 Producers MUST emit a document whose `build_inputs_hash` recomputes
-identically on the build side. To keep hashes language-agnostic,
-cooper ships a Go helper package at
-**`github.com/ophymx/apt-signpost/pkg/plan`** (public, importable)
-exposing schema types, JCS canonicalizer, and the hash function. Cooper
-currently lives inside the apt-signpost module while it stabilizes; an
-eventual split to a standalone `github.com/ophymx/apt-cooper` module is
-post-v0 and will be a pure import-path rename. Producers in other
-languages reimplement against the spec above plus the conformance
-vector pinned in `pkg/plan/hash_test.go` (the
-`TestComputeBuildInputsHash_Golden` digest is the seed of that corpus).
+identically on the build side; see *`pkg/plan` public API* below for
+the helpers cooper exposes for language-agnostic conformance.
 
-Producers MAY: emit any number of `packages[]`/`artifacts[]` entries;
-mark any package as `result: "error"`; set `tool.name` to their own.
-Producers MUST set `tool.format_revision` to the value of an actual
-cooper release they are conformant with — build re-checks the hash
-against that revision's algorithm, so a fabricated value will fail.
-Pinning to a specific cooper release is the producer's release-time
-choice; bumping it is a behavior change.
+Producers MAY emit any number of `packages[]`/`artifacts[]` entries,
+mark any package as `result: "error"`, set `tool.name` to their own.
+Producers MUST set `tool.format_revision` to the value of a real
+cooper release they are conformant with; build re-checks the hash
+against that revision's algorithm and rejects fabricated values.
+
+### `pkg/plan` public API
+
+`pkg/plan` is cooper's only externally-importable package. Exported
+surface, in addition to the JSON schema types from *Discover JSON
+contract*:
+
+| Symbol                              | Purpose                                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ComputeBuildInputsHash(BuildPlan)` | Per-artifact hash — JCS canonicalization (RFC 8785) + SHA256                                  |
+| `CompareVersions(a, b string) int`  | Debian Policy §5.6.12 version comparison; returns `-1`, `0`, `+1`                             |
+| `SplitDebianRevision(v string)`     | Split a Debian version: `"1.0.0-2"` → `("1.0.0", "2")`; bare `"1.0.0"` → `("1.0.0", "")`     |
+| `SchemaVersion`, `FormatRevision`   | The two version knobs (see *Discover JSON contract* field notes)                              |
+
+Conformance corpus: `pkg/plan/hash_test.go`
+(`TestComputeBuildInputsHash_Golden`) for the hash;
+`CompareVersions` has its own pinned corpus from Policy §5.6.12's
+worked examples plus historically-tripping edge cases (tildes,
+all-numeric vs. all-alpha runs, empty debian-revision, missing
+epoch).
 
 ## CLI
 
 ```
 cooper discover <CONFIG>     [--package NAME...] [-o OUTPUT]                  # YAML → JSON plan
-cooper build    <JSON_FILE>  [--out-dir DIR] [--work-dir DIR]                 # JSON plan → .debs + annotated JSON
+cooper build    <JSON_FILE>  [--out-dir DIR] [--work-dir DIR] [--revision N]  # JSON plan → .debs + annotated JSON
                              [--stage-only | --keep-work]
 cooper validate <CONFIG>                                                       # parse + lint; no network
 ```
@@ -586,11 +698,17 @@ default config path.
   to a subset.
 - **`build <JSON_FILE>`** — reads the JSON plan. `--out-dir` is where
   `.deb`s land (default `./dist/`). `--work-dir` is the staging root
-  (default `./.cooper-work/`). `--stage-only`: do everything *except*
-  the final `nfpm pkg` exec; print one line per artifact giving the
-  path to the resolved `nfpm.yaml`; leave the work dir intact.
-  `--keep-work`: do a normal build but skip cleanup. The two flags are
-  mutually exclusive.
+  (default `./.cooper-work/`). `--revision N` (positive integer)
+  appends `-N` to every artifact's version at on-disk
+  `nfpm.yaml`-write time; the `build_inputs_hash` is **not**
+  recomputed (revision is post-discover metadata, not a build input —
+  see *Orchestrator dedup & version policy*). Errors out if any
+  artifact's `build_plan.nfpm.version` already contains `-`.
+  `--stage-only`: do everything *except* the final `nfpm pkg` exec;
+  print one line per artifact giving the path to the resolved
+  `nfpm.yaml`; leave the work dir intact. `--keep-work`: do a normal
+  build but skip cleanup. `--stage-only` and `--keep-work` are
+  mutually exclusive; `--revision` is compatible with either.
 - **`validate <CONFIG>`** — lint without network. Checks: top-level
   config shape; every multi-doc file's two-document structure; doc 1
   schema; doc 2 well-formed YAML; in-scope path references resolve
@@ -627,11 +745,6 @@ Pure Go, no CGO.
 
 Cooper is **stateless**: no state files, no cross-run memory.
 
-Some primitives (GitHub client + rate limits, env-var interpolation,
-secure-file checks) already exist as private internals in apt-signpost
-and may be promoted to reusable packages — **refactoring only**, no new
-feature in another tool to satisfy a cooper need.
-
 ## Package layout
 
 Cooper currently shares a Go module with apt-signpost, so its internal
@@ -652,11 +765,6 @@ internal/cooper/discover/   per-package orchestrator emitting plan.Plan
 internal/cooper/build/      download, sandboxed archive extract, staging,
                             mtime pin, exec nfpm, .deb hashing
 ```
-
-The earlier sketch grouped download + archive into a separate
-`internal/asset/`; in practice they only have one caller (`build`) and
-they share enough state with the rest of the build pipeline that
-folding them into `internal/cooper/build/` is cleaner.
 
 ## Security & sandboxing
 
@@ -693,8 +801,9 @@ For the package directory:
 Cooper guarantees **byte-identical `.deb` output** for a given JSON
 plan. Two `cooper build` invocations on the same plan, on any host,
 at any time, produce two `.deb`s with the same SHA256. This is a
-hard property — it's what makes `build_inputs_hash` safe as the
-orchestrator's import-identity key.
+hard property — it's what lets `build_inputs_hash` serve as the
+orchestrator's primary dedup key (see *Orchestrator dedup & version
+policy*).
 
 How it's pinned:
 
@@ -708,8 +817,9 @@ How it's pinned:
   Cooper rewrites the mtime of every staged file to this value
   before invoking nfpm.
 - nfpm version is named in cooper's release notes;
-  `tool.format_revision` bumps when cooper requires a different
-  nfpm major.
+  `tool.format_revision` bumps whenever cooper's output `.deb` bytes
+  would diverge for the same logical inputs (see *Discover JSON
+  contract*).
 - nfpm's environment is scrubbed to only `VERSION`, `ARCH`,
   `ASSETS`, `SOURCE_DATE_EPOCH`, `LC_ALL=C`, and a minimal fixed
   `PATH`. Cwd is the staging dir. Hostname, user, and inherited
