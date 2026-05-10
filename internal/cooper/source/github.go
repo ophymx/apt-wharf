@@ -17,9 +17,9 @@ import (
 //   - Latest=true, IncludePrerelease=false → GET /repos/.../releases/latest
 //   - Latest=true, IncludePrerelease=true  → list, take the first non-draft
 //   - TagPattern set                       → list, take the first non-draft
-//                                            whose tag matches the pattern
-//                                            (and skip prereleases unless
-//                                            IncludePrerelease is true)
+//     whose tag matches the pattern
+//     (and skip prereleases unless
+//     IncludePrerelease is true)
 //   - Tag set                              → GET /repos/.../releases/tags/<tag>
 //
 // One API call per package is the goal; the caller passes the same

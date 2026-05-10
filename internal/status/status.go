@@ -52,15 +52,15 @@ type BootstrapStatus struct {
 
 // TickStatus describes the most recent refresh tick plus running totals.
 type TickStatus struct {
-	StartedAt           time.Time     `json:"started_at,omitzero"`
-	Duration            time.Duration `json:"-"`
-	DurationSeconds     float64       `json:"duration_seconds,omitempty"`
-	Result              string        `json:"result,omitempty"` // "ok" | "error"
-	Error               string        `json:"error,omitempty"`
-	OkCount             uint64        `json:"ok_count"`
-	ErrorCount          uint64        `json:"error_count"`
-	SnapshotFiles       int           `json:"snapshot_files,omitempty"`
-	SnapshotRedirects   int           `json:"snapshot_redirects,omitempty"`
+	StartedAt         time.Time     `json:"started_at,omitzero"`
+	Duration          time.Duration `json:"-"`
+	DurationSeconds   float64       `json:"duration_seconds,omitempty"`
+	Result            string        `json:"result,omitempty"` // "ok" | "error"
+	Error             string        `json:"error,omitempty"`
+	OkCount           uint64        `json:"ok_count"`
+	ErrorCount        uint64        `json:"error_count"`
+	SnapshotFiles     int           `json:"snapshot_files,omitempty"`
+	SnapshotRedirects int           `json:"snapshot_redirects,omitempty"`
 }
 
 // SnapshotView is a frozen copy of the tracker's contents suitable for

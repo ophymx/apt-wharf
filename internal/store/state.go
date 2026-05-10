@@ -59,7 +59,7 @@ func New(stateDir string) *Store { return &Store{root: stateDir} }
 
 func (s *Store) Root() string { return s.root }
 
-func (s *Store) sourceDir() string { return filepath.Join(s.root, "sources") }
+func (s *Store) sourceDir() string    { return filepath.Join(s.root, "sources") }
 func (s *Store) bootstrapDir() string { return filepath.Join(s.root, "bootstrap") }
 
 // EnsureDirs creates state subdirectories. Idempotent.

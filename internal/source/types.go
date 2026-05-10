@@ -19,10 +19,10 @@ type Probe struct {
 	// Optional metadata exposed when the discoverer can supply it cheaply.
 	// AssetSize is from upstream API responses; AssetDigest is the
 	// "sha256:HEX" form when available (used to skip the streaming hash).
-	AssetSize     int64
-	AssetDigest   string
-	ReleaseTag    string
-	APIEtag       string
+	AssetSize   int64
+	AssetDigest string
+	ReleaseTag  string
+	APIEtag     string
 }
 
 // ProbeInput bundles per-tick caller context.

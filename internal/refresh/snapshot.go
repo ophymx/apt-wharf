@@ -50,5 +50,5 @@ type Holder struct {
 	p atomic.Pointer[Snapshot]
 }
 
-func (h *Holder) Load() *Snapshot { return h.p.Load() }
+func (h *Holder) Load() *Snapshot   { return h.p.Load() }
 func (h *Holder) Store(s *Snapshot) { h.p.Store(s) }

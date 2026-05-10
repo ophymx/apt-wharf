@@ -198,4 +198,3 @@ func poolPath(pkg, version, arch string) string {
 	}
 	return fmt.Sprintf("/pool/main/%s/%s/%s_%s_%s.deb", prefix, pkg, pkg, version, arch)
 }
-

@@ -42,17 +42,17 @@ func TestWriteNfpmYAML(t *testing.T) {
 func TestWriteAuxFiles(t *testing.T) {
 	staging := t.TempDir()
 	aux := map[string]plan.AuxFile{
-		"./hugo.service":              {ContentB64: b64("[Unit]\nDescription=Hugo\n")},
-		"./completions/hugo.bash":     {ContentB64: b64("# bash completion\n")},
-		"./completions/hugo.zsh":      {ContentB64: b64("# zsh completion\n")},
+		"./hugo.service":          {ContentB64: b64("[Unit]\nDescription=Hugo\n")},
+		"./completions/hugo.bash": {ContentB64: b64("# bash completion\n")},
+		"./completions/hugo.zsh":  {ContentB64: b64("# zsh completion\n")},
 	}
 	if err := WriteAuxFiles(aux, staging); err != nil {
 		t.Fatal(err)
 	}
 	for rel, want := range map[string]string{
-		"hugo.service":              "[Unit]\nDescription=Hugo\n",
-		"completions/hugo.bash":     "# bash completion\n",
-		"completions/hugo.zsh":      "# zsh completion\n",
+		"hugo.service":          "[Unit]\nDescription=Hugo\n",
+		"completions/hugo.bash": "# bash completion\n",
+		"completions/hugo.zsh":  "# zsh completion\n",
 	} {
 		got, err := os.ReadFile(filepath.Join(staging, rel))
 		if err != nil {
@@ -105,8 +105,8 @@ func TestPinMtimes(t *testing.T) {
 
 func TestRejectNonZeroOwners_OK(t *testing.T) {
 	cases := []string{
-		`{"contents":[{"src":"a","dst":"/a"}]}`,                                   // no file_info
-		`{"contents":[{"src":"a","dst":"/a","file_info":{"mode":493}}]}`,          // mode only
+		`{"contents":[{"src":"a","dst":"/a"}]}`,                          // no file_info
+		`{"contents":[{"src":"a","dst":"/a","file_info":{"mode":493}}]}`, // mode only
 		`{"contents":[{"src":"a","dst":"/a","file_info":{"owner":"","group":""}}]}`,
 		`{"contents":[{"src":"a","dst":"/a","file_info":{"owner":"root","group":"root"}}]}`,
 		`{"contents":[{"src":"a","dst":"/a","file_info":{"owner":"0","group":0}}]}`,

@@ -56,8 +56,8 @@ func fixtureRepo(t *testing.T, packageBody string, files map[string]string) stri
 
 func TestCmdValidate_Happy(t *testing.T) {
 	cfg := fixtureRepo(t, sampleSidecarLatest, map[string]string{
-		"hugo.service":         "[Unit]\n",
-		"hugo-postinstall.sh":  "#!/bin/sh\n",
+		"hugo.service":        "[Unit]\n",
+		"hugo-postinstall.sh": "#!/bin/sh\n",
 	})
 	if err := cmdValidate([]string{cfg}); err != nil {
 		t.Fatalf("validate: %v", err)

@@ -316,9 +316,11 @@ func TestRun_SiblingArtifactNotBlockedByFailure(t *testing.T) {
 	p.Packages[0].Artifacts = []plan.Artifact{failArt, armArt}
 
 	res, err := Run(context.Background(), p, Options{
-		OutDir:   t.TempDir(),
-		WorkDir:  t.TempDir(),
-		NfpmExec: func(_ context.Context, _, outputPath string, _ []string) error { return os.WriteFile(outputPath, []byte("x"), 0o644) },
+		OutDir:  t.TempDir(),
+		WorkDir: t.TempDir(),
+		NfpmExec: func(_ context.Context, _, outputPath string, _ []string) error {
+			return os.WriteFile(outputPath, []byte("x"), 0o644)
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

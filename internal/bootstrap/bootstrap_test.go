@@ -14,10 +14,10 @@ func TestNextVersion(t *testing.T) {
 		{"", "2026.05.09.1"},
 		{"2026.05.09.1", "2026.05.09.2"},
 		{"2026.05.09.7", "2026.05.09.8"},
-		{"2026.05.08.5", "2026.05.09.1"},      // different day
-		{"garbage", "2026.05.09.1"},           // unparseable
-		{"2026.05.09.0", "2026.05.09.1"},      // n=0 invalid → reset
-		{"2026.05.09.x", "2026.05.09.1"},      // n not int → reset
+		{"2026.05.08.5", "2026.05.09.1"}, // different day
+		{"garbage", "2026.05.09.1"},      // unparseable
+		{"2026.05.09.0", "2026.05.09.1"}, // n=0 invalid → reset
+		{"2026.05.09.x", "2026.05.09.1"}, // n not int → reset
 	}
 	for _, c := range cases {
 		got := NextVersion(c.prev, now)
@@ -39,8 +39,8 @@ func TestInputHash_StableUnderEqualInputs(t *testing.T) {
 		KeyringBytes:  []byte("dummy-keyring-bytes"),
 	}
 	b := *a
-	b.Components = []string{"main"}                // same content, fresh slice
-	b.Architectures = []string{"arm64", "amd64"}   // unsorted; hash should sort
+	b.Components = []string{"main"}              // same content, fresh slice
+	b.Architectures = []string{"arm64", "amd64"} // unsorted; hash should sort
 
 	if InputHash(a) != InputHash(&b) {
 		t.Fatal("hash should be insensitive to architectures order")

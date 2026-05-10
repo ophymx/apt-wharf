@@ -55,10 +55,10 @@ func statusHandler(holder *refresh.Holder, tracker *status.Tracker) http.Handler
 }
 
 type statusResponse struct {
-	Snapshot  snapshotInfo                      `json:"snapshot"`
-	Tick      status.TickStatus                 `json:"tick"`
-	Bootstrap status.BootstrapStatus            `json:"bootstrap"`
-	Sources   map[string]*status.SourceStatus   `json:"sources"`
+	Snapshot  snapshotInfo                    `json:"snapshot"`
+	Tick      status.TickStatus               `json:"tick"`
+	Bootstrap status.BootstrapStatus          `json:"bootstrap"`
+	Sources   map[string]*status.SourceStatus `json:"sources"`
 }
 
 type snapshotInfo struct {

@@ -16,10 +16,10 @@ import (
 // Wired bundles the lazily constructed runtime objects shared by serve and
 // check. No goroutines are started here; that's the caller's job.
 type Wired struct {
-	Cfg            *config.Config
-	Signer         *sign.Signer
-	Store          *store.Store
-	Fetcher        *fetch.Fetcher
+	Cfg             *config.Config
+	Signer          *sign.Signer
+	Store           *store.Store
+	Fetcher         *fetch.Fetcher
 	Discoverers     map[string]source.Discoverer
 	HTTPClient      *http.Client
 	GlobalToken     *config.Secret            // may be nil
