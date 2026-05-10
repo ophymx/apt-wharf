@@ -178,8 +178,10 @@ example external producer.
 - `dist/` is gitignored; produced by nfpm packaging.
 - Both binary names (`/signpost`, `/cooper`) are gitignored at the repo
   root so `go build -o <name>` doesn't pollute the index.
-- `nfpm.yaml` packages the **signpost** binary into a `.deb` for
-  self-hosting. It is unrelated to cooper's own use of nfpm.
+- `packaging/signpost.nfpm.yaml` and `packaging/cooper.nfpm.yaml` package
+  the two binaries into separate `.deb`s for self-hosting. These are
+  unrelated to cooper's own use of nfpm as a build step. Both configs
+  assume nfpm is invoked from the repo root.
 - `examples/` is cooper-only — five copy-paste-ready package
   configurations referenced by the design and validated by the
   regression test. See `examples/README.md` for the per-example

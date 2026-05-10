@@ -1,8 +1,10 @@
 # nfpm config for packaging the apt-signpost binary itself.
 #
+# Paths below are resolved from the repo root — invoke nfpm from there.
+#
 # Build:
 #   go build -trimpath -ldflags="-s -w" -o signpost ./cmd/signpost
-#   VERSION=0.1.0 nfpm pkg --packager deb -f nfpm.yaml -t dist/
+#   VERSION=0.1.0 nfpm pkg --packager deb -f packaging/signpost.nfpm.yaml -t dist/
 #
 # Override arch by setting GOARCH at build time and ARCH for nfpm:
 #   GOARCH=arm64 go build ... && ARCH=arm64 VERSION=0.1.0 nfpm pkg ...

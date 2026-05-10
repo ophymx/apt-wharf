@@ -96,8 +96,8 @@ preserved so adding more is non-structural.
 Pure Go, no CGO.
 
 - **`github.com/goreleaser/nfpm/v2`** — used as a library to build the
-  bootstrap `.deb` at runtime, and as a CLI (via `nfpm.yaml`) to package
-  signpost itself.
+  bootstrap `.deb` at runtime, and as a CLI (via
+  `packaging/signpost.nfpm.yaml`) to package signpost itself.
 - **`github.com/google/go-github/v86`** — GitHub Releases API client.
 - **`github.com/tidwall/gjson`** — path expressions over JSON metadata
   responses for the `json_url` discoverer.
@@ -408,8 +408,8 @@ internal/bootstrap/   nfpm-driven keyring/.sources package builder
 internal/store/       per-source JSON state read/write
 internal/fetch/       range-fetch + control extraction from upstream .debs
 internal/server/      http: static metadata, redirector, /release/... endpoints
-nfpm.yaml + packaging/  nfpm config, systemd unit, and maintainer scripts
-                      for packaging signpost itself as a .deb
+packaging/            nfpm configs (signpost.nfpm.yaml, cooper.nfpm.yaml),
+                      systemd unit, and signpost's maintainer scripts
 ```
 
 ## Configuration

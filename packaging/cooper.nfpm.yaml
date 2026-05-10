@@ -1,0 +1,41 @@
+# nfpm config for packaging the apt-cooper binary itself.
+#
+# Paths below are resolved from the repo root — invoke nfpm from there.
+#
+# Build:
+#   go build -trimpath -ldflags="-s -w" -o cooper ./cmd/cooper
+#   VERSION=0.1.0 nfpm pkg --packager deb -f packaging/cooper.nfpm.yaml -t dist/
+#
+# Override arch by setting GOARCH at build time and ARCH for nfpm:
+#   GOARCH=arm64 go build ... && ARCH=arm64 VERSION=0.1.0 nfpm pkg ...
+#
+# Runtime dependency: cooper execs `nfpm` from PATH during `cooper build`.
+# nfpm is not in Debian's apt archive, so it is not declared as a Depends
+# here; install it separately (e.g. from goreleaser's nfpm .deb release).
+
+name: apt-cooper
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+section: devel
+priority: optional
+maintainer: Ophymx <ops@ophymx.com>
+vendor: Ophymx
+homepage: https://github.com/ophymx/apt-signpost
+description: |
+  Turn GitHub release binaries into reproducible .deb files.
+  apt-cooper is a two-phase CLI (discover -> plan.json -> build) that
+  resolves a YAML recipe against a GitHub release, then exec's nfpm to
+  produce a byte-identical .deb for the same inputs. Pairs with
+  any apt-repo manager (aptly, reprepro, ...).
+
+contents:
+  - src: ./cooper
+    dst: /usr/bin/cooper
+    file_info:
+      mode: 0755
+
+deb:
+  fields:
+    Bugs: https://github.com/ophymx/apt-signpost/issues
