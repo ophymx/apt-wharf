@@ -3,6 +3,7 @@ package aptly
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -350,14 +351,71 @@ func TestEncodeAptlyPrefix(t *testing.T) {
 	}
 }
 
-func TestPublishUpdate_Non2xxBubblesUp(t *testing.T) {
+func TestPublishUpdate_404IsErrPublishNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "publication not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
 	c := New(srv.URL, nil)
 	err := c.PublishUpdate(context.Background(), ".", "missing", PublishUpdateOpts{})
-	if err == nil || !strings.Contains(err.Error(), "404") {
-		t.Errorf("expected 404 error, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrPublishNotFound) {
+		t.Errorf("expected errors.Is(err, ErrPublishNotFound), got %v", err)
+	}
+}
+
+func TestPublishUpdate_500BubblesUp(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	err := c.PublishUpdate(context.Background(), ".", "stable", PublishUpdateOpts{})
+	if err == nil || !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected 500 error, got %v", err)
+	}
+	if errors.Is(err, ErrPublishNotFound) {
+		t.Errorf("500 should not be classified as ErrPublishNotFound")
+	}
+}
+
+func TestPublishRepo_PostsCorrectBody(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		buf, _ := io.ReadAll(r.Body)
+		gotBody = string(buf)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"Distribution":"stable","Prefix":"."}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	if err := c.PublishRepo(context.Background(), ".", PublishRepoOpts{
+		SourceRepo:   "shakedown",
+		Distribution: "stable",
+		SkipSigning:  true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %s, want POST", gotMethod)
+	}
+	if gotPath != "/api/publish/:." {
+		t.Errorf("path = %s, want /api/publish/:.", gotPath)
+	}
+	// Spot-check the JSON contents — order isn't pinned (Go map iteration)
+	// but every expected key/value pair must appear.
+	for _, want := range []string{
+		`"SourceKind":"local"`,
+		`"Sources":[{"Name":"shakedown"}]`,
+		`"Distribution":"stable"`,
+		`"Signing":{"Skip":true}`,
+	} {
+		if !strings.Contains(gotBody, want) {
+			t.Errorf("body missing %s; got %s", want, gotBody)
+		}
 	}
 }

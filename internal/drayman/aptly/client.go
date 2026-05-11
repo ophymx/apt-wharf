@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -257,14 +258,23 @@ type PublishUpdateOpts struct {
 	SkipSigning bool
 }
 
+// ErrPublishNotFound signals that the publication at (prefix,
+// distribution) doesn't exist yet — typically returned from
+// PublishUpdate against a fresh aptly repo. The backend pairs this
+// with a fallback PublishRepo call to do the initial create.
+//
+// Detection is by HTTP 404 alone; aptly's body text ("unable to
+// update: published repo with storage:prefix/distribution …") is not
+// part of the contract.
+var ErrPublishNotFound = errors.New("aptly: publication not found")
+
 // PublishUpdate triggers regeneration of Release/Packages files for
 // the publication at (prefix, distribution). aptly re-reads the bound
 // local repository's current state, signs/re-emits metadata, and
 // writes the new files into the publish endpoint.
 //
-// The publication must already exist (created via aptly publish repo
-// or POST /api/publish/{prefix}/repos). drayman doesn't auto-create
-// publications — that's a one-time operator setup step.
+// Returns ErrPublishNotFound when the publication doesn't exist yet;
+// callers (Backend.Publish) recover by doing an initial PublishRepo.
 func (c *Client) PublishUpdate(ctx context.Context, prefix, distribution string, opts PublishUpdateOpts) error {
 	body := map[string]any{}
 	if opts.SkipSigning {
@@ -286,9 +296,65 @@ func (c *Client) PublishUpdate(ctx context.Context, prefix, distribution string,
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%w: PUT %s: %s", ErrPublishNotFound, req.URL, strings.TrimSpace(string(respBody)))
+	}
 	if resp.StatusCode/100 != 2 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("aptly PUT %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// PublishRepoOpts controls the initial POST /api/publish/{prefix} call.
+// SourceRepo is the local repository's name; SkipSigning mirrors the
+// PublishUpdate flag and pins the publication's signing state for
+// every subsequent update.
+type PublishRepoOpts struct {
+	SourceRepo   string
+	Distribution string
+	SkipSigning  bool
+}
+
+// PublishRepo creates the publication at (prefix, opts.Distribution)
+// sourced from opts.SourceRepo. This is the first-publish bootstrap:
+// aptly distinguishes "create publication" (POST /api/publish/{prefix})
+// from "regenerate published metadata" (PUT /api/publish/{prefix}/{dist}),
+// and the PUT 404s when no publication exists yet.
+//
+// Architectures are deliberately omitted from the body — aptly infers
+// them from the source repo's current package set. Component defaults
+// to "main" (aptly's default when Sources[].Component is omitted).
+func (c *Client) PublishRepo(ctx context.Context, prefix string, opts PublishRepoOpts) error {
+	body := map[string]any{
+		"SourceKind":   "local",
+		"Sources":      []map[string]any{{"Name": opts.SourceRepo}},
+		"Distribution": opts.Distribution,
+	}
+	if opts.SkipSigning {
+		body["Signing"] = map[string]any{"Skip": true}
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	u := fmt.Sprintf("%s/api/publish/%s", c.baseURL, encodeAptlyPrefix(prefix))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("aptly POST %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil

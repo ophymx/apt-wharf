@@ -6,6 +6,7 @@ package aptly
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -106,9 +107,27 @@ func (b *Backend) Import(ctx context.Context, debPath string) error {
 // Publish regenerates the published Release/Packages files for the
 // bound (prefix, distribution). aptly stages everything Import did;
 // publishing is what makes it visible to apt clients.
+//
+// First-publish bootstrap: aptly's PUT /api/publish endpoint only
+// works on an already-published distribution; a fresh repo 404s.
+// When PublishUpdate signals ErrPublishNotFound, we fall back to
+// PublishRepo (POST /api/publish/{prefix}) to create the publication
+// for the first time, then return. Subsequent runs go straight to
+// PublishUpdate (the fast path).
 func (b *Backend) Publish(ctx context.Context) error {
-	return b.client.PublishUpdate(ctx, b.prefix, b.distribution, aptly.PublishUpdateOpts{
+	err := b.client.PublishUpdate(ctx, b.prefix, b.distribution, aptly.PublishUpdateOpts{
 		SkipSigning: b.skipSigning,
+	})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, aptly.ErrPublishNotFound) {
+		return err
+	}
+	return b.client.PublishRepo(ctx, b.prefix, aptly.PublishRepoOpts{
+		SourceRepo:   b.repo,
+		Distribution: b.distribution,
+		SkipSigning:  b.skipSigning,
 	})
 }
 
