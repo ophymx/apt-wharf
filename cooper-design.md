@@ -945,6 +945,18 @@ valid `plan.Plan` JSON document from any program and pipe it into
   (innerText / attribute / regex). Recipe authors accept the
   inherent brittleness — vendor markup churn breaks selectors more
   often than vendor JSON breaks gjson paths.
+- **Multi-asset per source** — one source's single resolution
+  (release lookup, JSON fetch, XML fetch, …) contributing several
+  files to one `.deb`. Recipe shape: `arches[].assets:` (list) /
+  `arches[].asset_urls:` (list), syntactic sugar `arches[].asset` /
+  `arches[].asset_url` for the singleton case. Cross-source bundling
+  is **expressly out of scope** — different releases or different
+  repositories are different packages by definition; reproducibility
+  and dedup semantics rely on each `.deb` having exactly one
+  upstream provenance. Implementation: `plan.Artifact.Asset`
+  becomes `Assets []Asset`; `MatchAsset`/`RenderAssetURL` get
+  plural counterparts; `build_inputs_hash` includes every asset's
+  SHA256.
 - **Glob in `cooper.yaml`'s `packages:`** — ergonomics; explicit list is fine for v0.
 - **`--prefetch-hashes` for missing `asset.sha256`** — current contract (build streams + hashes; orchestrator re-imports unconditionally) loses dedup for that artifact. Wait for a real package that surfaces it.
 - **`sha256_path` knob on `json_url`** — go.dev's feed publishes per-file SHA256 alongside the URL; cooper currently ignores it. Wiring the upstream-supplied hash into `plan.Asset.SHA256` lets the orchestrator's hash-dedup query work on first contact instead of waiting for cooper to stream-hash on first build.
