@@ -1,10 +1,10 @@
 github:
   token_env: GITHUB_TOKEN
 
-# One cooper.yaml can declare multiple packages. Both ollama and
-# libollama-nvidia pull from the same upstream tarball
-# (ollama/ollama's `ollama-linux-${ARCH}.tar.zst`); they just slice
-# different paths out of it via doc 2's contents:.
+# One recipe file (./packages/ollama.yaml) produces two .debs —
+# ollama and libollama-nvidia — from a single ollama-linux-${ARCH}.tgz
+# upstream resolution. Doc 1 inside that file resolves the release;
+# docs 2..N each describe one .deb. See cooper-design.md
+# §"Per-package multi-doc file" for the shape.
 packages:
   - ./packages/ollama.yaml
-  - ./packages/libollama-nvidia.yaml

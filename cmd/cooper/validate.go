@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ophymx/apt-signpost/internal/cooper/config"
 	"github.com/ophymx/apt-signpost/internal/cooper/stage"
@@ -50,32 +51,45 @@ func cmdValidate(args []string) error {
 	return nil
 }
 
-// validateOne runs the full lint pipeline for a single package file.
-// label is the package's name (or the file's basename if loading failed
-// before we knew the name); msg is a short status string.
+// validateOne runs the full lint pipeline for a single recipe file
+// (one cooper sidecar + N nfpm docs). label is the first nfpm doc's
+// name (or the file's basename if loading failed before we knew it);
+// msg is a short status string aggregated across every nfpm doc.
 func validateOne(pkgPath string) (ok bool, label, msg string) {
 	pkg, err := config.LoadPackage(pkgPath)
 	if err != nil {
 		return false, filepath.Base(pkgPath), fmt.Sprintf("config: %v", err)
 	}
-	refs, err := stage.Walk(pkg.Dir, &pkg.Nfpm)
-	if err != nil {
-		return false, pkg.NfpmName, fmt.Sprintf("aux: %v", err)
+	label = pkg.NfpmDocs[0].Name
+	totalRefs, totalTmpls := 0, 0
+	for _, doc := range pkg.NfpmDocs {
+		refs, werr := stage.Walk(pkg.Dir, &doc.Node)
+		if werr != nil {
+			return false, doc.Name, fmt.Sprintf("aux (%s): %v", doc.Name, werr)
+		}
+		totalRefs += len(refs)
+		for _, r := range refs {
+			if !r.Template {
+				continue
+			}
+			body, rerr := os.ReadFile(r.AbsPath)
+			if rerr != nil {
+				return false, doc.Name, fmt.Sprintf("read %s: %v", r.AbsPath, rerr)
+			}
+			if _, terr := stage.RenderTemplate(r.Key, body, stage.PlaceholderVars()); terr != nil {
+				return false, doc.Name, fmt.Sprintf("template %s: %v", r.Key, terr)
+			}
+			totalTmpls++
+		}
 	}
-	tmplCount := 0
-	for _, r := range refs {
-		if !r.Template {
-			continue
-		}
-		body, err := os.ReadFile(r.AbsPath)
-		if err != nil {
-			return false, pkg.NfpmName, fmt.Sprintf("read %s: %v", r.AbsPath, err)
-		}
-		if _, err := stage.RenderTemplate(r.Key, body, stage.PlaceholderVars()); err != nil {
-			return false, pkg.NfpmName, fmt.Sprintf("template %s: %v", r.Key, err)
-		}
-		tmplCount++
+	if len(pkg.NfpmDocs) == 1 {
+		return true, label, fmt.Sprintf("%d arches, %d aux refs (%d templates)",
+			len(pkg.Sidecar.Arches), totalRefs, totalTmpls)
 	}
-	return true, pkg.NfpmName, fmt.Sprintf("%d arches, %d aux refs (%d templates)",
-		len(pkg.Sidecar.Arches), len(refs), tmplCount)
+	names := make([]string, len(pkg.NfpmDocs))
+	for i, d := range pkg.NfpmDocs {
+		names[i] = d.Name
+	}
+	return true, label, fmt.Sprintf("%d arches, %d nfpm docs [%s], %d aux refs (%d templates)",
+		len(pkg.Sidecar.Arches), len(pkg.NfpmDocs), strings.Join(names, ", "), totalRefs, totalTmpls)
 }

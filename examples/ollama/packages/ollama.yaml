@@ -1,10 +1,11 @@
 ---
-# Doc 1 — cooper sidecar
+# Doc 1 — cooper sidecar (source resolution shared across every
+# .deb produced by this recipe).
 #
-# .tar.zst is one of the archive extensions cooper unpacks at build
-# time (see internal/cooper/build/archive.go). The whole tarball is
-# extracted under ${ASSETS}/; doc 2 cherry-picks only the bits this
-# package owns.
+# The release tarball is one of the archive extensions cooper unpacks
+# at build time (see internal/cooper/build/archive.go). The whole
+# tarball is extracted under ${ASSETS}/; each nfpm doc below
+# cherry-picks only the bits its .deb owns.
 source:
   github:
     repo: ollama/ollama
@@ -12,12 +13,12 @@ source:
 version_from: tag_strip_v
 arches:
   amd64:
-    asset: "ollama-linux-amd64.tgz"
+    asset: "ollama-linux-amd64.tar.zst"
   arm64:
-    asset: "ollama-linux-arm64.tgz"
+    asset: "ollama-linux-arm64.tar.zst"
 
 ---
-# Doc 2 — vanilla nfpm
+# Doc 2 — vanilla nfpm: ollama (main binary + systemd unit)
 name: ollama
 version: ${VERSION}
 arch: ${ARCH}
@@ -45,3 +46,35 @@ contents:
       mode: 0644
 scripts:
   postinstall: ./ollama.postinstall
+
+---
+# Doc 3 — vanilla nfpm: libollama-nvidia (CUDA runtime libraries)
+#
+# Same upstream tarball as the `ollama` package; this entry partitions
+# a different subset of the staged tree into its own .deb. cooper
+# extracts the whole archive once at build time; what each .deb ships
+# is decided by *this* contents: list, not by what got extracted.
+#
+# nfpm's `type: tree` walks a source directory recursively at build
+# time and copies every regular file under it. One entry per CUDA
+# major so a future tarball that adds `cuda_v14/` is one line away.
+name: libollama-nvidia
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: |
+  NVIDIA GPU support libraries for Ollama. Provides the CUDA-flavored
+  ggml runners ollama loads at startup when an NVIDIA GPU is present.
+  Install alongside `ollama` to enable GPU-accelerated inference on
+  NVIDIA hardware.
+homepage: https://ollama.com/
+license: MIT
+section: libs
+contents:
+  - src: ${ASSETS}/lib/ollama/cuda_v12
+    dst: /usr/lib/ollama/cuda_v12
+    type: tree
+  - src: ${ASSETS}/lib/ollama/cuda_v13
+    dst: /usr/lib/ollama/cuda_v13
+    type: tree

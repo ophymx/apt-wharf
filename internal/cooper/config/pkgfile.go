@@ -12,24 +12,38 @@ import (
 )
 
 // PackageFile is a parsed per-package multi-doc file. Sidecar is the
-// strictly-validated doc 1; Nfpm is doc 2 held verbatim as a yaml.Node so
-// downstream phases can re-emit it after substituting cooper's three
-// variables. NfpmName is doc 2's top-level name: extracted up front
-// because cooper uses it to name .deb files and as the staging-dir
-// component.
+// strictly-validated doc 1; NfpmDocs holds one entry per produced .deb
+// (docs 2..N), each preserved verbatim as a yaml.Node so downstream
+// phases can re-emit them after substituting cooper's three
+// variables.
+//
+// The N>=1 shape lets a single source resolution fan out into
+// multiple .debs that share the same upstream provenance (one
+// release, one URL fetch, one set of staged assets) but split into
+// distinct apt packages — e.g. `ollama` + `libollama-nvidia` from
+// one ollama-linux-<arch>.tgz release. v0 recipes (exactly two YAML
+// documents → exactly one nfpm doc) are the singleton case.
 type PackageFile struct {
 	Path     string
 	Dir      string
 	Sidecar  Sidecar
-	Nfpm     yaml.Node
-	NfpmName string
+	NfpmDocs []NfpmDoc
+}
+
+// NfpmDoc is one nfpm document from the recipe — corresponds to one
+// produced .deb. Name is the doc's top-level `name:` extracted up
+// front because cooper uses it to name .deb files and as the
+// staging-dir component.
+type NfpmDoc struct {
+	Node yaml.Node
+	Name string
 }
 
 // LoadPackage reads, splits, decodes, and validates one per-package
 // multi-doc YAML file. Validation is strict for doc 1 (KnownFields
-// equivalent) and minimal for doc 2 (must be a mapping with a non-empty
-// name: string) — anything else in doc 2 is passed through to nfpm at
-// build time.
+// equivalent) and minimal for docs 2..N (each must be a mapping
+// with a non-empty `name:` string, and names must be unique within
+// the file) — anything else passes through to nfpm at build time.
 func LoadPackage(path string) (*PackageFile, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -44,8 +58,8 @@ func LoadPackage(path string) (*PackageFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", abs, err)
 	}
-	if len(docs) != 2 {
-		return nil, fmt.Errorf("%s: expected exactly 2 YAML documents, got %d", abs, len(docs))
+	if len(docs) < 2 {
+		return nil, fmt.Errorf("%s: expected at least 2 YAML documents (1 sidecar + N nfpm), got %d", abs, len(docs))
 	}
 
 	sidecar, err := decodeSidecarStrict(docs[0])
@@ -56,18 +70,26 @@ func LoadPackage(path string) (*PackageFile, error) {
 		return nil, fmt.Errorf("%s: doc 1 (cooper sidecar): %w", abs, err)
 	}
 
-	nfpmNode := docs[1]
-	name, err := extractNfpmName(nfpmNode)
-	if err != nil {
-		return nil, fmt.Errorf("%s: doc 2 (nfpm): %w", abs, err)
+	nfpmDocs := make([]NfpmDoc, 0, len(docs)-1)
+	seenNames := make(map[string]int, len(docs)-1)
+	for i := 1; i < len(docs); i++ {
+		docLabel := fmt.Sprintf("doc %d (nfpm)", i+1)
+		name, err := extractNfpmName(docs[i])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", abs, docLabel, err)
+		}
+		if prev, dup := seenNames[name]; dup {
+			return nil, fmt.Errorf("%s: %s: package name %q duplicates doc %d", abs, docLabel, name, prev+1)
+		}
+		seenNames[name] = i
+		nfpmDocs = append(nfpmDocs, NfpmDoc{Node: *docs[i], Name: name})
 	}
 
 	return &PackageFile{
 		Path:     abs,
 		Dir:      filepath.Dir(abs),
 		Sidecar:  sidecar,
-		Nfpm:     *nfpmNode,
-		NfpmName: name,
+		NfpmDocs: nfpmDocs,
 	}, nil
 }
 

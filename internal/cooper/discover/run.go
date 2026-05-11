@@ -52,58 +52,68 @@ func Run(ctx context.Context, top *config.Top, opts Options) (*plan.Plan, error)
 	sort.Strings(paths)
 
 	for _, path := range paths {
-		pkg := processPackage(ctx, opts, path)
-		if opts.PackageFilter != nil && !opts.PackageFilter[pkg.Name] {
-			continue
+		pkgs := processPackage(ctx, opts, path)
+		for _, pkg := range pkgs {
+			if opts.PackageFilter != nil && !opts.PackageFilter[pkg.Name] {
+				continue
+			}
+			out.Packages = append(out.Packages, pkg)
 		}
-		out.Packages = append(out.Packages, pkg)
 	}
 	return out, nil
 }
 
-// processPackage runs the per-package pipeline. Any sub-step failure
-// collapses the whole package into a result:"error" entry — orchestrators
-// drop those before piping to build, and `cooper build` exits non-zero
-// if any artifact ultimately fails.
-func processPackage(ctx context.Context, opts Options, path string) plan.Package {
+// processPackage runs the per-package pipeline and emits one
+// plan.Package per nfpm doc in the recipe (docs 2..N in the
+// multi-doc YAML form). Source resolution, version resolution, and
+// per-arch asset resolution happen ONCE per recipe and are shared
+// across every emitted package; the nfpm doc + aux refs per package
+// differ. Any sub-step failure collapses the whole recipe into a
+// single result:"error" entry.
+func processPackage(ctx context.Context, opts Options, path string) []plan.Package {
 	pkgFile, err := config.LoadPackage(path)
 	if err != nil {
-		return plan.Package{
+		return []plan.Package{{
 			Name:   pkgNameFromPath(path),
 			Result: plan.ResultError,
 			Error: &plan.Error{
 				Kind:    plan.ErrorKindDiscoveryFailed,
 				Message: err.Error(),
 			},
-		}
+		}}
 	}
 
-	// Walk aux refs once for the package — they're shared across arches.
-	refs, err := stage.Walk(pkgFile.Dir, &pkgFile.Nfpm)
-	if err != nil {
-		return errPkg(pkgFile.NfpmName, plan.ErrorKindAuxResolutionFailed, err)
+	// Walk aux refs PER nfpm doc — each doc has its own
+	// contents[].src and scripts.{...} entries.
+	refsByDoc := make([][]stage.Ref, len(pkgFile.NfpmDocs))
+	for i, d := range pkgFile.NfpmDocs {
+		refs, werr := stage.Walk(pkgFile.Dir, &d.Node)
+		if werr != nil {
+			return []plan.Package{errPkg(d.Name, plan.ErrorKindAuxResolutionFailed, werr)}
+		}
+		refsByDoc[i] = refs
 	}
 
 	switch {
 	case pkgFile.Sidecar.Source.GitHub != nil:
-		return processGitHubPackage(ctx, opts, pkgFile, refs)
+		return processGitHubPackage(ctx, opts, pkgFile, refsByDoc)
 	case pkgFile.Sidecar.Source.JSONURL != nil:
-		return processJSONURLPackage(ctx, opts, pkgFile, refs)
+		return processJSONURLPackage(ctx, opts, pkgFile, refsByDoc)
 	default:
-		return errPkg(pkgFile.NfpmName, plan.ErrorKindDiscoveryFailed,
-			fmt.Errorf("source: no backend selected (validate should have caught this)"))
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed,
+			fmt.Errorf("source: no backend selected (validate should have caught this)"))}
 	}
 }
 
-func processGitHubPackage(ctx context.Context, opts Options, pkgFile *config.PackageFile, refs []stage.Ref) plan.Package {
+func processGitHubPackage(ctx context.Context, opts Options, pkgFile *config.PackageFile, refsByDoc [][]stage.Ref) []plan.Package {
 	release, err := cooperSrc.ResolveRelease(ctx, opts.Client, pkgFile.Sidecar.Source.GitHub)
 	if err != nil {
-		return errPkg(pkgFile.NfpmName, plan.ErrorKindDiscoveryFailed, err)
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed, err)}
 	}
 
 	resolvedVersion, err := version.Assemble(&pkgFile.Sidecar, release)
 	if err != nil {
-		return errPkg(pkgFile.NfpmName, plan.ErrorKindVersionInvalid, err)
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindVersionInvalid, err)}
 	}
 
 	source := &plan.Source{
@@ -114,23 +124,35 @@ func processGitHubPackage(ctx context.Context, opts Options, pkgFile *config.Pac
 		ReleasePublishedAt: release.GetPublishedAt().UTC().Format(time.RFC3339),
 	}
 	sourceDateEpoch := release.GetPublishedAt().Unix()
-
 	archNames := sortedKeys(pkgFile.Sidecar.Arches)
-	artifacts := make([]plan.Artifact, 0, len(archNames))
-	for _, arch := range archNames {
-		art, err := buildArtifact(opts, pkgFile, release, resolvedVersion, arch, sourceDateEpoch, refs)
-		if err != nil {
-			return errPkg(pkgFile.NfpmName, errKindFor(err), err)
-		}
-		artifacts = append(artifacts, art)
-	}
 
-	return plan.Package{
-		Name:      pkgFile.NfpmName,
-		Result:    plan.ResultOK,
-		Source:    source,
-		Artifacts: artifacts,
+	// Emit one plan.Package per nfpm doc. Source + per-arch asset
+	// resolution is shared; nfpm + aux + hash + filename are
+	// per-doc.
+	out := make([]plan.Package, 0, len(pkgFile.NfpmDocs))
+	for i, doc := range pkgFile.NfpmDocs {
+		artifacts := make([]plan.Artifact, 0, len(archNames))
+		failed := false
+		for _, arch := range archNames {
+			art, err := buildArtifact(opts, pkgFile, &doc, refsByDoc[i], release, resolvedVersion, arch, sourceDateEpoch)
+			if err != nil {
+				out = append(out, errPkg(doc.Name, errKindFor(err), err))
+				failed = true
+				break
+			}
+			artifacts = append(artifacts, art)
+		}
+		if failed {
+			continue
+		}
+		out = append(out, plan.Package{
+			Name:      doc.Name,
+			Result:    plan.ResultOK,
+			Source:    source,
+			Artifacts: artifacts,
+		})
 	}
+	return out
 }
 
 // processJSONURLPackage is the json_url counterpart to
@@ -138,18 +160,26 @@ func processGitHubPackage(ctx context.Context, opts Options, pkgFile *config.Pac
 // asset URLs are rendered from arches[].asset_url against the same
 // JSON body. source_date_epoch is derived deterministically from
 // (url, version) since the JSON has no canonical "released at" field.
-func processJSONURLPackage(ctx context.Context, opts Options, pkgFile *config.PackageFile, refs []stage.Ref) plan.Package {
+func processJSONURLPackage(ctx context.Context, opts Options, pkgFile *config.PackageFile, refsByDoc [][]stage.Ref) []plan.Package {
 	resolution, err := cooperSrc.ResolveJSONURL(ctx, opts.HTTPClient, pkgFile.Sidecar.Source.JSONURL)
 	if err != nil {
-		return errPkg(pkgFile.NfpmName, plan.ErrorKindDiscoveryFailed, err)
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed, err)}
 	}
 
 	resolvedVersion := resolution.Version
 	if !version.MatchesDebianGrammar(resolvedVersion) {
-		return errPkg(pkgFile.NfpmName, plan.ErrorKindVersionInvalid,
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindVersionInvalid,
 			fmt.Errorf("version %q (from %s) does not match Debian's grammar `^[0-9][A-Za-z0-9.+~-]*$`",
-				resolvedVersion, pkgFile.Sidecar.Source.JSONURL.VersionPath))
+				resolvedVersion, pkgFile.Sidecar.Source.JSONURL.VersionPath))}
 	}
+
+	resolvedVersionWithStrip := resolvedVersion
+	if pkgFile.Sidecar.Source.JSONURL.VersionStripPrefix != "" {
+		// ResolveJSONURL already applied this; keep `resolvedVersion`
+		// post-strip. This branch is left as a placeholder if we ever
+		// expose the raw token separately.
+	}
+	_ = resolvedVersionWithStrip
 
 	source := &plan.Source{
 		Kind:  plan.SourceKindJSONURL,
@@ -158,33 +188,45 @@ func processJSONURLPackage(ctx context.Context, opts Options, pkgFile *config.Pa
 	}
 
 	archNames := sortedKeys(pkgFile.Sidecar.Arches)
-	artifacts := make([]plan.Artifact, 0, len(archNames))
-	for _, arch := range archNames {
-		art, err := buildJSONURLArtifact(opts, pkgFile, resolution, resolvedVersion, arch, refs)
-		if err != nil {
-			return errPkg(pkgFile.NfpmName, errKindFor(err), err)
+	out := make([]plan.Package, 0, len(pkgFile.NfpmDocs))
+	for i, doc := range pkgFile.NfpmDocs {
+		artifacts := make([]plan.Artifact, 0, len(archNames))
+		failed := false
+		for _, arch := range archNames {
+			art, err := buildJSONURLArtifact(opts, pkgFile, &doc, refsByDoc[i], resolution, resolvedVersion, arch)
+			if err != nil {
+				out = append(out, errPkg(doc.Name, errKindFor(err), err))
+				failed = true
+				break
+			}
+			artifacts = append(artifacts, art)
 		}
-		artifacts = append(artifacts, art)
+		if failed {
+			continue
+		}
+		out = append(out, plan.Package{
+			Name:      doc.Name,
+			Result:    plan.ResultOK,
+			Source:    source,
+			Artifacts: artifacts,
+		})
 	}
-
-	return plan.Package{
-		Name:      pkgFile.NfpmName,
-		Result:    plan.ResultOK,
-		Source:    source,
-		Artifacts: artifacts,
-	}
+	return out
 }
 
-// buildArtifact resolves one (package × arch) combination into a
+// buildArtifact resolves one (nfpm-doc × arch) combination into a
 // plan.Artifact. Failures here turn into per-package errors at the
-// caller — there is no notion of partial success within a package.
+// caller. The asset is shared across all nfpm docs in the recipe
+// (resolved once per arch from the same release); nfpm subtree + aux
+// files + hash + filename are per-doc.
 func buildArtifact(
 	opts Options,
 	pkgFile *config.PackageFile,
+	doc *config.NfpmDoc,
+	refs []stage.Ref,
 	release *github.RepositoryRelease,
 	resolvedVersion, arch string,
 	sourceDateEpoch int64,
-	refs []stage.Ref,
 ) (plan.Artifact, error) {
 	archCfg := pkgFile.Sidecar.Arches[arch]
 	asset, err := cooperSrc.MatchAsset(release, archCfg.Asset, resolvedVersion)
@@ -192,8 +234,8 @@ func buildArtifact(
 		return plan.Artifact{}, &discoveryError{wrapped: err}
 	}
 
-	// Build the per-arch nfpm subtree.
-	nfpmClone, err := stage.CloneNfpm(&pkgFile.Nfpm)
+	// Build the per-(doc, arch) nfpm subtree.
+	nfpmClone, err := stage.CloneNfpm(&doc.Node)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
 	}
@@ -206,7 +248,7 @@ func buildArtifact(
 	// Render aux files with real Vars (templates that error here are
 	// genuine bugs since validate would have caught syntax/typo issues).
 	vars := stage.Vars{
-		Name:        pkgFile.NfpmName,
+		Name:        doc.Name,
 		Version:     resolvedVersion,
 		Arch:        arch,
 		Epoch:       pkgFile.Sidecar.Epoch,
@@ -240,7 +282,7 @@ func buildArtifact(
 	}
 
 	deb := plan.Deb{
-		Filename:        fmt.Sprintf("%s_%s_%s.deb", pkgFile.NfpmName, debVersionString(resolvedVersion, pkgFile.Sidecar.Epoch), arch),
+		Filename:        fmt.Sprintf("%s_%s_%s.deb", doc.Name, debVersionString(resolvedVersion, pkgFile.Sidecar.Epoch), arch),
 		BuildInputsHash: hash,
 	}
 
@@ -252,17 +294,18 @@ func buildArtifact(
 	}, nil
 }
 
-// buildJSONURLArtifact resolves one (package × arch) combination
+// buildJSONURLArtifact resolves one (nfpm-doc × arch) combination
 // against an already-fetched JSON resolution. The asset URL is
 // rendered per-arch from the recipe template; size and SHA256 are
 // unknown at discover time, so cooper-build will stream + hash during
-// download.
+// download. nfpm subtree + aux + hash + filename are per-doc.
 func buildJSONURLArtifact(
 	opts Options,
 	pkgFile *config.PackageFile,
+	doc *config.NfpmDoc,
+	refs []stage.Ref,
 	resolution *cooperSrc.JSONURLResolution,
 	resolvedVersion, arch string,
-	refs []stage.Ref,
 ) (plan.Artifact, error) {
 	archCfg := pkgFile.Sidecar.Arches[arch]
 	assetURL, err := cooperSrc.RenderAssetURL(archCfg.AssetURL, resolvedVersion, arch, resolution.RawBody)
@@ -270,8 +313,8 @@ func buildJSONURLArtifact(
 		return plan.Artifact{}, &discoveryError{wrapped: err}
 	}
 
-	// Build the per-arch nfpm subtree.
-	nfpmClone, err := stage.CloneNfpm(&pkgFile.Nfpm)
+	// Build the per-(doc, arch) nfpm subtree.
+	nfpmClone, err := stage.CloneNfpm(&doc.Node)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
 	}
@@ -282,7 +325,7 @@ func buildJSONURLArtifact(
 	}
 
 	vars := stage.Vars{
-		Name:        pkgFile.NfpmName,
+		Name:        doc.Name,
 		Version:     resolvedVersion,
 		Arch:        arch,
 		Epoch:       pkgFile.Sidecar.Epoch,
@@ -315,7 +358,7 @@ func buildJSONURLArtifact(
 	}
 
 	deb := plan.Deb{
-		Filename:        fmt.Sprintf("%s_%s_%s.deb", pkgFile.NfpmName, debVersionString(resolvedVersion, pkgFile.Sidecar.Epoch), arch),
+		Filename:        fmt.Sprintf("%s_%s_%s.deb", doc.Name, debVersionString(resolvedVersion, pkgFile.Sidecar.Epoch), arch),
 		BuildInputsHash: hash,
 	}
 

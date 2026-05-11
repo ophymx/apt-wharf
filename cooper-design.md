@@ -190,16 +190,28 @@ concerns, and discover and build can run on different hosts.
 
 ### Per-package multi-doc file
 
-Two YAML documents in one file, separated by `---`. Doc 1 is cooper;
-doc 2 is vanilla nfpm. Strict ordering — no `kind:` discriminator,
-since putting one in doc 2 would break the "vanilla nfpm" property.
+N YAML documents (N≥2) in one file, separated by `---`:
 
-> *Forward-compat note.* The two-doc shape is the v0 form; the
-> deferred multi-asset / multi-package feature (see *Deferred*)
-> extends to N documents — doc 1 still answers "how to find assets,"
-> docs 2..N each describe one produced `.deb` from the same source
-> resolution. v0 recipes (exactly two docs) remain valid under that
-> extension; the N>2 case is a strict superset.
+- **Doc 1** is the cooper sidecar — source resolution shared across
+  every `.deb` the recipe produces.
+- **Docs 2..N** are each a vanilla nfpm config — one per produced
+  `.deb`. Each becomes its own `plan.Package` entry with its own
+  `build_inputs_hash`, dedup'd and revision-bumped independently by
+  drayman.
+
+Strict ordering — no `kind:` discriminator, since putting one in
+nfpm docs would break the "vanilla nfpm" property. The N>=2 shape
+lets a single source resolution fan out into multiple `.deb`s
+(`ollama` + `libollama-nvidia` from one `ollama-linux-<arch>.tar.zst`
+release, `cfssl` + `cfssljson` + `mkbundle` from one cloudflare/cfssl
+release, …) without duplicating the source block across recipe
+files. The two-doc form is the singleton case.
+
+> **Cross-source bundling is expressly out of scope.** All nfpm docs
+> in one recipe share the same source resolution and the same staged
+> asset set. Producing one `.deb` with files from multiple unrelated
+> upstreams isn't supported — each `.deb`'s reproducibility and
+> dedup semantics rely on exactly one upstream provenance.
 
 ```yaml
 # packages/hugo.yaml
@@ -247,8 +259,9 @@ deb:
     Bugs: https://github.com/gohugoio/hugo/issues
 ```
 
-Cooper validates: exactly two documents; doc 1 has `source:`; doc 2 has
-`name:`. Anything else is a hard config error.
+Cooper validates: at least two documents; doc 1 has `source:`;
+docs 2..N each have a `name:`, and names are unique within the
+recipe. Anything else is a hard config error.
 
 ### Doc 1 schema
 
@@ -952,45 +965,31 @@ valid `plan.Plan` JSON document from any program and pipe it into
   (innerText / attribute / regex). Recipe authors accept the
   inherent brittleness — vendor markup churn breaks selectors more
   often than vendor JSON breaks gjson paths.
-- **Multi-asset + multi-package per source** — one source resolution
-  contributing multiple files, which may fan out into multiple
-  separate `.deb`s. The recipe shape extends today's two-document
-  format to N documents:
+- **Multi-asset per arch** — multiple files from a single source
+  resolution staged into one `.deb`. (Multi-*package* from a single
+  source already shipped via the N-doc recipe format; this is the
+  complementary feature where one .deb pulls multiple files from
+  one release.) Recipe shape: `arches[].assets:` (list) /
+  `arches[].asset_urls:` (list), with the existing
+  `arches[].asset:` / `arches[].asset_url:` (singular) staying as
+  syntactic sugar for the singleton case. Cross-source bundling
+  stays **expressly out of scope**. Implementation: `plan.Artifact.Asset`
+  becomes `Assets []Asset`; `MatchAsset` / `RenderAssetURL` get
+  plural counterparts; `build_inputs_hash` includes every asset's
+  SHA256.
 
-  ```
-  doc 1     cooper sidecar (source, version_from, arches[].assets)
-  doc 2..N  one vanilla-nfpm document per produced .deb
-  ```
+  Skipped for the multi-package commit because most real
+  motivating cases — including ollama's `ollama-linux-<arch>.tar.zst`
+  with both `bin/ollama` and `lib/ollama/cuda_v*` — fit cleanly in
+  the existing one-asset-per-arch model (the archive contains
+  everything; per-package nfpm contents list does the slicing).
+  The cfssl shape (one release with N independent binaries, no
+  bundling archive) is the next driver.
 
-  Doc 1 still answers "how do I find assets"; each subsequent doc
-  answers "what .deb do I package, from which assets." Each
-  produced `.deb` is its own `plan.Package` entry with its own
-  `build_inputs_hash`, so drayman's dedup + revision auto-bump
-  work per-output independently.
-
-  Common motivating cases:
-    - One GitHub release publishing many per-arch binaries (cfssl,
-      kubectl-kustomize, etc.) → ship as separate `.deb`s rather
-      than one bundle, or as both.
-    - Upstream tarballs that produce a `foo` runtime + a `foo-dev`
-      headers package from the same source bytes.
-
-  Per-arch asset lists also collapse the singleton/plural choice:
-  `arches[].assets:` (list) / `arches[].asset_urls:` (list), with
-  the existing `asset:` / `asset_url:` (singular) staying as
-  syntactic sugar for one-element lists.
-
-  Cross-source bundling stays **expressly out of scope** —
-  different releases or different repositories are different
-  packages by definition. The multi-doc shape only multiplexes
-  outputs of *one* source resolution, preserving each `.deb`'s
-  single-upstream-provenance invariant.
-
-  Implementation impact: `plan.Artifact.Asset` becomes `Assets
-  []Asset`; `MatchAsset` / `RenderAssetURL` get plural
-  counterparts; `build_inputs_hash` includes every asset's SHA256;
-  cooper-discover emits N `plan.Package` entries per recipe file
-  (each pointing at a subset of the staged asset set).
+  Implementation impact (when added): each `plan.Package`'s
+  per-arch artifact carries a list of assets instead of a single
+  one; the build pipeline downloads every entry and stages them
+  side by side under `${ASSETS}/`.
 - **Upstream-supplied SHA256 sidecars (`sha256_asset` / `sha256_path`)** — many
   vendors publish a per-asset SHA256 alongside the binary, either
   as a sidecar file (`foo.tar.gz` + `foo.tar.gz.sha256`) or as a

@@ -36,8 +36,11 @@ func TestLoadPackage_Happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPackage: %v", err)
 	}
-	if got.NfpmName != "hugo" {
-		t.Errorf("NfpmName: %s", got.NfpmName)
+	if len(got.NfpmDocs) != 1 {
+		t.Fatalf("NfpmDocs len: %d, want 1", len(got.NfpmDocs))
+	}
+	if got.NfpmDocs[0].Name != "hugo" {
+		t.Errorf("NfpmDocs[0].Name: %s", got.NfpmDocs[0].Name)
 	}
 	if got.Sidecar.Source.GitHub == nil {
 		t.Fatal("Sidecar.Source.GitHub nil")
@@ -122,6 +125,39 @@ name: foo
 	}
 }
 
+func TestLoadPackage_MultiDocMultiPackage(t *testing.T) {
+	body := `---
+source:
+  github:
+    repo: ollama/ollama
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "ollama-linux-amd64.tgz"
+---
+name: ollama
+version: ${VERSION}
+arch: ${ARCH}
+---
+name: libollama-nvidia
+version: ${VERSION}
+arch: ${ARCH}
+`
+	dir := t.TempDir()
+	p := writeFile(t, dir, "ollama.yaml", body)
+	got, err := LoadPackage(p)
+	if err != nil {
+		t.Fatalf("LoadPackage: %v", err)
+	}
+	if len(got.NfpmDocs) != 2 {
+		t.Fatalf("NfpmDocs len: %d, want 2", len(got.NfpmDocs))
+	}
+	if got.NfpmDocs[0].Name != "ollama" || got.NfpmDocs[1].Name != "libollama-nvidia" {
+		t.Errorf("doc names: %s / %s", got.NfpmDocs[0].Name, got.NfpmDocs[1].Name)
+	}
+}
+
 func TestLoadPackage_Errors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -131,12 +167,20 @@ func TestLoadPackage_Errors(t *testing.T) {
 		{
 			name:    "single doc",
 			body:    "name: hugo\n",
-			wantSub: "expected exactly 2 YAML documents",
+			wantSub: "at least 2 YAML documents",
 		},
 		{
-			name:    "three docs",
-			body:    "---\nfoo: 1\n---\nname: hugo\n---\nbar: 2\n",
-			wantSub: "expected exactly 2 YAML documents",
+			name: "duplicate nfpm names across docs",
+			body: `---
+source: { github: { repo: a/b } }
+version_from: tag
+arches: { amd64: { asset: x } }
+---
+name: dup
+---
+name: dup
+`,
+			wantSub: "duplicates",
 		},
 		{
 			name: "doc 1 unknown field",
