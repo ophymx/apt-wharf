@@ -7,15 +7,39 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 
 	"github.com/ophymx/apt-signpost/internal/drayman/audit"
+	"github.com/ophymx/apt-signpost/internal/drayman/backend"
 	"github.com/ophymx/apt-signpost/internal/drayman/policy"
 	"github.com/ophymx/apt-signpost/pkg/plan"
 )
+
+// cooperBuildFn is the contract drayman's reconcile loop has with
+// "the thing that turns a plan into .debs." In production it shells
+// out to `cooper build`; tests substitute a stub that returns canned
+// annotated plans without touching the filesystem.
+type cooperBuildFn func(ctx context.Context, p *plan.Plan, outDir, workDir string, revision int) (*plan.Plan, error)
+
+// reconcileOpts is the dependency set runReconcile needs. cmdReconcile
+// constructs it from CLI flags; tests construct it directly with
+// stubs.
+type reconcileOpts struct {
+	Backend     backend.Backend
+	BackendKind string // for audit-log entries
+	Plan        *plan.Plan
+	CooperBuild cooperBuildFn
+	OutDir      string // pre-resolved absolute path
+	WorkDir     string // pre-resolved absolute path
+	DryRun      bool
+	AuditLog    *audit.Logger // optional; nil disables audit logging
+	Stdout      io.Writer
+	Stderr      io.Writer
+}
 
 // cmdReconcile is drayman's end-to-end flow: read a cooper discover
 // plan, query the target repo for already-imported artifacts, group
@@ -56,8 +80,6 @@ func cmdReconcile(args []string) error {
 		return fmt.Errorf("read plan: %w", err)
 	}
 
-	ctx := context.Background()
-
 	var auditLog *audit.Logger
 	if *auditPath != "" {
 		auditLog, err = audit.Open(*auditPath)
@@ -67,28 +89,10 @@ func cmdReconcile(args []string) error {
 		defer auditLog.Close()
 	}
 
-	decisions, err := policy.Decide(ctx, be, p)
-	if err != nil {
-		return err
-	}
-	printDecisions(decisions)
-	if auditLog != nil {
-		for _, d := range decisions {
-			if err := auditLog.Decision(d); err != nil {
-				return fmt.Errorf("audit log decision: %w", err)
-			}
-		}
-	}
-
-	if *dryRun {
-		fmt.Println("dry-run: no build, upload, or publish.")
-		return nil
-	}
-
-	// Set up an out-dir for cooper's .deb output. If the user didn't
-	// pick one, use an ephemeral temp dir and clean up on exit.
-	// Resolve to absolute either way: nfpm runs with cwd = staging
-	// dir, so a relative out-dir resolves wrong from nfpm's POV.
+	// Resolve cooper-build's out-dir + work-dir to absolute paths
+	// before reconcile runs. nfpm runs with cwd=staging-dir, so a
+	// relative path would be re-rooted at the staging dir and the
+	// asset would land in the wrong place.
 	cooperOutDir := *outDir
 	if cooperOutDir == "" {
 		tmp, err := os.MkdirTemp("", "drayman-out-")
@@ -104,15 +108,54 @@ func cmdReconcile(args []string) error {
 		}
 		cooperOutDir = abs
 	}
-
-	// Cooper's --work-dir must be absolute or nfpm's relative
-	// ${ASSETS} expansion doubles paths. Always allocate a fresh
-	// staging root and clean up on exit.
 	cooperWorkDir, err := os.MkdirTemp("", "drayman-work-")
 	if err != nil {
 		return fmt.Errorf("mkdir work-dir: %w", err)
 	}
 	defer os.RemoveAll(cooperWorkDir)
+
+	// Production cooperBuild execs the real cooper binary; tests
+	// inject a stub.
+	exec := func(ctx context.Context, plan *plan.Plan, outDir, workDir string, revision int) (*plan.Plan, error) {
+		return execCooperBuild(ctx, *cooperBin, plan, outDir, workDir, revision)
+	}
+
+	return runReconcile(context.Background(), reconcileOpts{
+		Backend:     be,
+		BackendKind: *bf.kind,
+		Plan:        p,
+		CooperBuild: exec,
+		OutDir:      cooperOutDir,
+		WorkDir:     cooperWorkDir,
+		DryRun:      *dryRun,
+		AuditLog:    auditLog,
+		Stdout:      os.Stdout,
+		Stderr:      os.Stderr,
+	})
+}
+
+// runReconcile is the orchestration loop, free of CLI concerns and
+// filesystem ownership. Tests drive this directly with stubbed
+// backends and cooperBuild functions; cmdReconcile assembles a real
+// opts from flags and delegates here.
+func runReconcile(ctx context.Context, opts reconcileOpts) error {
+	decisions, err := policy.Decide(ctx, opts.Backend, opts.Plan)
+	if err != nil {
+		return err
+	}
+	printDecisionsTo(opts.Stdout, decisions)
+	if opts.AuditLog != nil {
+		for _, d := range decisions {
+			if err := opts.AuditLog.Decision(d); err != nil {
+				return fmt.Errorf("audit log decision: %w", err)
+			}
+		}
+	}
+
+	if opts.DryRun {
+		fmt.Fprintln(opts.Stdout, "dry-run: no build, upload, or publish.")
+		return nil
+	}
 
 	// Group decisions by revision so one cooper build invocation can
 	// handle every artifact at the same N. The 0-bucket is bare; >0
@@ -123,40 +166,40 @@ func cmdReconcile(args []string) error {
 
 	for _, rev := range sortedRevisions(groups) {
 		group := groups[rev]
-		filtered := filterPlanForDecisions(p, group)
-		annotated, err := execCooperBuild(ctx, *cooperBin, filtered, cooperOutDir, cooperWorkDir, rev)
+		filtered := filterPlanForDecisions(opts.Plan, group)
+		annotated, err := opts.CooperBuild(ctx, filtered, opts.OutDir, opts.WorkDir, rev)
 		if err != nil {
 			return fmt.Errorf("cooper build (revision %d): %w", rev, err)
 		}
-		built, failed := collectArtifacts(annotated)
+		built, failed := collectArtifactsTo(opts.Stderr, annotated)
 		anyFailed = anyFailed || failed
 		for _, debPath := range built {
 			name := filepath.Base(debPath)
-			importErr := be.Import(ctx, debPath)
-			if auditLog != nil {
-				_ = auditLog.Import(debPath, name, importErr)
+			importErr := opts.Backend.Import(ctx, debPath)
+			if opts.AuditLog != nil {
+				_ = opts.AuditLog.Import(debPath, name, importErr)
 			}
 			if importErr != nil {
-				fmt.Fprintf(os.Stderr, "import failed: %s: %v\n", name, importErr)
+				fmt.Fprintf(opts.Stderr, "import failed: %s: %v\n", name, importErr)
 				anyFailed = true
 				continue
 			}
-			fmt.Printf("imported: %s\n", name)
+			fmt.Fprintf(opts.Stdout, "imported: %s\n", name)
 			anyImported = true
 		}
 	}
 
 	if anyImported {
-		publishErr := be.Publish(ctx)
-		if auditLog != nil {
-			_ = auditLog.Publish(*bf.kind, publishErr)
+		publishErr := opts.Backend.Publish(ctx)
+		if opts.AuditLog != nil {
+			_ = opts.AuditLog.Publish(opts.BackendKind, publishErr)
 		}
 		if publishErr != nil {
 			return fmt.Errorf("publish: %w", publishErr)
 		}
-		fmt.Println("publish updated")
+		fmt.Fprintln(opts.Stdout, "publish updated")
 	} else {
-		fmt.Println("nothing to import (all artifacts already in repo)")
+		fmt.Fprintln(opts.Stdout, "nothing to import (all artifacts already in repo)")
 	}
 
 	if anyFailed {
@@ -165,12 +208,12 @@ func cmdReconcile(args []string) error {
 	return nil
 }
 
-// printDecisions writes the same one-line-per-decision format peek
+// printDecisionsTo writes the same one-line-per-decision format peek
 // uses, so reconcile's "what I'm about to do" preamble looks the same
-// as `drayman peek`.
-func printDecisions(decisions []policy.Decision) {
+// as `drayman peek`. Takes an io.Writer so tests can capture output.
+func printDecisionsTo(w io.Writer, decisions []policy.Decision) {
 	for _, d := range decisions {
-		fmt.Printf("%s\t%s\t%s\t%s\n", d.PackageName, d.Arch, d.Action, d.Reason)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d.PackageName, d.Arch, d.Action, d.Reason)
 	}
 }
 
@@ -278,16 +321,17 @@ func execCooperBuild(ctx context.Context, cooperBin string, p *plan.Plan, outDir
 	return &annotated, nil
 }
 
-// collectArtifacts pulls every successful artifact's path out of an
+// collectArtifactsTo pulls every successful artifact's path out of an
 // annotated cooper-build plan. The second return value is true when
 // any artifact failed (the caller propagates that to the exit code).
-func collectArtifacts(annotated *plan.Plan) ([]string, bool) {
+// stderr is injected so tests can capture build-failed messages.
+func collectArtifactsTo(stderr io.Writer, annotated *plan.Plan) ([]string, bool) {
 	var built []string
 	var failed bool
 	for _, pkg := range annotated.Packages {
 		for _, a := range pkg.Artifacts {
 			if a.Result == plan.ResultError {
-				fmt.Fprintf(os.Stderr, "build failed: %s %s: %s\n", pkg.Name, a.Arch, a.Error.Message)
+				fmt.Fprintf(stderr, "build failed: %s %s: %s\n", pkg.Name, a.Arch, a.Error.Message)
 				failed = true
 				continue
 			}
