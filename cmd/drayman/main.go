@@ -58,4 +58,5 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "  --cooper-bin PATH     path to cooper binary (default: cooper)")
 	fmt.Fprintln(w, "  --out-dir DIR         where cooper builds .debs (default: ephemeral)")
 	fmt.Fprintln(w, "  --dry-run             query and decide but don't build, import, or publish")
+	fmt.Fprintln(w, "  --audit-log PATH      append JSONL audit events (decisions/imports/publish)")
 }

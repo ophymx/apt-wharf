@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/ophymx/apt-signpost/internal/drayman/audit"
 	"github.com/ophymx/apt-signpost/internal/drayman/policy"
 	"github.com/ophymx/apt-signpost/pkg/plan"
 )
@@ -34,6 +35,7 @@ func cmdReconcile(args []string) error {
 	cooperBin := fs.String("cooper-bin", "cooper", "path to cooper binary")
 	outDir := fs.String("out-dir", "", "where cooper builds .debs (default: ephemeral; cleaned on exit)")
 	dryRun := fs.Bool("dry-run", false, "query and decide but don't build, import, or publish")
+	auditPath := fs.String("audit-log", "", "append JSONL audit events to this path (decisions, imports, publish)")
 	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		return err
 	}
@@ -56,11 +58,27 @@ func cmdReconcile(args []string) error {
 
 	ctx := context.Background()
 
+	var auditLog *audit.Logger
+	if *auditPath != "" {
+		auditLog, err = audit.Open(*auditPath)
+		if err != nil {
+			return err
+		}
+		defer auditLog.Close()
+	}
+
 	decisions, err := policy.Decide(ctx, be, p)
 	if err != nil {
 		return err
 	}
 	printDecisions(decisions)
+	if auditLog != nil {
+		for _, d := range decisions {
+			if err := auditLog.Decision(d); err != nil {
+				return fmt.Errorf("audit log decision: %w", err)
+			}
+		}
+	}
 
 	if *dryRun {
 		fmt.Println("dry-run: no build, upload, or publish.")
@@ -114,8 +132,12 @@ func cmdReconcile(args []string) error {
 		anyFailed = anyFailed || failed
 		for _, debPath := range built {
 			name := filepath.Base(debPath)
-			if err := be.Import(ctx, debPath); err != nil {
-				fmt.Fprintf(os.Stderr, "import failed: %s: %v\n", name, err)
+			importErr := be.Import(ctx, debPath)
+			if auditLog != nil {
+				_ = auditLog.Import(debPath, name, importErr)
+			}
+			if importErr != nil {
+				fmt.Fprintf(os.Stderr, "import failed: %s: %v\n", name, importErr)
 				anyFailed = true
 				continue
 			}
@@ -125,8 +147,12 @@ func cmdReconcile(args []string) error {
 	}
 
 	if anyImported {
-		if err := be.Publish(ctx); err != nil {
-			return fmt.Errorf("publish: %w", err)
+		publishErr := be.Publish(ctx)
+		if auditLog != nil {
+			_ = auditLog.Publish(*bf.kind, publishErr)
+		}
+		if publishErr != nil {
+			return fmt.Errorf("publish: %w", publishErr)
 		}
 		fmt.Println("publish updated")
 	} else {

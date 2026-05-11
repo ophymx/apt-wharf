@@ -184,6 +184,101 @@ func TestDecide_EpochInBaseVersion(t *testing.T) {
 	}
 }
 
+func TestDecide_VersionRegression_SkipsWithCode(t *testing.T) {
+	// Plan says 0.140.0; repo already has 0.150.0. Per cooper-design
+	// §"Version monotonicity," this is a regression — skip with code.
+	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
+	q := &stubQuerier{
+		listByNameArch: map[string][]backend.Package{
+			"hugo|amd64": {
+				mkPkg("hugo", "0.150.0", "amd64"),
+			},
+		},
+	}
+	got, err := Decide(context.Background(), q, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionSkip {
+		t.Errorf("action: %s, want skip", got[0].Action)
+	}
+	if got[0].Code != CodeVersionRegression {
+		t.Errorf("code: %s, want %s", got[0].Code, CodeVersionRegression)
+	}
+	if got[0].PlanVersion != "0.140.0" || got[0].RepoMaxVersion != "0.150.0" {
+		t.Errorf("audit context: plan=%q repo_max=%q, want 0.140.0/0.150.0", got[0].PlanVersion, got[0].RepoMaxVersion)
+	}
+}
+
+func TestDecide_RegressionAgainstHigherRevision(t *testing.T) {
+	// Repo's max is 0.150.0-3 (different upstream). Plan at 0.140.0
+	// is still a regression — upstream-vs-upstream comparison should
+	// strip the -3 before comparing.
+	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
+	q := &stubQuerier{
+		listByNameArch: map[string][]backend.Package{
+			"hugo|amd64": {
+				mkPkg("hugo", "0.150.0-3", "amd64"),
+			},
+		},
+	}
+	got, err := Decide(context.Background(), q, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionSkip || got[0].Code != CodeVersionRegression {
+		t.Errorf("decision: %+v, want skip/version_regression", got[0])
+	}
+	if got[0].RepoMaxVersion != "0.150.0-3" {
+		t.Errorf("repo_max: %q, want full version 0.150.0-3", got[0].RepoMaxVersion)
+	}
+}
+
+func TestDecide_NewerThanRepo_BuildsBare(t *testing.T) {
+	// Plan at 0.150.0; repo has 0.140.0-2. Newer upstream — not a
+	// regression, build at bare.
+	p := fixturePlan("hugo", "amd64", "0.150.0", "sha256:new")
+	q := &stubQuerier{
+		listByNameArch: map[string][]backend.Package{
+			"hugo|amd64": {
+				mkPkg("hugo", "0.140.0-2", "amd64"),
+			},
+		},
+	}
+	got, err := Decide(context.Background(), q, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Action != ActionBuild || got[0].Code != CodeBuildNew || got[0].Revision != 0 {
+		t.Errorf("decision: %+v, want build/new_at_bare/0", got[0])
+	}
+}
+
+func TestDecide_AutoBumpPopulatesPriorContext(t *testing.T) {
+	// Confirm Decision carries PriorVersion + PriorHash for audit.
+	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
+	q := &stubQuerier{
+		listByNameArch: map[string][]backend.Package{
+			"hugo|amd64": {
+				{Name: "hugo", Version: "0.140.0-3", Architecture: "amd64", BuildInputsHash: "sha256:prior"},
+			},
+		},
+	}
+	got, err := Decide(context.Background(), q, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Code != CodeBuildBump || got[0].Revision != 4 {
+		t.Errorf("decision: %+v, want auto_bump/4", got[0])
+	}
+	if got[0].PriorVersion != "0.140.0-3" || got[0].PriorHash != "sha256:prior" {
+		t.Errorf("prior context: version=%q hash=%q, want 0.140.0-3/sha256:prior", got[0].PriorVersion, got[0].PriorHash)
+	}
+	if got[0].PlanHash != "sha256:new" {
+		t.Errorf("plan hash: %q, want sha256:new", got[0].PlanHash)
+	}
+}
+
 func TestDecide_SurfacesDiscoverFailedPackages(t *testing.T) {
 	p := &plan.Plan{
 		Packages: []plan.Package{
