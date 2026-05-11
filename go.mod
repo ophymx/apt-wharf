@@ -3,7 +3,9 @@ module github.com/ophymx/apt-signpost
 go 1.25.0
 
 require (
+	al.essio.dev/pkg/shellescape v1.6.0
 	github.com/ProtonMail/go-crypto v1.4.1
+	github.com/antchfx/xmlquery v1.5.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/google/go-github/v86 v86.0.0
@@ -16,13 +18,13 @@ require (
 )
 
 require (
-	al.essio.dev/pkg/shellescape v1.6.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/AlekSi/pointer v1.2.0 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/Masterminds/sprig/v3 v3.3.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/antchfx/xpath v1.3.6 // indirect
 	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
@@ -56,6 +58,7 @@ require (
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
 )

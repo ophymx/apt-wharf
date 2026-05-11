@@ -32,13 +32,16 @@ func validateSource(src *Source) error {
 	if src.JSONURL != nil {
 		count++
 	}
+	if src.XMLURL != nil {
+		count++
+	}
 	switch count {
 	case 0:
-		return fmt.Errorf("source: must set exactly one of source.github, source.json_url")
+		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url")
 	case 1:
 		// ok
 	default:
-		return fmt.Errorf("source: must set exactly one of source.github, source.json_url (got %d)", count)
+		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url (got %d)", count)
 	}
 
 	if src.GitHub != nil {
@@ -66,6 +69,19 @@ func validateSource(src *Source) error {
 		}
 		if !strings.HasPrefix(j.URL, "http://") && !strings.HasPrefix(j.URL, "https://") {
 			return fmt.Errorf("source.json_url.url %q must use http or https scheme", j.URL)
+		}
+	}
+
+	if src.XMLURL != nil {
+		x := src.XMLURL
+		if x.URL == "" {
+			return fmt.Errorf("source.xml_url.url: required")
+		}
+		if x.VersionXPath == "" {
+			return fmt.Errorf("source.xml_url.version_xpath: required (XPath expression resolving to the version field)")
+		}
+		if !strings.HasPrefix(x.URL, "http://") && !strings.HasPrefix(x.URL, "https://") {
+			return fmt.Errorf("source.xml_url.url %q must use http or https scheme", x.URL)
 		}
 	}
 	return nil
@@ -111,6 +127,21 @@ func validateVersionSelection(s *Sidecar) error {
 		}
 		if s.VersionTemplate != "" {
 			return fmt.Errorf("version_template: not valid when source is json_url (post-v0)")
+		}
+		return nil
+	}
+
+	// xml_url uses the same model as json_url: version comes from
+	// source.xml_url.version_xpath; the tag-related modes don't apply.
+	if s.Source.XMLURL != nil {
+		if s.VersionFrom != "" {
+			return fmt.Errorf("version_from: must be unset when source is xml_url (version comes from source.xml_url.version_xpath)")
+		}
+		if s.VersionRegex != "" {
+			return fmt.Errorf("version_regex: not valid when source is xml_url")
+		}
+		if s.VersionTemplate != "" {
+			return fmt.Errorf("version_template: not valid when source is xml_url (post-v0)")
 		}
 		return nil
 	}
@@ -179,6 +210,22 @@ func validateArches(src *Source, arches map[string]Arch) error {
 			// `{TBA.0.downloads.linux.link}`) resolves to an http(s)
 			// URL only after the JSON body is fetched. RenderAssetURL
 			// re-checks scheme on the rendered value.
+			for _, m := range assetSubstPattern.FindAllStringSubmatch(a.AssetURL, -1) {
+				if m[1] != "VERSION" && m[1] != "ARCH" {
+					return fmt.Errorf("arches.%s.asset_url: only ${VERSION} and ${ARCH} substitutions are allowed (saw ${%s})", arch, m[1])
+				}
+			}
+		case src.XMLURL != nil:
+			if a.AssetURL == "" {
+				return fmt.Errorf("arches.%s.asset_url: required for source.xml_url", arch)
+			}
+			if a.Asset != "" {
+				return fmt.Errorf("arches.%s.asset: not valid for source.xml_url (use `asset_url` instead)", arch)
+			}
+			// Same deferred-scheme-check rationale as json_url: a
+			// template that opens with `{xpath:...}` only resolves to
+			// an http(s) URL once the XML body has been fetched. The
+			// runtime renderer re-validates scheme on the result.
 			for _, m := range assetSubstPattern.FindAllStringSubmatch(a.AssetURL, -1) {
 				if m[1] != "VERSION" && m[1] != "ARCH" {
 					return fmt.Errorf("arches.%s.asset_url: only ${VERSION} and ${ARCH} substitutions are allowed (saw ${%s})", arch, m[1])

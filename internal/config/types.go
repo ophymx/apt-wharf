@@ -95,14 +95,21 @@ type Discovery struct {
 	TokenEnv          string `yaml:"token_env"`
 	TokenFile         string `yaml:"token_file"`
 
-	// latest_url and json_url share the URL field — the upstream HTTP
-	// endpoint to GET. For latest_url it's the asset URL itself; for
-	// json_url it's the metadata endpoint that returns JSON.
+	// latest_url, json_url, and xml_url share the URL field — the
+	// upstream HTTP endpoint to GET. For latest_url it's the asset URL
+	// itself; for json_url it's the metadata endpoint that returns JSON;
+	// for xml_url it's the metadata endpoint that returns XML.
 	URL string `yaml:"url"`
 
-	// json_url fields
+	// json_url + xml_url share asset_url (URL template with
+	// {token}/{path} placeholders against the metadata body).
+	AssetURL string `yaml:"asset_url"`
+
+	// json_url field — gjson path resolving to the change-detection token.
 	TokenPath string `yaml:"token_path"`
-	AssetURL  string `yaml:"asset_url"`
+
+	// xml_url field — XPath expression resolving to the change-detection token.
+	TokenXPath string `yaml:"token_xpath"`
 
 	// external fields
 	Command []string          `yaml:"command"`

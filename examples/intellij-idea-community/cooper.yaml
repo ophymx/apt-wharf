@@ -1,0 +1,11 @@
+# IntelliJ IDEA Community Edition — demos cooper's xml_url source kind.
+#
+# JetBrains publishes per-product update metadata as XML at
+# www.jetbrains.com/updates/updates.xml — a single document covering
+# every IntelliJ-platform product (IDEA, WebStorm, GoLand, …) and every
+# channel (release, eap, …). Cooper extracts the current release build
+# number via XPath and renders per-arch download URLs from a templated
+# string referencing ${VERSION} / ${ARCH}.
+
+packages:
+  - ./packages/intellij-idea-community.yaml

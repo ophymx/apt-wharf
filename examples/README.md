@@ -1,6 +1,6 @@
 # cooper examples
 
-Five end-to-end example packages, each scoped to one cooper feature
+Seven end-to-end example packages, each scoped to one cooper feature
 surface. Every example validates with:
 
 ```sh
@@ -19,6 +19,8 @@ like.
 | [`gocryptfs/`](./gocryptfs) | flat-layout tarball with multiple binaries + man pages; no aux files |
 | [`prometheus/`](./prometheus) | tarball with versioned subdir; literal systemd unit + postinstall script |
 | [`ollama/`](./ollama) | one cooper.yaml producing **two** `.deb`s from the same upstream asset; nfpm `type: tree` for shipping subdirectories |
+| [`jetbrains-toolbox/`](./jetbrains-toolbox) | `json_url` source kind; gjson placeholders in `asset_url` (per-arch download links from the same JSON body) |
+| [`intellij-idea-community/`](./intellij-idea-community) | `xml_url` source kind; XPath against JetBrains' `updates.xml` feed |
 
 ## How to run
 
@@ -125,6 +127,27 @@ orchestrator can dedup them separately against the target apt repo.
 pull GPU support alongside the binary on NVIDIA hosts but doesn't
 require it on CPU-only ones.
 
+### `jetbrains-toolbox/` — `json_url` source kind
+
+JetBrains publishes per-product release metadata as JSON at
+`data.services.jetbrains.com/products/releases`. Cooper fetches the
+endpoint once, extracts the build number via `gjson` (`TBA.0.build`),
+and renders each arch's download URL by interpolating
+`{TBA.0.downloads.linux.link}`-style placeholders against the same
+response. No GitHub release; no external producer.
+
+### `intellij-idea-community/` — `xml_url` source kind
+
+JetBrains' canonical updates feed at
+`www.jetbrains.com/updates/updates.xml` covers every IntelliJ-platform
+product and channel. Cooper's `xml_url` source extracts the current
+release build number via XPath
+(`//product[@name='IntelliJ IDEA']/channel[@status='release']/build/@number`)
+and uses standard `${VERSION}`/`${ARCH}` substitutions in the per-arch
+`asset_url` templates. The `xml_url` kind also accepts
+`{xpath:<expr>}` placeholders for vendors who embed download links in
+the same response body (mirroring `json_url`'s `{gjson.path}` slot).
+
 ## What you'll need at runtime
 
 - `cooper` itself: `go build -o cooper ./cmd/cooper`.
@@ -136,12 +159,13 @@ require it on CPU-only ones.
 
 ## What's deliberately *not* covered by these examples
 
-- Non-GitHub sources (zoom, go.dev, JetBrains updates feed). These
-  need a `json_url` source kind that is documented in
-  `cooper-design.md` §"Deferred (post-v0)".
 - Build-time scripts like `make install`, `npm install`, Python venv
   bootstrapping. These belong to a different tool — see the analysis
   in the project root for the carve-out between cooper, signpost,
   and bespoke external producers.
 - Apt-repo proxies (hashicorp-release, k8s-release, etc.). Those are
   signpost's job, not cooper's.
+- HTML-scraped sources (`html_url`) — vendors that publish download
+  metadata only on a rendered page (developer.android.com, flutter.dev,
+  Apache directory-studio). Still on the deferred list pending a
+  CSS-selector + post-extractor design.

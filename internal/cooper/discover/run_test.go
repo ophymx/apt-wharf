@@ -433,6 +433,109 @@ func TestRun_JSONURL_HappyPath(t *testing.T) {
 	}
 }
 
+const samplePackageBodyXMLURL = `---
+source:
+  xml_url:
+    url: "REPLACE_ME"
+    version_xpath: "//channel[@status='release']/build/@number"
+arches:
+  amd64:
+    asset_url: "https://download.example.invalid/foo-${VERSION}-linux-${ARCH}.tar.gz"
+  arm64:
+    asset_url: "https://download.example.invalid/foo-${VERSION}-linux-${ARCH}.tar.gz"
+---
+name: foo
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: An xml_url-sourced fixture
+contents:
+  - src: ${ASSETS}/foo
+    dst: /usr/bin/foo
+`
+
+const xmlUpdatesBody = `<?xml version="1.0" encoding="UTF-8"?>
+<products>
+  <product name="Foo">
+    <channel id="release" status="release">
+      <build number="1.2.3" fullNumber="1.2.3.45"/>
+    </channel>
+  </product>
+</products>`
+
+func TestRun_XMLURL_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(xmlUpdatesBody))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	body := strings.Replace(samplePackageBodyXMLURL, "REPLACE_ME", srv.URL, 1)
+	writeFile(t, filepath.Join(dir, "packages/foo.yaml"), body)
+	writeFile(t, filepath.Join(dir, "cooper.yaml"),
+		"packages:\n  - ./packages/foo.yaml\n")
+
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{
+		Tool:       plan.Tool{Name: "cooper", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
+		HTTPClient: srv.Client(),
+		Now: func() time.Time {
+			t, _ := time.Parse(time.RFC3339, "2026-05-11T00:00:00Z")
+			return t
+		},
+	}
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 {
+		t.Fatalf("packages: %d", len(got.Packages))
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultOK {
+		t.Fatalf("result=%s err=%+v", pkg.Result, pkg.Error)
+	}
+	if pkg.Source == nil || pkg.Source.Kind != plan.SourceKindXMLURL {
+		t.Errorf("source.kind: %+v", pkg.Source)
+	}
+	if pkg.Source.Token != "1.2.3" {
+		t.Errorf("source.token: %q", pkg.Source.Token)
+	}
+	if len(pkg.Artifacts) != 2 {
+		t.Fatalf("artifacts: %d", len(pkg.Artifacts))
+	}
+
+	a := pkg.Artifacts[0]
+	wantURL := "https://download.example.invalid/foo-1.2.3-linux-amd64.tar.gz"
+	if a.Asset.URL != wantURL {
+		t.Errorf("asset.url: %q want %q", a.Asset.URL, wantURL)
+	}
+	if a.Deb.Filename != "foo_1.2.3_amd64.deb" {
+		t.Errorf("deb.filename: %s", a.Deb.Filename)
+	}
+
+	ok, recomputed, err := plan.VerifyBuildInputsHash(opts.Tool, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Errorf("build_inputs_hash mismatch: stored=%s recomputed=%s", a.Deb.BuildInputsHash, recomputed)
+	}
+
+	got2, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2 := got2.Packages[0].Artifacts[0]
+	if a.Deb.BuildInputsHash != a2.Deb.BuildInputsHash {
+		t.Errorf("hash drifted across runs: %s vs %s", a.Deb.BuildInputsHash, a2.Deb.BuildInputsHash)
+	}
+}
+
 func TestRun_JSONURL_InvalidVersion(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Version that doesn't match Debian grammar (starts with letter).

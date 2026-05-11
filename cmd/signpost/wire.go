@@ -129,6 +129,17 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 				return nil, fmt.Errorf("source %s: %w", name, err)
 			}
 			discoverers[name] = d
+		case "xml_url":
+			d, err := source.NewLatestXMLDiscoverer(
+				src.Discovery.URL,
+				src.Discovery.TokenXPath,
+				src.Discovery.AssetURL,
+				httpClient,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("source %s: %w", name, err)
+			}
+			discoverers[name] = d
 		case "external":
 			d, err := source.NewExternalDiscoverer(
 				src.Discovery.Command,

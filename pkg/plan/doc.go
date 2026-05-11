@@ -34,6 +34,7 @@ const (
 const (
 	SourceKindGitHubRelease = "github_release"
 	SourceKindJSONURL       = "json_url"
+	SourceKindXMLURL        = "xml_url"
 	SourceKindLocal         = "local"
 )
 

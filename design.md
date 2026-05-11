@@ -323,6 +323,30 @@ discovery:
   external shim binary. `cmd/discover-zoom` is now redundant for the
   Zoom case — the same mapping fits in five lines of YAML.
 
+### Built-in: `xml_url`
+
+```yaml
+discovery:
+  type: xml_url
+  url: https://www.jetbrains.com/updates/updates.xml
+  token_xpath: "//product[@name='IntelliJ IDEA']/channel[@status='release']/build/@number"
+  asset_url: "https://download.jetbrains.com/idea/ideaIC-{token}.tar.gz"
+```
+
+- The XML counterpart to `json_url`. HTTP `GET` against the
+  metadata endpoint; response body is capped at 1 MiB and parsed
+  with `github.com/antchfx/xmlquery`.
+- `token_xpath` is an XPath expression resolving to the
+  change-detection token (typically the version string).
+- `asset_url` is a URL template. `{token}` substitutes the resolved
+  `token_xpath` value; `{xpath:<expr>}` runs any XPath against the
+  same response body. The `xpath:` prefix is required to keep the
+  surrounding URL grammar parseable (raw XPath includes `[`, `]`,
+  `/`, `=`). The rendered URL must be `http`/`https` or the probe
+  fails.
+- Targets JetBrains' `updates.xml` (the canonical case), Apache
+  project release feeds, and RSS / Atom-shaped download indexes.
+
 ### Built-in: `external`
 
 Escape hatch for vendors with bespoke discovery needs. Language-agnostic
@@ -402,7 +426,7 @@ cmd/signpost/         main, flag/config wiring
 cmd/discover-zoom/    sample external discoverer (Zoom Linux client)
 external/             public Go helper for tools implementing the external contract
 internal/config/      YAML schema, validation, env interpolation
-internal/source/      Discoverer interface + built-in impls (github_release, latest_url, json_url, external)
+internal/source/      Discoverer interface + built-in impls (github_release, latest_url, json_url, xml_url, external)
 internal/refresh/     poll loop, change detection, control extraction, snapshot composition
 internal/index/       Packages, Release, InRelease writers
 internal/sign/        openpgp wrapper (key load, optional auto-generate, clearsign, detach)

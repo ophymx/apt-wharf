@@ -25,13 +25,14 @@ type Sidecar struct {
 	Arches          map[string]Arch `yaml:"arches"`
 }
 
-// Source is a discriminated union over discovery backends. Cooper ships
-// only the GitHub backend; non-GitHub sources go through external
-// producers per cooper-design.md §"External producers". Exactly one
-// of GitHub / JSONURL must be set; validation enforces this.
+// Source is a discriminated union over discovery backends. Exactly one
+// of GitHub / JSONURL / XMLURL must be set; validation enforces this.
+// Vendors that don't fit any built-in kind go through external
+// producers per cooper-design.md §"External producers".
 type Source struct {
 	GitHub  *GitHubSource  `yaml:"github"`
 	JSONURL *JSONURLSource `yaml:"json_url"`
+	XMLURL  *XMLURLSource  `yaml:"xml_url"`
 }
 
 // GitHubSource selects a GitHub release. Release defaults to "latest"
@@ -60,6 +61,27 @@ type JSONURLSource struct {
 	// vendors whose JSON returns e.g. "go1.26.3" or "v3.13.0" — the
 	// raw value isn't a valid Debian upstream version (must start
 	// with a digit). Stripping happens before grammar validation.
+	VersionStripPrefix string `yaml:"version_strip_prefix"`
+}
+
+// XMLURLSource is the XML counterpart to JSONURLSource. The endpoint
+// returns XML (JetBrains' updates.xml is the canonical case; RSS / Atom
+// feeds and Apache project release feeds fit the same shape); the
+// version is plucked via an XPath expression in place of gjson.
+//
+// arches[].asset_url templates support cooper's standard ${VERSION} /
+// ${ARCH} substitutions plus {token} (resolves to the version) and
+// {xpath:...} placeholders (run any XPath against the same response
+// body, mirroring json_url's {gjson.path} slot). Mirrors apt-signpost's
+// `xml_url` discovery type.
+type XMLURLSource struct {
+	URL          string `yaml:"url"`
+	VersionXPath string `yaml:"version_xpath"`
+
+	// VersionStripPrefix has the same semantics as on JSONURLSource:
+	// removed from the start of the extracted version. Some vendor
+	// feeds prefix their version strings ("v2024.1.4") in a way that's
+	// invalid as a Debian upstream version.
 	VersionStripPrefix string `yaml:"version_strip_prefix"`
 }
 
@@ -140,6 +162,9 @@ func (r *Release) UnmarshalYAML(value *yaml.Node) error {
 //     template (`https://example.com/foo-${VERSION}-${ARCH}.tar.gz`,
 //     with optional signpost-style {token} / {gjson.path}
 //     placeholders against the JSON body).
+//   - xml_url:        AssetURL is a fully-qualified download URL
+//     template with the same ${VERSION} / ${ARCH} substitutions plus
+//     {token} / {xpath:...} placeholders against the XML body.
 type Arch struct {
 	Asset    string `yaml:"asset"`
 	AssetURL string `yaml:"asset_url"`

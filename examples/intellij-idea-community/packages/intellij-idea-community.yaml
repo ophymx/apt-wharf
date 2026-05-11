@@ -1,0 +1,48 @@
+---
+# Doc 1 — cooper sidecar
+source:
+  xml_url:
+    # JetBrains' canonical updates feed. One document, every product +
+    # channel; we filter to IntelliJ IDEA's release channel and pluck
+    # the latest build's `number` attribute (e.g. "2024.3.5"). The
+    # build's `number` is the user-facing version and matches the
+    # corresponding download filename, so it doubles as the Debian
+    # upstream version.
+    url: "https://www.jetbrains.com/updates/updates.xml"
+    version_xpath: "//product[@name='IntelliJ IDEA']/channel[@status='release' and @licensing='release'][1]/build[1]/@number"
+
+arches:
+  # Per-arch tarballs follow a stable naming pattern under
+  # download.jetbrains.com. amd64 has no arch suffix; aarch64 gets
+  # one — handled with a simple per-arch template since the version
+  # extracted from updates.xml is the same value for both.
+  amd64:
+    asset_url: "https://download.jetbrains.com/idea/ideaIC-${VERSION}.tar.gz"
+  arm64:
+    asset_url: "https://download.jetbrains.com/idea/ideaIC-${VERSION}-aarch64.tar.gz"
+
+---
+# Doc 2 — vanilla nfpm
+name: intellij-idea-community
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+description: |
+  IntelliJ IDEA Community Edition.
+  Open-source Java/Kotlin IDE from JetBrains. Same platform as the
+  paid Ultimate edition with a narrower set of bundled frameworks.
+homepage: https://www.jetbrains.com/idea/
+license: Apache-2.0
+section: devel
+contents:
+  # The tarball expands to idea-IC-<fullNumber>/ which the staging
+  # extractor flattens under ${ASSETS}/asset/. We mount the resulting
+  # directory at /opt/idea-IC so launchers and JetBrains' own update
+  # logic find familiar paths.
+  - src: ${ASSETS}/asset
+    dst: /opt/idea-IC
+  - src: ./idea.desktop
+    dst: /usr/share/applications/idea.desktop
+    file_info:
+      mode: 0644

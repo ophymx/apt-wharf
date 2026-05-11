@@ -99,6 +99,8 @@ func processPackage(ctx context.Context, opts Options, path string) []plan.Packa
 		return processGitHubPackage(ctx, opts, pkgFile, refsByDoc)
 	case pkgFile.Sidecar.Source.JSONURL != nil:
 		return processJSONURLPackage(ctx, opts, pkgFile, refsByDoc)
+	case pkgFile.Sidecar.Source.XMLURL != nil:
+		return processXMLURLPackage(ctx, opts, pkgFile, refsByDoc)
 	default:
 		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed,
 			fmt.Errorf("source: no backend selected (validate should have caught this)"))}
@@ -212,6 +214,127 @@ func processJSONURLPackage(ctx context.Context, opts Options, pkgFile *config.Pa
 		})
 	}
 	return out
+}
+
+// processXMLURLPackage is the xml_url counterpart to
+// processJSONURLPackage. Same shape (one HTTP GET, per-arch URL
+// rendering against the body, derived source_date_epoch); only the
+// query language differs — XPath via xmlquery instead of gjson.
+func processXMLURLPackage(ctx context.Context, opts Options, pkgFile *config.PackageFile, refsByDoc [][]stage.Ref) []plan.Package {
+	resolution, err := cooperSrc.ResolveXMLURL(ctx, opts.HTTPClient, pkgFile.Sidecar.Source.XMLURL)
+	if err != nil {
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed, err)}
+	}
+
+	resolvedVersion := resolution.Version
+	if !version.MatchesDebianGrammar(resolvedVersion) {
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindVersionInvalid,
+			fmt.Errorf("version %q (from %s) does not match Debian's grammar `^[0-9][A-Za-z0-9.+~-]*$`",
+				resolvedVersion, pkgFile.Sidecar.Source.XMLURL.VersionXPath))}
+	}
+
+	source := &plan.Source{
+		Kind:  plan.SourceKindXMLURL,
+		URL:   resolution.URL,
+		Token: resolvedVersion,
+	}
+
+	archNames := sortedKeys(pkgFile.Sidecar.Arches)
+	out := make([]plan.Package, 0, len(pkgFile.NfpmDocs))
+	for i, doc := range pkgFile.NfpmDocs {
+		artifacts := make([]plan.Artifact, 0, len(archNames))
+		failed := false
+		for _, arch := range archNames {
+			art, err := buildXMLURLArtifact(opts, pkgFile, &doc, refsByDoc[i], resolution, resolvedVersion, arch)
+			if err != nil {
+				out = append(out, errPkg(doc.Name, errKindFor(err), err))
+				failed = true
+				break
+			}
+			artifacts = append(artifacts, art)
+		}
+		if failed {
+			continue
+		}
+		out = append(out, plan.Package{
+			Name:      doc.Name,
+			Result:    plan.ResultOK,
+			Source:    source,
+			Artifacts: artifacts,
+		})
+	}
+	return out
+}
+
+// buildXMLURLArtifact resolves one (nfpm-doc × arch) combination against
+// an already-fetched XML resolution. Mirrors buildJSONURLArtifact; only
+// the per-arch URL renderer differs (RenderXMLAssetURL vs RenderAssetURL).
+func buildXMLURLArtifact(
+	opts Options,
+	pkgFile *config.PackageFile,
+	doc *config.NfpmDoc,
+	refs []stage.Ref,
+	resolution *cooperSrc.XMLURLResolution,
+	resolvedVersion, arch string,
+) (plan.Artifact, error) {
+	archCfg := pkgFile.Sidecar.Arches[arch]
+	assetURL, err := cooperSrc.RenderXMLAssetURL(archCfg.AssetURL, resolvedVersion, arch, resolution.RawBody)
+	if err != nil {
+		return plan.Artifact{}, &discoveryError{wrapped: err}
+	}
+
+	nfpmClone, err := stage.CloneNfpm(&doc.Node)
+	if err != nil {
+		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
+	}
+	stage.SubstituteNfpm(nfpmClone, resolvedVersion, arch)
+	nfpmJSON, err := stage.NfpmToJSON(nfpmClone)
+	if err != nil {
+		return plan.Artifact{}, fmt.Errorf("encode nfpm: %w", err)
+	}
+
+	vars := stage.Vars{
+		Name:        doc.Name,
+		Version:     resolvedVersion,
+		Arch:        arch,
+		Epoch:       pkgFile.Sidecar.Epoch,
+		PublishedAt: time.Unix(resolution.SourceEpoch, 0).UTC().Format(time.RFC3339),
+	}
+	auxFiles, err := stage.MaterializeAuxFiles(refs, vars)
+	if err != nil {
+		return plan.Artifact{}, &auxError{wrapped: err}
+	}
+
+	planAsset := plan.Asset{
+		Name:         basenameFromURL(assetURL),
+		URL:          assetURL,
+		Size:         0,
+		SHA256:       nil,
+		SHA256Source: nil,
+	}
+
+	bp := plan.BuildPlan{
+		SourceDateEpoch: resolution.SourceEpoch,
+		Nfpm:            nfpmJSON,
+		AuxFiles:        auxFiles,
+	}
+
+	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, nil, bp)
+	if err != nil {
+		return plan.Artifact{}, fmt.Errorf("compute build_inputs_hash: %w", err)
+	}
+
+	deb := plan.Deb{
+		Filename:        fmt.Sprintf("%s_%s_%s.deb", doc.Name, debVersionString(resolvedVersion, pkgFile.Sidecar.Epoch), arch),
+		BuildInputsHash: hash,
+	}
+
+	return plan.Artifact{
+		Arch:      arch,
+		Asset:     planAsset,
+		Deb:       deb,
+		BuildPlan: bp,
+	}, nil
 }
 
 // buildArtifact resolves one (nfpm-doc × arch) combination into a

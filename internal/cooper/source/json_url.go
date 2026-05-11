@@ -2,8 +2,6 @@ package source
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,9 +30,9 @@ var jsonURLPlaceholder = regexp.MustCompile(`\{([^{}]+)\}`)
 // orchestrator. RawBody is retained so per-arch placeholder rendering
 // can re-query gjson paths (cheap; the cap is 1 MiB).
 type JSONURLResolution struct {
-	URL       string
-	Version   string
-	RawBody   []byte
+	URL         string
+	Version     string
+	RawBody     []byte
 	SourceEpoch int64
 }
 
@@ -100,7 +98,7 @@ func ResolveJSONURL(ctx context.Context, client *http.Client, j *config.JSONURLS
 		URL:         j.URL,
 		Version:     version,
 		RawBody:     body,
-		SourceEpoch: deriveJSONURLEpoch(j.URL, version),
+		SourceEpoch: deriveURLEpoch(j.URL, version),
 	}, nil
 }
 
@@ -142,24 +140,6 @@ func RenderAssetURL(template, version, arch string, body []byte) (string, error)
 		return "", fmt.Errorf("rendered asset_url: %w", err)
 	}
 	return out, nil
-}
-
-// deriveJSONURLEpoch produces a stable timestamp for json_url sources.
-// github_release uses release.published_at; json_url has no canonical
-// equivalent, so we hash (url, version) into a deterministic second
-// offset from a fixed 2020-01-01 base, capped to a ~10-year window.
-//
-// The exact value is meaningless — reproducibility just needs the same
-// plan to yield the same epoch, and a "modern-ish" timestamp keeps
-// `ar tv` listings readable. Same version → same bytes → same epoch.
-func deriveJSONURLEpoch(metadataURL, version string) int64 {
-	const (
-		baseEpoch int64 = 1577836800           // 2020-01-01T00:00:00Z
-		spanSecs  int64 = 10 * 365 * 24 * 3600 // ~10 years
-	)
-	h := sha256.Sum256([]byte(metadataURL + ":" + version))
-	n := int64(binary.BigEndian.Uint64(h[:8]) >> 1) // clamp to positive int64
-	return baseEpoch + (n % spanSecs)
 }
 
 // assertHTTPURL guards against rendered URLs whose scheme isn't

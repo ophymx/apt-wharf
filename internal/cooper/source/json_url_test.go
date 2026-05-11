@@ -174,14 +174,14 @@ func TestRenderAssetURL_RejectsNonHTTPS(t *testing.T) {
 	}
 }
 
-func TestDeriveJSONURLEpoch_Stable(t *testing.T) {
-	a := deriveJSONURLEpoch("https://x/y", "1.2.3")
-	b := deriveJSONURLEpoch("https://x/y", "1.2.3")
+func TestDeriveURLEpoch_Stable(t *testing.T) {
+	a := deriveURLEpoch("https://x/y", "1.2.3")
+	b := deriveURLEpoch("https://x/y", "1.2.3")
 	if a != b {
 		t.Errorf("not deterministic: %d vs %d", a, b)
 	}
 	// Different inputs → different epochs (with overwhelming probability).
-	c := deriveJSONURLEpoch("https://x/y", "1.2.4")
+	c := deriveURLEpoch("https://x/y", "1.2.4")
 	if a == c {
 		t.Errorf("epoch collision on different version: %d == %d", a, c)
 	}

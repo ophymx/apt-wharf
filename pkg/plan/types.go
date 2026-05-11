@@ -38,8 +38,10 @@ type Package struct {
 // Field population depends on Kind:
 //   - "github_release": Repo, ReleaseID, ReleaseTag, ReleasePublishedAt.
 //   - "json_url":       URL, Token (the extracted version).
+//   - "xml_url":        URL, Token (the extracted version, same shape as
+//     json_url; XPath in place of gjson against an XML body).
 //   - "local":          GitCommit, GitDate (provenance for staves and
-//                       any other producer building from in-repo files).
+//     any other producer building from in-repo files).
 //
 // All non-Kind fields use omitempty so each kind's record stays focused
 // on its native provenance.
