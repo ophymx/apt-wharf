@@ -75,20 +75,33 @@ func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *st
 
 	files := map[string]FileEntry{}
 
-	// Per-arch metadata + by-hash entries.
+	// Per-arch metadata + by-hash entries. We emit Packages plus three
+	// compressed variants (.gz, .xz, .zst) so apt clients can fetch
+	// whichever matches their CompressionTypes::Order; each compressed
+	// form has its own by-hash entry keyed off the hash listed in Release.
 	for arch, af := range built.PerArch {
 		canonicalPkg := fmt.Sprintf("/dists/%s/main/binary-%s/Packages", suiteSegment, arch)
-		canonicalGz := canonicalPkg + ".gz"
-		files[canonicalPkg] = FileEntry{Data: af.Packages, ContentType: "text/plain"}
-		files[canonicalGz] = FileEntry{Data: af.PackagesGz, ContentType: "application/gzip"}
+		byHashPrefix := fmt.Sprintf("/dists/%s/main/binary-%s/by-hash/SHA256/", suiteSegment, arch)
 
-		pkgHash := built.PackagesSHA256[fmt.Sprintf("main/binary-%s/Packages", arch)]
-		gzHash := built.PackagesSHA256[fmt.Sprintf("main/binary-%s/Packages.gz", arch)]
-
-		byHashPkg := fmt.Sprintf("/dists/%s/main/binary-%s/by-hash/SHA256/%s", suiteSegment, arch, pkgHash)
-		byHashGz := fmt.Sprintf("/dists/%s/main/binary-%s/by-hash/SHA256/%s", suiteSegment, arch, gzHash)
-		files[byHashPkg] = FileEntry{Data: af.Packages, ContentType: "text/plain", ExpiresAt: now.Add(Retention)}
-		files[byHashGz] = FileEntry{Data: af.PackagesGz, ContentType: "application/gzip", ExpiresAt: now.Add(Retention)}
+		variants := []struct {
+			suffix      string
+			data        []byte
+			contentType string
+		}{
+			{"", af.Packages, "text/plain"},
+			{".gz", af.PackagesGz, "application/gzip"},
+			{".xz", af.PackagesXz, "application/x-xz"},
+			{".zst", af.PackagesZst, "application/zstd"},
+		}
+		for _, v := range variants {
+			files[canonicalPkg+v.suffix] = FileEntry{Data: v.data, ContentType: v.contentType}
+			hash := built.PackagesSHA256[fmt.Sprintf("main/binary-%s/Packages%s", arch, v.suffix)]
+			files[byHashPrefix+hash] = FileEntry{
+				Data:        v.data,
+				ContentType: v.contentType,
+				ExpiresAt:   now.Add(Retention),
+			}
+		}
 	}
 
 	// Sign Release into InRelease + Release.gpg.

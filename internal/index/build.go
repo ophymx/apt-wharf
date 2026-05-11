@@ -18,6 +18,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
+	"github.com/ulikunitz/xz"
 )
 
 // Entry is one source's contribution to the index.
@@ -43,16 +46,16 @@ type Suite struct {
 	Architectures []string
 }
 
-// ArchFiles holds the rendered Packages + Packages.gz for a single arch.
-//
-// TODO(xz): also emit Packages.xz. design.md §"Intentionally not
-// configurable" lists xz as planned; the dep (github.com/ulikunitz/xz)
-// is in the design's Implementation notes but not yet in go.mod. Add
-// PackagesXz here, write it alongside the gzip path below, and add
-// xz hash/size entries to the Release index. Cheap (~20 lines).
+// ArchFiles holds the rendered Packages plus its compressed variants
+// (gzip, xz, zstd) for a single arch. All three compressed forms are
+// surfaced so apt clients with different CompressionTypes::Order can
+// pick whichever they prefer; the Release file lists hashes for all
+// of them so apt can verify whichever it fetches.
 type ArchFiles struct {
-	Packages   []byte
-	PackagesGz []byte
+	Packages    []byte
+	PackagesGz  []byte
+	PackagesXz  []byte
+	PackagesZst []byte
 }
 
 // Built captures all metadata bytes and their hashes. Hashes are surfaced
@@ -63,7 +66,7 @@ type Built struct {
 	ReleaseUnsigned []byte
 
 	// PackagesSHA256 is keyed by canonical path
-	// "main/binary-<arch>/Packages" / "main/binary-<arch>/Packages.gz".
+	// "main/binary-<arch>/Packages[.gz|.xz|.zst]".
 	PackagesSHA256 map[string]string
 	PackagesSize   map[string]int64
 }
@@ -99,14 +102,31 @@ func Build(s Suite, entries []*Entry, now time.Time) (*Built, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gzip Packages for %s: %w", arch, err)
 		}
-		perArch[arch] = ArchFiles{Packages: pkg, PackagesGz: gz}
+		xzd, err := xzBytes(pkg)
+		if err != nil {
+			return nil, fmt.Errorf("xz Packages for %s: %w", arch, err)
+		}
+		zst, err := zstdBytes(pkg)
+		if err != nil {
+			return nil, fmt.Errorf("zstd Packages for %s: %w", arch, err)
+		}
+		perArch[arch] = ArchFiles{
+			Packages:    pkg,
+			PackagesGz:  gz,
+			PackagesXz:  xzd,
+			PackagesZst: zst,
+		}
 
 		pkgPath := fmt.Sprintf("%s/binary-%s/Packages", s.Component, arch)
-		gzPath := pkgPath + ".gz"
-		hashes[pkgPath] = hexSHA256(pkg)
-		hashes[gzPath] = hexSHA256(gz)
-		sizes[pkgPath] = int64(len(pkg))
-		sizes[gzPath] = int64(len(gz))
+		for path, data := range map[string][]byte{
+			pkgPath:          pkg,
+			pkgPath + ".gz":  gz,
+			pkgPath + ".xz":  xzd,
+			pkgPath + ".zst": zst,
+		} {
+			hashes[path] = hexSHA256(data)
+			sizes[path] = int64(len(data))
+		}
 	}
 
 	release := renderRelease(s, hashes, sizes, now)
@@ -202,6 +222,43 @@ func gzipBytes(in []byte) ([]byte, error) {
 		return nil, err
 	}
 	if _, err := w.Write(in); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func xzBytes(in []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := xz.NewWriter(&buf)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(in); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// zstdBytes pins encoder concurrency to 1 so two invocations on the
+// same input produce byte-identical output (klauspost/zstd's parallel
+// path can vary block boundaries otherwise).
+func zstdBytes(in []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf,
+		zstd.WithEncoderLevel(zstd.SpeedBestCompression),
+		zstd.WithEncoderConcurrency(1),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(in); err != nil {
+		w.Close()
 		return nil, err
 	}
 	if err := w.Close(); err != nil {

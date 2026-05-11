@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
+	"github.com/ulikunitz/xz"
 )
 
 func entry(name, pkg, ver, arch, pool string, size int64, sha string) *Entry {
@@ -63,6 +66,25 @@ func TestBuild_TwoArchOneAll(t *testing.T) {
 		if !bytes.Equal(decoded, af.Packages) {
 			t.Error("Packages.gz body mismatch")
 		}
+
+		xr, err := xz.NewReader(bytes.NewReader(af.PackagesXz))
+		if err != nil {
+			t.Fatalf("xz read: %v", err)
+		}
+		decodedXz, _ := io.ReadAll(xr)
+		if !bytes.Equal(decodedXz, af.Packages) {
+			t.Error("Packages.xz body mismatch")
+		}
+
+		zr, err := zstd.NewReader(bytes.NewReader(af.PackagesZst))
+		if err != nil {
+			t.Fatalf("zstd read: %v", err)
+		}
+		decodedZst, _ := io.ReadAll(zr)
+		zr.Close()
+		if !bytes.Equal(decodedZst, af.Packages) {
+			t.Error("Packages.zst body mismatch")
+		}
 	}
 
 	rel := string(out.ReleaseUnsigned)
@@ -75,8 +97,12 @@ func TestBuild_TwoArchOneAll(t *testing.T) {
 		"Acquire-By-Hash: yes",
 		"main/binary-amd64/Packages",
 		"main/binary-amd64/Packages.gz",
+		"main/binary-amd64/Packages.xz",
+		"main/binary-amd64/Packages.zst",
 		"main/binary-arm64/Packages",
 		"main/binary-arm64/Packages.gz",
+		"main/binary-arm64/Packages.xz",
+		"main/binary-arm64/Packages.zst",
 	} {
 		if !strings.Contains(rel, want) {
 			t.Errorf("Release missing %q\nfull:\n%s", want, rel)

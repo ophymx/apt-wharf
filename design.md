@@ -12,7 +12,8 @@ we end up storing and re-serving bytes we don't need to host.
 Stand up an apt repository that:
 
 - Hosts and signs the repository metadata (`InRelease`, `Release`,
-  `Release.gpg`, `Packages`, `Packages.gz`, `Packages.xz`).
+  `Release.gpg`, `Packages`, `Packages.gz`, `Packages.xz`,
+  `Packages.zst`).
 - For `.deb` requests, **HTTP 302 redirects to the upstream URL** instead of
   hosting the bytes.
 - Hashes each upstream `.deb` once (so `Packages` carries valid SHA256/size),
@@ -73,7 +74,7 @@ deployments should generate the key offline and copy it in.
 ```
 /dists/stable/InRelease
 /dists/stable/Release[.gpg]
-/dists/stable/main/binary-<arch>/Packages[.gz|.xz]
+/dists/stable/main/binary-<arch>/Packages[.gz|.xz|.zst]
 
 /pool/main/<...>/<name>_<version>_<arch>.deb       # external → 302 redirect
 /pool/main/<...>/<repo>-archive-keyring_<v>_all.deb # internal → real file
@@ -105,8 +106,9 @@ Pure Go, no CGO.
   control stanzas (saves rolling our own ar+tar+control parser).
 - **`github.com/ProtonMail/go-crypto/openpgp`** — in-process clearsign for
   `InRelease` and detached sign for `Release.gpg`.
-- **`compress/gzip`** + **`github.com/ulikunitz/xz`** — `Packages.gz`,
-  `Packages.xz`.
+- **`compress/gzip`** + **`github.com/ulikunitz/xz`** +
+  **`github.com/klauspost/compress/zstd`** — `Packages.gz`,
+  `Packages.xz`, `Packages.zst`.
 - **No database.** Per-source JSON state files on disk; the served
   repository is held in memory and published by an `atomic.Pointer` swap.
 
@@ -209,7 +211,7 @@ consistent view of metadata + redirects for the rest of the request.
        if hash(inputs) == state/bootstrap.json.input_hash: reuse cached .deb
        else: nfpm-build, bump version, persist state/bootstrap.json + .deb.
   4. Build new snapshot:
-       per-source stanzas → Packages → gzip/xz
+       per-source stanzas → Packages → gzip/xz/zstd
        per-suite Release referencing those file hashes
        sign → InRelease (clearsigned) + Release.gpg (detached)
        compose files map + redirects map.
@@ -528,10 +530,10 @@ embedding them in command arguments.
 ### Intentionally not configurable in v1
 
 - Per-source refresh interval — global only.
-- Output compression formats — emit `Packages` and `Packages.gz`.
-  `Packages.xz` is planned but not yet wired (see TODO in
-  `internal/index/build.go`); the `github.com/ulikunitz/xz` dep
-  listed under *Implementation notes* is staged for that work.
+- Output compression formats — emit `Packages`, `Packages.gz`,
+  `Packages.xz`, and `Packages.zst`. All four are hashed into
+  `Release` and laid down at the canonical path plus by-hash entry,
+  so apt picks whichever its `CompressionTypes::Order` prefers.
 - Hash algorithms in `Packages` and `Release` — SHA256 + Size only.
   No SHA1, no MD5. Modern apt (Debian 10+ / Ubuntu 18.04+) verifies
   against SHA256; older clients are unsupported.
