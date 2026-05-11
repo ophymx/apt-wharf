@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -17,8 +18,8 @@ type stubTransport struct {
 	cmds       []recordedCmd     // log of every runCmd
 	cmdResp    map[string][]byte // name+" "+args[0] → stdout body for runCmd
 	cmdErr     error
-	staged     []string          // paths returned by stageFile
-	removed    []string          // paths passed to removeFile
+	staged     []string // paths returned by stageFile
+	removed    []string // paths passed to removeFile
 }
 
 type recordedCmd struct {
@@ -225,12 +226,7 @@ func TestBackend_Import_InvalidatesCache(t *testing.T) {
 }
 
 func contains(haystack []string, needle string) bool {
-	for _, h := range haystack {
-		if h == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }
 
 func equalSlices(a, b []string) bool {

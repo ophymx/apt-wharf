@@ -4,13 +4,22 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"al.essio.dev/pkg/shellescape"
 )
+
+// sshNotExistSentinel is the exit code the ssh readFile script uses
+// to signal "remote path is absent." Picked so it doesn't collide
+// with conventional shell exit codes (1=general, 2=misuse,
+// 126/127=command issues, 130+=signals).
+const sshNotExistSentinel = 42
 
 // transport is the operations the reprepro backend performs against
 // its target — local filesystem or a remote host over ssh/scp. The
@@ -95,25 +104,23 @@ type sshTransport struct {
 }
 
 func (s sshTransport) runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
-	remote := shellQuote(name)
-	for _, a := range args {
-		remote += " " + shellQuote(a)
-	}
+	remote := shellescape.QuoteCommand(append([]string{name}, args...))
 	cmd := exec.CommandContext(ctx, "ssh", s.dest, remote)
 	cmd.Stderr = os.Stderr
 	return cmd.Output()
 }
 
+// readFile uses a shell wrapper that exits with sshNotExistSentinel
+// when the remote path is absent, so the caller can distinguish "file
+// not found" from "cat failed" (permissions, broken symlink, etc.)
+// without relying on stdout being empty.
 func (s sshTransport) readFile(ctx context.Context, path string) ([]byte, error) {
-	out, err := s.runCmd(ctx, "cat", path)
+	q := shellescape.Quote(path)
+	script := fmt.Sprintf("if [ -e %s ]; then cat -- %s; else exit %d; fi", q, q, sshNotExistSentinel)
+	out, err := s.runCmd(ctx, "sh", "-c", script)
 	if err != nil {
-		// distinguish missing-file from other errors. cat exits 1
-		// when the file doesn't exist; we conservatively map any
-		// non-empty stderr message to fs.ErrNotExist when bytes are
-		// empty, but a more precise check would parse exit code.
-		// For drayman's read-Packages use case the caller already
-		// tolerates fs.ErrNotExist on empty arches.
-		if len(out) == 0 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == sshNotExistSentinel {
 			return nil, fs.ErrNotExist
 		}
 		return nil, err
@@ -121,24 +128,22 @@ func (s sshTransport) readFile(ctx context.Context, path string) ([]byte, error)
 	return out, nil
 }
 
+// listPackagesFiles uses the same sentinel pattern: a missing dists
+// root exits sshNotExistSentinel and is mapped to an empty result;
+// any other error bubbles up.
 func (s sshTransport) listPackagesFiles(ctx context.Context, distsRoot string) ([]string, error) {
-	// Use a shell guard so an empty repo (no dists root yet) doesn't
-	// produce a "No such file or directory" stderr message; find
-	// otherwise prints to stderr and exits non-zero in that case.
-	probe := "test -d " + shellQuote(distsRoot) + " && find " + shellQuote(distsRoot) + " -name Packages -type f"
-	cmd := exec.CommandContext(ctx, "ssh", s.dest, probe)
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
+	q := shellescape.Quote(distsRoot)
+	script := fmt.Sprintf("if [ ! -d %s ]; then exit %d; fi; find %s -name Packages -type f", q, sshNotExistSentinel, q)
+	out, err := s.runCmd(ctx, "sh", "-c", script)
 	if err != nil {
-		// test -d returning false also surfaces as a non-zero exit
-		// from the whole pipeline; treat empty output as empty repo.
-		if len(out) == 0 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == sshNotExistSentinel {
 			return nil, nil
 		}
 		return nil, err
 	}
 	var paths []string
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(string(out), "\n"), "\n") {
 		if line != "" {
 			paths = append(paths, line)
 		}
@@ -163,14 +168,6 @@ func (s sshTransport) stageFile(ctx context.Context, localPath string) (string, 
 func (s sshTransport) removeFile(ctx context.Context, path string) error {
 	_, err := s.runCmd(ctx, "rm", "-f", path)
 	return err
-}
-
-// shellQuote wraps s in single quotes, escaping embedded single
-// quotes via the standard `'\''` sequence. Sufficient for the file
-// paths and reprepro arguments drayman emits; not a general-purpose
-// shell quoter.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func randHex(n int) (string, error) {

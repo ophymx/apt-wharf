@@ -6,6 +6,7 @@ package aptly
 
 import (
 	"context"
+	"net/http"
 	"strings"
 
 	"github.com/ophymx/apt-signpost/internal/drayman/aptly"
@@ -41,24 +42,20 @@ type Opts struct {
 	// SkipSigning passes Signing.Skip on the publish-update request.
 	// Used when the aptly server's gpg config is disabled.
 	SkipSigning bool
-	// Client lets tests pass a pre-built *aptly.Client (typically
-	// pointed at an httptest.Server). Production callers leave this
-	// nil; New constructs a default client from BaseURL.
-	Client *aptly.Client
+	// HTTPClient is the http.Client used for aptly API calls. Optional;
+	// when nil, http.DefaultClient is used. Production callers typically
+	// set a longer Timeout than the default (uploads can be slow);
+	// tests can point an httptest.Server-aware client at a local fake.
+	HTTPClient *http.Client
 }
 
-// New constructs a Backend. Opts.BaseURL is ignored when Opts.Client
-// is set.
+// New constructs a Backend.
 func New(opts Opts) *Backend {
 	if opts.PublishPrefix == "" {
 		opts.PublishPrefix = "."
 	}
-	client := opts.Client
-	if client == nil {
-		client = aptly.New(opts.BaseURL, nil)
-	}
 	return &Backend{
-		client:       client,
+		client:       aptly.New(opts.BaseURL, opts.HTTPClient),
 		repo:         opts.Repo,
 		prefix:       opts.PublishPrefix,
 		distribution: opts.Distribution,

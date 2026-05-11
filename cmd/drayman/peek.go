@@ -25,7 +25,7 @@ func cmdPeek(args []string) error {
 		fs.PrintDefaults()
 	}
 	bf := registerBackendFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

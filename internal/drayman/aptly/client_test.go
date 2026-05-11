@@ -333,6 +333,23 @@ func TestPublishUpdate_NamedPrefix(t *testing.T) {
 	}
 }
 
+func TestEncodeAptlyPrefix(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{".", ":."},
+		{"internal", "internal"},
+		{"ubuntu/jammy", "ubuntu_jammy"},
+		{"foo_bar", "foo__bar"},
+		{"a_b/c", "a__b_c"},
+	}
+	for _, c := range cases {
+		if got := encodeAptlyPrefix(c.in); got != c.want {
+			t.Errorf("encodeAptlyPrefix(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestPublishUpdate_Non2xxBubblesUp(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "publication not found", http.StatusNotFound)

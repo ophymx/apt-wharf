@@ -1,13 +1,14 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/aptly"
 	"github.com/ophymx/apt-signpost/internal/drayman/backend"
 	aptlyBackend "github.com/ophymx/apt-signpost/internal/drayman/backend/aptly"
 	repreproBackend "github.com/ophymx/apt-signpost/internal/drayman/backend/reprepro"
@@ -58,9 +59,9 @@ func (bf *backendFlags) resolveBackend() (backend.Backend, error) {
 		if *bf.aptlyURL == "" || *bf.repo == "" {
 			return nil, errors.New("--backend aptly requires --aptly-url and --repo")
 		}
-		client := aptly.New(*bf.aptlyURL, &http.Client{Timeout: 5 * time.Minute})
 		return aptlyBackend.New(aptlyBackend.Opts{
-			Client:        client,
+			BaseURL:       *bf.aptlyURL,
+			HTTPClient:    &http.Client{Timeout: 5 * time.Minute},
 			Repo:          *bf.repo,
 			PublishPrefix: *bf.publishPrefix,
 			Distribution:  *bf.publishDist,
@@ -87,4 +88,13 @@ func (bf *backendFlags) resolveBackend() (backend.Backend, error) {
 // reprepro publishes atomically per Import).
 func (bf *backendFlags) publishRequiresDistribution() bool {
 	return *bf.kind == "aptly"
+}
+
+// newRunID returns 8 hex chars, suitable for namespacing aptly upload
+// directories per drayman invocation. Collision-resistant enough that
+// concurrent drayman runs don't tread on each other's staging.
+func newRunID() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }

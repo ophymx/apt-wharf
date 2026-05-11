@@ -50,20 +50,20 @@ func New(baseURL string, hc *http.Client) *Client {
 // struct preserves the standard set so future callers can use more
 // without redefining the wire format.
 type Package struct {
-	Architecture            string `json:"Architecture"`
-	XCooperBuildInputsHash  string `json:"X-Cooper-Build-Inputs-Hash,omitempty"`
-	Description             string `json:"Description,omitempty"`
-	Filename                string `json:"Filename,omitempty"`
-	FilesHash               string `json:"FilesHash,omitempty"`
-	Key                     string `json:"Key"`
-	MD5sum                  string `json:"MD5sum,omitempty"`
-	Maintainer              string `json:"Maintainer,omitempty"`
-	Package                 string `json:"Package"`
-	SHA256                  string `json:"SHA256,omitempty"`
-	Section                 string `json:"Section,omitempty"`
-	ShortKey                string `json:"ShortKey,omitempty"`
-	Size                    string `json:"Size,omitempty"`
-	Version                 string `json:"Version"`
+	Architecture           string `json:"Architecture"`
+	XCooperBuildInputsHash string `json:"X-Cooper-Build-Inputs-Hash,omitempty"`
+	Description            string `json:"Description,omitempty"`
+	Filename               string `json:"Filename,omitempty"`
+	FilesHash              string `json:"FilesHash,omitempty"`
+	Key                    string `json:"Key"`
+	MD5sum                 string `json:"MD5sum,omitempty"`
+	Maintainer             string `json:"Maintainer,omitempty"`
+	Package                string `json:"Package"`
+	SHA256                 string `json:"SHA256,omitempty"`
+	Section                string `json:"Section,omitempty"`
+	ShortKey               string `json:"ShortKey,omitempty"`
+	Size                   string `json:"Size,omitempty"`
+	Version                string `json:"Version"`
 }
 
 // QueryPackages returns packages in repo matching the aptly package
@@ -120,18 +120,24 @@ func (c *Client) HashExists(ctx context.Context, repo, hash string) (bool, error
 	return len(pkgs) > 0, nil
 }
 
-// encodeAptlyPrefix handles aptly's URL convention for publication
-// prefixes. Aptly encodes "." (no prefix) as ":." in URL paths because
-// a bare "." can be collapsed by HTTP clients/middleware; other
-// prefixes get standard URL path-escape. Aptly also encodes "/" as
-// "_" and "_" as "__" in prefix strings (see aptly docs §"REST API");
-// drayman doesn't exercise hierarchical prefixes in v0, but the
-// encoding hook is here for when it does.
+// encodeAptlyPrefix applies aptly's URL convention for publication
+// prefixes (see aptly docs §"REST API: GET /api/publish"):
+//
+//   - "." (no prefix) becomes ":." — a bare "." would be collapsed
+//     by HTTP intermediaries.
+//   - "_" becomes "__" (must double first).
+//   - "/" becomes "_" (so hierarchical prefixes like "ubuntu/jammy"
+//     reach aptly as "ubuntu_jammy").
+//
+// Escape ordering matters: literal "_" must double before "/"
+// collapses, otherwise the round-trip is ambiguous.
 func encodeAptlyPrefix(prefix string) string {
 	if prefix == "." {
 		return ":."
 	}
-	return url.PathEscape(prefix)
+	prefix = strings.ReplaceAll(prefix, "_", "__")
+	prefix = strings.ReplaceAll(prefix, "/", "_")
+	return prefix
 }
 
 // ListByNameArch returns every package in repo with the given Debian

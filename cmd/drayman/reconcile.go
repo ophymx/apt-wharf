@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 
 	"github.com/ophymx/apt-signpost/internal/drayman/policy"
 	"github.com/ophymx/apt-signpost/pkg/plan"
@@ -35,7 +34,7 @@ func cmdReconcile(args []string) error {
 	cooperBin := fs.String("cooper-bin", "cooper", "path to cooper binary")
 	outDir := fs.String("out-dir", "", "where cooper builds .debs (default: ephemeral; cleaned on exit)")
 	dryRun := fs.Bool("dry-run", false, "query and decide but don't build, import, or publish")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -69,21 +68,23 @@ func cmdReconcile(args []string) error {
 	}
 
 	// Set up an out-dir for cooper's .deb output. If the user didn't
-	// pick one, we use an ephemeral temp dir and clean up on exit.
+	// pick one, use an ephemeral temp dir and clean up on exit.
+	// Resolve to absolute either way: nfpm runs with cwd = staging
+	// dir, so a relative out-dir resolves wrong from nfpm's POV.
 	cooperOutDir := *outDir
-	cleanupOut := false
 	if cooperOutDir == "" {
 		tmp, err := os.MkdirTemp("", "drayman-out-")
 		if err != nil {
 			return fmt.Errorf("mkdir out-dir: %w", err)
 		}
 		cooperOutDir = tmp
-		cleanupOut = true
-		defer func() {
-			if cleanupOut {
-				_ = os.RemoveAll(cooperOutDir)
-			}
-		}()
+		defer os.RemoveAll(tmp)
+	} else {
+		abs, err := filepath.Abs(cooperOutDir)
+		if err != nil {
+			return fmt.Errorf("resolve out-dir: %w", err)
+		}
+		cooperOutDir = abs
 	}
 
 	// Cooper's --work-dir must be absolute or nfpm's relative
@@ -111,13 +112,14 @@ func cmdReconcile(args []string) error {
 		}
 		built, failed := collectArtifacts(annotated)
 		anyFailed = anyFailed || failed
-		for _, a := range built {
-			if err := be.Import(ctx, a.path); err != nil {
-				fmt.Fprintf(os.Stderr, "import failed: %s: %v\n", a.basename, err)
+		for _, debPath := range built {
+			name := filepath.Base(debPath)
+			if err := be.Import(ctx, debPath); err != nil {
+				fmt.Fprintf(os.Stderr, "import failed: %s: %v\n", name, err)
 				anyFailed = true
 				continue
 			}
-			fmt.Printf("imported: %s\n", a.basename)
+			fmt.Printf("imported: %s\n", name)
 			anyImported = true
 		}
 	}
@@ -166,12 +168,7 @@ func sortedRevisions(groups map[int][]policy.Decision) []int {
 	for k := range groups {
 		out = append(out, k)
 	}
-	// tiny inline sort (avoids importing "sort" just for ints).
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j-1] > out[j]; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
-		}
-	}
+	sort.Ints(out)
 	return out
 }
 
@@ -205,13 +202,6 @@ func filterPlanForDecisions(p *plan.Plan, decisions []policy.Decision) *plan.Pla
 	return &out
 }
 
-// builtArtifact captures the minimal info needed to upload a .deb to
-// aptly: the local path cooper wrote and the basename to stage under.
-type builtArtifact struct {
-	path     string
-	basename string
-}
-
 // execCooperBuild runs cooper as a subprocess, feeding p over stdin
 // and reading the annotated plan from stdout. revision > 0 adds
 // --revision N to the argv. workDir is the staging root cooper uses
@@ -223,6 +213,8 @@ type builtArtifact struct {
 // valid annotated plan to stdout — so the exit code is informational,
 // not fatal. We bubble up only when stdout fails to parse as JSON
 // (cooper crashed before emitting output, or hit a usage error).
+// A non-zero exit alongside parseable output is logged to stderr;
+// callers still trust the per-artifact Result fields.
 func execCooperBuild(ctx context.Context, cooperBin string, p *plan.Plan, outDir, workDir string, revision int) (*plan.Plan, error) {
 	args := []string{"build", "--out-dir", outDir, "--work-dir", workDir}
 	if revision > 0 {
@@ -251,14 +243,20 @@ func execCooperBuild(ctx context.Context, cooperBin string, p *plan.Plan, outDir
 		}
 		return nil, fmt.Errorf("decode cooper output: %w", err)
 	}
+	if runErr != nil {
+		// Output parsed cleanly, so per-artifact Result fields will
+		// surface real failures. Note the exit code so the operator
+		// knows it wasn't a clean run.
+		fmt.Fprintf(os.Stderr, "cooper exited non-zero (revision %d): %v\n", revision, runErr)
+	}
 	return &annotated, nil
 }
 
 // collectArtifacts pulls every successful artifact's path out of an
 // annotated cooper-build plan. The second return value is true when
 // any artifact failed (the caller propagates that to the exit code).
-func collectArtifacts(annotated *plan.Plan) ([]builtArtifact, bool) {
-	var built []builtArtifact
+func collectArtifacts(annotated *plan.Plan) ([]string, bool) {
+	var built []string
 	var failed bool
 	for _, pkg := range annotated.Packages {
 		for _, a := range pkg.Artifacts {
@@ -270,21 +268,8 @@ func collectArtifacts(annotated *plan.Plan) ([]builtArtifact, bool) {
 			if a.Deb.Path == nil {
 				continue
 			}
-			built = append(built, builtArtifact{
-				path:     *a.Deb.Path,
-				basename: filepath.Base(*a.Deb.Path),
-			})
+			built = append(built, *a.Deb.Path)
 		}
 	}
 	return built, failed
 }
-
-// newRunID returns 8 hex chars, suitable for namespacing aptly upload
-// directories per drayman invocation. Collision-resistant enough that
-// concurrent drayman runs don't tread on each other's staging.
-func newRunID() string {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-

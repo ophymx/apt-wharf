@@ -52,14 +52,17 @@ type Decision struct {
 	Reason      string // human-readable rationale, shown in `drayman peek` output
 }
 
-// Decide walks every artifact in p with Result=="ok" and returns a
-// Decision per artifact. q is bound to a single target repo by
+// Decide walks every package in p and returns a Decision per artifact
+// for OK packages, plus one synthetic Skip decision per discover-failed
+// package (so `drayman peek` shows discover failures rather than
+// silently dropping them). q is bound to a single target repo by
 // construction (see backend.Backend); policy doesn't pass repo
 // identity through method calls.
 func Decide(ctx context.Context, q backend.Querier, p *plan.Plan) ([]Decision, error) {
 	var out []Decision
 	for _, pkg := range p.Packages {
 		if pkg.Result != plan.ResultOK {
+			out = append(out, discoverFailedDecision(pkg))
 			continue
 		}
 		for _, art := range pkg.Artifacts {
@@ -71,6 +74,22 @@ func Decide(ctx context.Context, q backend.Querier, p *plan.Plan) ([]Decision, e
 		}
 	}
 	return out, nil
+}
+
+// discoverFailedDecision builds a synthetic Skip decision for a
+// package whose discover phase failed. Arch is empty because discover
+// never populated artifacts; the reason carries the kind+message so
+// the operator sees what broke.
+func discoverFailedDecision(pkg plan.Package) Decision {
+	reason := "discover failed"
+	if pkg.Error != nil {
+		reason = fmt.Sprintf("discover failed (%s): %s", pkg.Error.Kind, pkg.Error.Message)
+	}
+	return Decision{
+		PackageName: pkg.Name,
+		Action:      ActionSkip,
+		Reason:      reason,
+	}
 }
 
 func decideOne(ctx context.Context, q backend.Querier, pkg plan.Package, art plan.Artifact) (Decision, error) {
@@ -137,11 +156,26 @@ func decideOne(ctx context.Context, q backend.Querier, pkg plan.Package, art pla
 // debian-revision); cooper build rejects re-fed annotated plans before
 // drayman would reach this code, so a "-" here is a recipe author's
 // problem, not drayman's.
+//
+// Returns an error when the version field is missing, non-string, or
+// empty — those would silently misbehave downstream (the upstream-match
+// loop would exclude every existing entry, and drayman would publish
+// at bare on top of an existing repo state).
 func planBaseVersion(raw json.RawMessage) (string, error) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return "", err
 	}
-	v, _ := m["version"].(string)
+	raw2, ok := m["version"]
+	if !ok {
+		return "", fmt.Errorf("nfpm config missing 'version' field")
+	}
+	v, ok := raw2.(string)
+	if !ok {
+		return "", fmt.Errorf("nfpm config 'version' is %T, want string", raw2)
+	}
+	if v == "" {
+		return "", fmt.Errorf("nfpm config 'version' is empty")
+	}
 	return v, nil
 }

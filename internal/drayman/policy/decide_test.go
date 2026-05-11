@@ -170,8 +170,8 @@ func TestDecide_EpochInBaseVersion(t *testing.T) {
 	q := &stubQuerier{
 		listByNameArch: map[string][]backend.Package{
 			"hugo|amd64": {
-				mkPkg("hugo", "0.140.0-5", "amd64"),    // different epoch — ignored
-				mkPkg("hugo", "1:0.140.0-2", "amd64"),  // same epoch — contributes
+				mkPkg("hugo", "0.140.0-5", "amd64"),   // different epoch — ignored
+				mkPkg("hugo", "1:0.140.0-2", "amd64"), // same epoch — contributes
 			},
 		},
 	}
@@ -184,7 +184,7 @@ func TestDecide_EpochInBaseVersion(t *testing.T) {
 	}
 }
 
-func TestDecide_SkipsArtifactsInErrorPackages(t *testing.T) {
+func TestDecide_SurfacesDiscoverFailedPackages(t *testing.T) {
 	p := &plan.Plan{
 		Packages: []plan.Package{
 			{Name: "broken", Result: plan.ResultError, Error: &plan.Error{Kind: "discovery_failed", Message: "404"}},
@@ -205,11 +205,17 @@ func TestDecide_SkipsArtifactsInErrorPackages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Errorf("want 1 decision (broken package skipped), got %d", len(got))
+	if len(got) != 2 {
+		t.Fatalf("want 2 decisions (synthetic for broken + real for hugo), got %d", len(got))
 	}
-	if got[0].PackageName != "hugo" {
-		t.Errorf("unexpected decision target: %s", got[0].PackageName)
+	if got[0].PackageName != "broken" || got[0].Action != ActionSkip {
+		t.Errorf("first decision: want broken/skip, got %+v", got[0])
+	}
+	if !strings.Contains(got[0].Reason, "discovery_failed") || !strings.Contains(got[0].Reason, "404") {
+		t.Errorf("broken decision reason should carry kind+message, got %q", got[0].Reason)
+	}
+	if got[1].PackageName != "hugo" || got[1].Action != ActionBuild {
+		t.Errorf("second decision: want hugo/build, got %+v", got[1])
 	}
 }
 
