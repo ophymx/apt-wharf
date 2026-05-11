@@ -2,6 +2,7 @@ config.yml
 config.yaml
 /signpost
 /cooper
+/drayman
 /dist/
 *.deb
 /tmp/
