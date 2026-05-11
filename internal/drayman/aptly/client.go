@@ -12,12 +12,16 @@
 package aptly
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -116,10 +120,170 @@ func (c *Client) HashExists(ctx context.Context, repo, hash string) (bool, error
 	return len(pkgs) > 0, nil
 }
 
+// encodeAptlyPrefix handles aptly's URL convention for publication
+// prefixes. Aptly encodes "." (no prefix) as ":." in URL paths because
+// a bare "." can be collapsed by HTTP clients/middleware; other
+// prefixes get standard URL path-escape. Aptly also encodes "/" as
+// "_" and "_" as "__" in prefix strings (see aptly docs §"REST API");
+// drayman doesn't exercise hierarchical prefixes in v0, but the
+// encoding hook is here for when it does.
+func encodeAptlyPrefix(prefix string) string {
+	if prefix == "." {
+		return ":."
+	}
+	return url.PathEscape(prefix)
+}
+
 // ListByNameArch returns every package in repo with the given Debian
 // package Name and Architecture. drayman uses this to enumerate the
 // versions of (Package, Architecture) for max-revision computation
 // during auto-bump.
 func (c *Client) ListByNameArch(ctx context.Context, repo, name, arch string) ([]Package, error) {
 	return c.QueryPackages(ctx, repo, fmt.Sprintf("%s {%s}", name, arch))
+}
+
+// UploadFile uploads a single .deb to aptly's staging directory dir
+// via the File Upload API. Aptly creates dir if absent. Returns the
+// list of staged paths aptly reports (typically one entry of the form
+// "<dir>/<basename>").
+//
+// The multipart field name is "file" — matches aptly's example and is
+// the form aptly's handler accepts. (aptly is permissive about field
+// names but "file" is the documented one.)
+func (c *Client) UploadFile(ctx context.Context, dir, localPath string) ([]string, error) {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var body bytes.Buffer
+	mp := multipart.NewWriter(&body)
+	part, err := mp.CreateFormFile("file", filepath.Base(localPath))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return nil, err
+	}
+	if err := mp.Close(); err != nil {
+		return nil, err
+	}
+
+	u := fmt.Sprintf("%s/api/files/%s", c.baseURL, url.PathEscape(dir))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", mp.FormDataContentType())
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("aptly POST %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var out []string
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("aptly decode: %w", err)
+	}
+	return out, nil
+}
+
+// ImportReport mirrors aptly's POST /api/repos/{name}/file/{dir}
+// response body shape. Added/Removed/Warnings carry human-readable
+// messages; FailedFiles names files aptly couldn't process.
+type ImportReport struct {
+	FailedFiles []string `json:"FailedFiles"`
+	Report      struct {
+		Warnings []string `json:"Warnings"`
+		Added    []string `json:"Added"`
+		Removed  []string `json:"Removed"`
+	} `json:"Report"`
+}
+
+// ImportFromDir promotes every uploaded file in dir into the named
+// local repository. When forceReplace is true, aptly removes any
+// conflicting package already in the repo before importing (used for
+// idempotent re-runs).
+//
+// On a successful HTTP response, callers should still inspect
+// ImportReport.FailedFiles — aptly returns 200 even when individual
+// files failed to import.
+func (c *Client) ImportFromDir(ctx context.Context, repo, dir string, forceReplace bool) (*ImportReport, error) {
+	u := fmt.Sprintf("%s/api/repos/%s/file/%s", c.baseURL, url.PathEscape(repo), url.PathEscape(dir))
+	if forceReplace {
+		u += "?forceReplace=1"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("aptly POST %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var out ImportReport
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("aptly decode: %w", err)
+	}
+	return &out, nil
+}
+
+// PublishUpdateOpts controls publish-update behavior. Drayman's
+// current surface only needs the signing toggle; pass GPG details via
+// a follow-up extension when real deployments demand inline signing
+// from the orchestrator (typically aptly is configured server-side).
+type PublishUpdateOpts struct {
+	// SkipSigning sets `Signing.Skip` on the update request. Needed
+	// when the publication was created with skip-signing or when the
+	// aptly server lacks a usable GPG key. Without this aptly errors
+	// "unable to detached sign file" even if gpgDisableSign is set
+	// in the server config (per-publication state wins).
+	SkipSigning bool
+}
+
+// PublishUpdate triggers regeneration of Release/Packages files for
+// the publication at (prefix, distribution). aptly re-reads the bound
+// local repository's current state, signs/re-emits metadata, and
+// writes the new files into the publish endpoint.
+//
+// The publication must already exist (created via aptly publish repo
+// or POST /api/publish/{prefix}/repos). drayman doesn't auto-create
+// publications — that's a one-time operator setup step.
+func (c *Client) PublishUpdate(ctx context.Context, prefix, distribution string, opts PublishUpdateOpts) error {
+	body := map[string]any{}
+	if opts.SkipSigning {
+		body["Signing"] = map[string]any{"Skip": true}
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	u := fmt.Sprintf("%s/api/publish/%s/%s", c.baseURL, encodeAptlyPrefix(prefix), url.PathEscape(distribution))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("aptly PUT %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }

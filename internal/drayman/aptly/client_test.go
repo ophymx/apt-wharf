@@ -3,8 +3,11 @@ package aptly
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -160,5 +163,184 @@ func TestQueryPackages_Non2xxBubblesUp(t *testing.T) {
 	_, err := c.QueryPackages(context.Background(), "test-repo", "")
 	if err == nil || !strings.Contains(err.Error(), "500") {
 		t.Errorf("expected 500 error, got %v", err)
+	}
+}
+
+func TestUploadFile(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "demo.deb")
+	if err := os.WriteFile(src, []byte("fake-deb-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotPath, gotMethod, gotContentType string
+	var gotBytes []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotContentType = r.Header.Get("Content-Type")
+		// Read the multipart field "file" so we can assert content.
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		f, _, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer f.Close()
+		gotBytes, _ = io.ReadAll(f)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`["incoming/demo.deb"]`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, nil)
+	out, err := c.UploadFile(context.Background(), "incoming", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method: %s", gotMethod)
+	}
+	if gotPath != "/api/files/incoming" {
+		t.Errorf("path: %s", gotPath)
+	}
+	if !strings.HasPrefix(gotContentType, "multipart/form-data") {
+		t.Errorf("content-type: %s", gotContentType)
+	}
+	if string(gotBytes) != "fake-deb-bytes" {
+		t.Errorf("body: %q", gotBytes)
+	}
+	if len(out) != 1 || out[0] != "incoming/demo.deb" {
+		t.Errorf("out: %v", out)
+	}
+}
+
+func TestImportFromDir(t *testing.T) {
+	var gotPath, gotMethod, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"FailedFiles": [],
+			"Report": {
+				"Warnings": [],
+				"Added": ["hugo_0.161.1_amd64 added"],
+				"Removed": []
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, nil)
+	rep, err := c.ImportFromDir(context.Background(), "drayman-demo", "incoming", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method: %s", gotMethod)
+	}
+	if gotPath != "/api/repos/drayman-demo/file/incoming" {
+		t.Errorf("path: %s", gotPath)
+	}
+	if gotQuery != "forceReplace=1" {
+		t.Errorf("query: %s", gotQuery)
+	}
+	if len(rep.Report.Added) != 1 || rep.Report.Added[0] != "hugo_0.161.1_amd64 added" {
+		t.Errorf("report: %+v", rep)
+	}
+}
+
+func TestImportFromDir_NoForceReplace(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"FailedFiles":[],"Report":{"Warnings":[],"Added":[],"Removed":[]}}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	_, err := c.ImportFromDir(context.Background(), "r", "d", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "" {
+		t.Errorf("expected empty query when forceReplace=false, got %q", gotQuery)
+	}
+}
+
+func TestPublishUpdate(t *testing.T) {
+	var gotPath, gotMethod, gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotContentType = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Prefix":".", "Distribution":"stable"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, nil)
+	if err := c.PublishUpdate(context.Background(), ".", "stable", PublishUpdateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method: %s", gotMethod)
+	}
+	// Aptly's URL convention: "." is encoded as ":." so the bare "."
+	// isn't path-collapsed.
+	if gotPath != "/api/publish/:./stable" {
+		t.Errorf("path: %s", gotPath)
+	}
+	if gotContentType != "application/json" {
+		t.Errorf("content-type: %s", gotContentType)
+	}
+}
+
+func TestPublishUpdate_SkipSigning(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	if err := c.PublishUpdate(context.Background(), ".", "stable", PublishUpdateOpts{SkipSigning: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotBody, `"Signing":{"Skip":true}`) {
+		t.Errorf("body missing Signing.Skip: %s", gotBody)
+	}
+}
+
+func TestPublishUpdate_NamedPrefix(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	if err := c.PublishUpdate(context.Background(), "internal", "stable", PublishUpdateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/publish/internal/stable" {
+		t.Errorf("path: %s", gotPath)
+	}
+}
+
+func TestPublishUpdate_Non2xxBubblesUp(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "publication not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	err := c.PublishUpdate(context.Background(), ".", "missing", PublishUpdateOpts{})
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Errorf("expected 404 error, got %v", err)
 	}
 }
