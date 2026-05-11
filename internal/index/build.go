@@ -44,6 +44,12 @@ type Suite struct {
 }
 
 // ArchFiles holds the rendered Packages + Packages.gz for a single arch.
+//
+// TODO(xz): also emit Packages.xz. design.md §"Intentionally not
+// configurable" lists xz as planned; the dep (github.com/ulikunitz/xz)
+// is in the design's Implementation notes but not yet in go.mod. Add
+// PackagesXz here, write it alongside the gzip path below, and add
+// xz hash/size entries to the Release index. Cheap (~20 lines).
 type ArchFiles struct {
 	Packages   []byte
 	PackagesGz []byte

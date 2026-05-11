@@ -528,10 +528,13 @@ embedding them in command arguments.
 ### Intentionally not configurable in v1
 
 - Per-source refresh interval — global only.
-- Output compression formats — always emit `Packages`, `Packages.gz`,
-  `Packages.xz`.
-- Hash algorithms in `Packages` — always SHA256 + SHA1 + MD5 + Size
-  (apt still expects all three legacy hashes in places).
+- Output compression formats — emit `Packages` and `Packages.gz`.
+  `Packages.xz` is planned but not yet wired (see TODO in
+  `internal/index/build.go`); the `github.com/ulikunitz/xz` dep
+  listed under *Implementation notes* is staged for that work.
+- Hash algorithms in `Packages` and `Release` — SHA256 + Size only.
+  No SHA1, no MD5. Modern apt (Debian 10+ / Ubuntu 18.04+) verifies
+  against SHA256; older clients are unsupported.
 - Bootstrap file layout — generated, not user-templated.
 
 ## Open questions
