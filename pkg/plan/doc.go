@@ -33,6 +33,7 @@ const (
 // Source.Kind values.
 const (
 	SourceKindGitHubRelease = "github_release"
+	SourceKindJSONURL       = "json_url"
 )
 
 // Asset.SHA256Source values. Nil pointer means "unknown; build must

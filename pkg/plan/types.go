@@ -34,12 +34,21 @@ type Package struct {
 
 // Source is provenance for a successfully discovered package. Excluded
 // from build_inputs_hash by design — pure provenance.
+//
+// Field population depends on Kind:
+//   - "github_release": Repo, ReleaseID, ReleaseTag, ReleasePublishedAt.
+//   - "json_url":       URL, Token (the extracted version), nothing else.
+//
+// All non-Kind fields use omitempty so each kind's record stays focused
+// on its native provenance.
 type Source struct {
 	Kind               string `json:"kind"`
-	Repo               string `json:"repo"`
-	ReleaseID          int64  `json:"release_id"`
-	ReleaseTag         string `json:"release_tag"`
-	ReleasePublishedAt string `json:"release_published_at"` // RFC 3339 UTC
+	Repo               string `json:"repo,omitempty"`
+	ReleaseID          int64  `json:"release_id,omitempty"`
+	ReleaseTag         string `json:"release_tag,omitempty"`
+	ReleasePublishedAt string `json:"release_published_at,omitempty"` // RFC 3339 UTC
+	URL                string `json:"url,omitempty"`
+	Token              string `json:"token,omitempty"`
 }
 
 // Artifact is one (package, arch) tuple — the unit at which cooper builds

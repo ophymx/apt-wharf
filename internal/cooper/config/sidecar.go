@@ -27,9 +27,11 @@ type Sidecar struct {
 
 // Source is a discriminated union over discovery backends. Cooper ships
 // only the GitHub backend; non-GitHub sources go through external
-// producers per cooper-design.md §"External producers".
+// producers per cooper-design.md §"External producers". Exactly one
+// of GitHub / JSONURL must be set; validation enforces this.
 type Source struct {
-	GitHub *GitHubSource `yaml:"github"`
+	GitHub  *GitHubSource  `yaml:"github"`
+	JSONURL *JSONURLSource `yaml:"json_url"`
 }
 
 // GitHubSource selects a GitHub release. Release defaults to "latest"
@@ -38,6 +40,20 @@ type GitHubSource struct {
 	Repo              string   `yaml:"repo"`
 	Release           *Release `yaml:"release"`
 	IncludePrerelease bool     `yaml:"include_prerelease"`
+}
+
+// JSONURLSource fetches a vendor JSON metadata endpoint, extracts the
+// current version via a gjson path, then renders a per-arch asset URL
+// from the recipe's arches[].asset_url template (with ${VERSION} /
+// ${ARCH} substitutions and signpost-compatible {token}/{gjson.path}
+// placeholders).
+//
+// Used for vendors that publish download metadata as JSON without a
+// GitHub release (golang, node, python, jetbrains-toolbox, ...).
+// Mirrors apt-signpost's `json_url` discovery type.
+type JSONURLSource struct {
+	URL         string `yaml:"url"`
+	VersionPath string `yaml:"version_path"`
 }
 
 // Release is a flat-union: exactly one of Latest, TagPattern, Tag is
@@ -108,7 +124,16 @@ func (r *Release) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
-// Arch is one entry of doc 1's arches: map.
+// Arch is one entry of doc 1's arches: map. Exactly one of Asset /
+// AssetURL is set per the source kind:
+//
+//   - github_release: Asset is the exact-match release-asset name
+//     (`hugo_${VERSION}_linux-amd64.tar.gz`).
+//   - json_url:       AssetURL is a fully-qualified download URL
+//     template (`https://example.com/foo-${VERSION}-${ARCH}.tar.gz`,
+//     with optional signpost-style {token} / {gjson.path}
+//     placeholders against the JSON body).
 type Arch struct {
-	Asset string `yaml:"asset"`
+	Asset    string `yaml:"asset"`
+	AssetURL string `yaml:"asset_url"`
 }

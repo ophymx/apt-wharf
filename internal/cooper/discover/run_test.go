@@ -312,3 +312,154 @@ func TestRun_GoldenJSONShape(t *testing.T) {
 		}
 	}
 }
+
+const samplePackageBodyJSONURL = `---
+source:
+  json_url:
+    url: "REPLACE_ME"
+    version_path: "releases.0.version"
+arches:
+  amd64:
+    asset_url: "https://download.example.invalid/foo-${VERSION}-linux-${ARCH}.tar.gz"
+  arm64:
+    asset_url: "https://download.example.invalid/foo-${VERSION}-linux-${ARCH}.tar.gz"
+---
+name: foo
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: A json_url-sourced fixture
+contents:
+  - src: ${ASSETS}/foo
+    dst: /usr/bin/foo
+`
+
+func TestRun_JSONURL_HappyPath(t *testing.T) {
+	// Spin up an httptest server that returns vendor-style JSON.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"releases":[{"version":"1.2.3"}]}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	body := strings.Replace(samplePackageBodyJSONURL, "REPLACE_ME", srv.URL, 1)
+	writeFile(t, filepath.Join(dir, "packages/foo.yaml"), body)
+	writeFile(t, filepath.Join(dir, "cooper.yaml"),
+		"packages:\n  - ./packages/foo.yaml\n")
+
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		Tool:       plan.Tool{Name: "cooper", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
+		HTTPClient: srv.Client(),
+		Now: func() time.Time {
+			t, _ := time.Parse(time.RFC3339, "2026-05-11T00:00:00Z")
+			return t
+		},
+	}
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 {
+		t.Fatalf("packages: %d", len(got.Packages))
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultOK {
+		t.Fatalf("result=%s err=%+v", pkg.Result, pkg.Error)
+	}
+	if pkg.Source == nil || pkg.Source.Kind != plan.SourceKindJSONURL {
+		t.Errorf("source.kind: %+v", pkg.Source)
+	}
+	if pkg.Source.URL != srv.URL {
+		t.Errorf("source.url: %q want %q", pkg.Source.URL, srv.URL)
+	}
+	if pkg.Source.Token != "1.2.3" {
+		t.Errorf("source.token: %q", pkg.Source.Token)
+	}
+	if len(pkg.Artifacts) != 2 {
+		t.Fatalf("artifacts: %d", len(pkg.Artifacts))
+	}
+
+	// amd64 first (sorted).
+	a := pkg.Artifacts[0]
+	if a.Arch != "amd64" {
+		t.Errorf("arch[0]: %s", a.Arch)
+	}
+	wantURL := "https://download.example.invalid/foo-1.2.3-linux-amd64.tar.gz"
+	if a.Asset.URL != wantURL {
+		t.Errorf("asset.url: %q want %q", a.Asset.URL, wantURL)
+	}
+	if a.Asset.Name != "foo-1.2.3-linux-amd64.tar.gz" {
+		t.Errorf("asset.name: %q", a.Asset.Name)
+	}
+	if a.Asset.SHA256 != nil {
+		t.Errorf("asset.sha256: %v, want nil (build will stream+hash)", a.Asset.SHA256)
+	}
+	if a.Deb.Filename != "foo_1.2.3_amd64.deb" {
+		t.Errorf("deb.filename: %s", a.Deb.Filename)
+	}
+
+	// build_inputs_hash recomputes.
+	ok, recomputed, err := plan.VerifyBuildInputsHash(opts.Tool, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Errorf("build_inputs_hash mismatch: stored=%s recomputed=%s", a.Deb.BuildInputsHash, recomputed)
+	}
+
+	// SourceDateEpoch is derived deterministically; pin the 2020-base
+	// window and assert stability across two discover calls.
+	const baseEpoch = int64(1577836800)
+	const span = int64(10 * 365 * 24 * 3600)
+	if a.BuildPlan.SourceDateEpoch < baseEpoch || a.BuildPlan.SourceDateEpoch >= baseEpoch+span {
+		t.Errorf("source_date_epoch %d outside derived window", a.BuildPlan.SourceDateEpoch)
+	}
+
+	// Determinism: a second discover against the same JSON yields the
+	// same hash (idempotency property — same plan → same bytes).
+	got2, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2 := got2.Packages[0].Artifacts[0]
+	if a.Deb.BuildInputsHash != a2.Deb.BuildInputsHash {
+		t.Errorf("hash drifted across runs: %s vs %s", a.Deb.BuildInputsHash, a2.Deb.BuildInputsHash)
+	}
+}
+
+func TestRun_JSONURL_InvalidVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Version that doesn't match Debian grammar (starts with letter).
+		_, _ = w.Write([]byte(`{"releases":[{"version":"latest"}]}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	body := strings.Replace(samplePackageBodyJSONURL, "REPLACE_ME", srv.URL, 1)
+	writeFile(t, filepath.Join(dir, "packages/foo.yaml"), body)
+	writeFile(t, filepath.Join(dir, "cooper.yaml"),
+		"packages:\n  - ./packages/foo.yaml\n")
+
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{
+		Tool:       plan.Tool{Name: "cooper", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
+		HTTPClient: srv.Client(),
+	}
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultError || pkg.Error.Kind != plan.ErrorKindVersionInvalid {
+		t.Errorf("expected version_invalid error, got result=%s err=%+v", pkg.Result, pkg.Error)
+	}
+}

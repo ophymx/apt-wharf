@@ -1,0 +1,50 @@
+---
+# Doc 1 — cooper sidecar
+source:
+  json_url:
+    # JetBrains publishes a JSON feed of current releases per product
+    # code; TBA = Toolbox App. The `latest=true` query keeps the
+    # response to one element (the current stable release).
+    url: "https://data.services.jetbrains.com/products/releases?code=TBA&latest=true&type=release"
+    # The full build number (e.g. "3.4.3.81140") matches the URL path
+    # and is a valid Debian upstream version; we use `build` rather
+    # than `version` so the .deb's Version mirrors the upstream
+    # filename.
+    version_path: "TBA.0.build"
+
+arches:
+  # Per-arch download URLs come straight from the JSON's .link
+  # fields. Cooper renders {gjson.path} placeholders against the
+  # response body, so we don't have to hard-code the URL pattern.
+  amd64:
+    asset_url: "{TBA.0.downloads.linux.link}"
+  arm64:
+    asset_url: "{TBA.0.downloads.linuxARM64.link}"
+
+---
+# Doc 2 — vanilla nfpm
+name: jetbrains-toolbox
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+description: |
+  JetBrains Toolbox App.
+  Manages installation, updates, and rollback for JetBrains IDEs
+  (IntelliJ, GoLand, PyCharm, etc.) under a single launcher.
+homepage: https://www.jetbrains.com/toolbox-app/
+license: Proprietary
+section: devel
+contents:
+  # The tarball expands to jetbrains-toolbox-<build>/ with a single
+  # ELF binary inside. Cooper extracts to <staging>/asset/ so the
+  # directory lands directly under ${ASSETS}/.
+  - src: ${ASSETS}/jetbrains-toolbox-${VERSION}
+    dst: /opt/jetbrains-toolbox
+  - src: ./jetbrains-toolbox.desktop
+    dst: /usr/share/applications/jetbrains-toolbox.desktop
+    file_info:
+      mode: 0644
+deb:
+  fields:
+    Bugs: https://youtrack.jetbrains.com/issues/TBX

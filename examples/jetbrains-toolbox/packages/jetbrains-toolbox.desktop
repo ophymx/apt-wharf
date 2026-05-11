@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Terminal=false
+Name=JetBrains Toolbox
+Comment=Manage JetBrains IDE installations
+Exec=/opt/jetbrains-toolbox/bin/jetbrains-toolbox
+Icon=/opt/jetbrains-toolbox/bin/jetbrains-toolbox.png
+Categories=Development;IDE;

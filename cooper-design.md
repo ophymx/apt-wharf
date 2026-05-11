@@ -883,8 +883,28 @@ Test coverage at v0 release:
   hardlink-out, byte cap, file cap), plus end-to-end orchestrator
   (stub-exec) and end-to-end real-nfpm with reproducibility check.
 
+## Source kinds
+
+Cooper ships two built-in discovery backends. The recipe's `source:`
+block picks one (validation enforces exactly-one):
+
+- **`github_release`** (the original): fetch a GitHub release, match
+  per-arch assets by exact name with `${VERSION}` substitution.
+  `source_date_epoch` comes from the release's `published_at`.
+- **`json_url`**: GET a vendor JSON endpoint, extract the version via
+  a gjson path, render per-arch URLs from `arches[].asset_url`
+  (supports `${VERSION}` / `${ARCH}` plus signpost-style `{token}` /
+  `{gjson.path}` placeholders). `source_date_epoch` is derived
+  deterministically from the URL + version since json_url has no
+  canonical "published_at" equivalent.
+
+For sources outside both categories (vendor HTML pages, Maven
+artifacts, etc.), use the external-producer pattern: emit a valid
+`plan.Plan` JSON document from any program and pipe it into `cooper
+build -`. See *External producers*.
+
 ## Deferred (post-v0)
 
 - **Glob in `cooper.yaml`'s `packages:`** — ergonomics; explicit list is fine for v0.
 - **`--prefetch-hashes` for missing `asset.sha256`** — current contract (build streams + hashes; orchestrator re-imports unconditionally) loses dedup for that artifact. Wait for a real package that surfaces it.
-- **Second built-in source kind: `json_url`** — discovers a release by GETting a vendor JSON endpoint, extracting the version via a path expression (gjson syntax, mirroring apt-signpost's existing `json_url` discoverer), and synthesizing a release/asset tuple with a templated download URL. Targets the not-rare-enough vendor pattern of "publish releases off-GitHub on a stable JSON feed" (zoom, go.dev, claude downloads, etc.). Schema sketch: `source.json_url: { url, version_path, asset_url_template, sha256_path? }`. Promotes the `internal/source/json_url.go` primitive from apt-signpost into cooper's discover surface; the rest of the pipeline (version assembly, doc 2 substitution, build_inputs_hash) reuses the existing code paths. Out of scope for v0 because GitHub covers the bulk of the realistic backlog and this expansion shouldn't gate the v0 release.
+- **`version_template` under json_url** — for vendors whose extracted version needs post-processing (e.g. stripping a `v` prefix when the JSON includes it). Out of scope for v0; users can re-tag in their JSON or use an external producer.

@@ -1,0 +1,10 @@
+# JetBrains Toolbox — demos cooper's json_url source kind.
+#
+# JetBrains publishes the current release as JSON at
+# data.services.jetbrains.com; the `.link` fields inside the response
+# point at the actual .tar.gz downloads. Cooper extracts the version
+# via gjson and renders each arch's URL by templating the {gjson.path}
+# placeholder against the same JSON body.
+
+packages:
+  - ./packages/jetbrains-toolbox.yaml

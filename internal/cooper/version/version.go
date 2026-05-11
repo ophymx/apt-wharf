@@ -90,11 +90,20 @@ func Assemble(sidecar *config.Sidecar, release *github.RepositoryRelease) (strin
 		return "", fmt.Errorf("unrecognized version_from %q", sidecar.VersionFrom)
 	}
 
-	if !debianVersionRE.MatchString(resolved) {
+	if !MatchesDebianGrammar(resolved) {
 		return "", fmt.Errorf("resolved version %q does not match Debian's ^[0-9][A-Za-z0-9.+~-]*$",
 			resolved)
 	}
 	return resolved, nil
+}
+
+// MatchesDebianGrammar reports whether v conforms to cooper's
+// upstream-version grammar (Debian Policy §5.6.12, minus debian-revision):
+// starts with a digit, then any of `[A-Za-z0-9.+~-]`. Exported so
+// non-github source backends (json_url, future kinds) can validate
+// their extracted versions against the same rule.
+func MatchesDebianGrammar(v string) bool {
+	return debianVersionRE.MatchString(v)
 }
 
 // applyCurly substitutes {name} placeholders in s using subs. Unknown
