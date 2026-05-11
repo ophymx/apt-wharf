@@ -284,7 +284,7 @@ func containedReal(realPkgDir, p string) (string, error) {
 }
 
 func checkPathComponents(p string) error {
-	for _, comp := range strings.Split(filepath.ToSlash(p), "/") {
+	for comp := range strings.SplitSeq(filepath.ToSlash(p), "/") {
 		if len(comp) > maxPathComponentBytes {
 			return fmt.Errorf("path component longer than %d bytes", maxPathComponentBytes)
 		}

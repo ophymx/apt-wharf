@@ -114,7 +114,7 @@ func defaultIsS3Host(u *url.URL) bool {
 	}
 	// Match the s3 label as a token, not a substring of an unrelated host
 	// (e.g., something-s3y.amazonaws.com would NOT match).
-	for _, label := range strings.Split(h, ".") {
+	for label := range strings.SplitSeq(h, ".") {
 		if label == "s3" {
 			return true
 		}

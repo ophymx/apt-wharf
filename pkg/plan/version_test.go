@@ -80,7 +80,7 @@ func TestCompareVersions(t *testing.T) {
 		{"0.10", "0.9", 1},
 
 		// Tilde sorts before empty / everything.
-		{"1.0~beta1", "1.0", -1},  // Policy worked example
+		{"1.0~beta1", "1.0", -1}, // Policy worked example
 		{"1.0~rc1", "1.0", -1},
 		{"1.0~rc1~git1", "1.0~rc1", -1},
 		{"1.0~", "1.0", -1},
@@ -107,8 +107,8 @@ func TestCompareVersions(t *testing.T) {
 
 		// Debian revision.
 		{"1.0.0-1", "1.0.0-2", -1},
-		{"1.0.0-10", "1.0.0-2", 1},   // 10 > 2 numerically
-		{"1.0.0", "1.0.0-1", -1},     // bare < -1 in revision comparison
+		{"1.0.0-10", "1.0.0-2", 1}, // 10 > 2 numerically
+		{"1.0.0", "1.0.0-1", -1},   // bare < -1 in revision comparison
 		{"1.0.0-1", "1.0.0-1+deb12u1", -1},
 		{"1.0.0-1~bpo12+1", "1.0.0-1", -1}, // tilde-in-revision still works
 
@@ -162,11 +162,11 @@ func TestCompareVersions_Sort(t *testing.T) {
 		return CompareVersions(versions[i], versions[j]) < 0
 	})
 	want := []string{
-		"1.0.0",      // bare = no revision
+		"1.0.0", // bare = no revision
 		"1.0.0-1",
 		"1.0.0-2",
 		"1.0.0-3",
-		"1.0.0-10",   // 10 > 3 numerically
+		"1.0.0-10", // 10 > 3 numerically
 	}
 	for i := range want {
 		if versions[i] != want[i] {

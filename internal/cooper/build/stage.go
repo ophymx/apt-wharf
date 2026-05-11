@@ -37,10 +37,10 @@ type NfpmYAMLOpts struct {
 // Applies the on-disk-only adjustments cooper-design.md §"Build"
 // step 4 lists:
 //
-//   (a) expand: true on every contents entry that doesn't already have
-//       it explicitly set.
-//   (b) deb.fields["X-Cooper-Build-Inputs-Hash"] = opts.Hash.
-//   (c) version field gets "-N" appended when opts.Revision > 0.
+//	(a) expand: true on every contents entry that doesn't already have
+//	    it explicitly set.
+//	(b) deb.fields["X-Cooper-Build-Inputs-Hash"] = opts.Hash.
+//	(c) version field gets "-N" appended when opts.Revision > 0.
 func WriteNfpmYAML(bp plan.BuildPlan, opts NfpmYAMLOpts, target string) error {
 	var doc any
 	if err := json.Unmarshal(bp.Nfpm, &doc); err != nil {

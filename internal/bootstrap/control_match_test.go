@@ -77,7 +77,7 @@ func TestBuild_DebControlMatchesPackagesIndex(t *testing.T) {
 	gotVersion := ""
 	gotPackage := ""
 	gotArch := ""
-	for _, line := range strings.Split(string(control), "\n") {
+	for line := range strings.SplitSeq(string(control), "\n") {
 		switch {
 		case strings.HasPrefix(line, "Version: "):
 			gotVersion = strings.TrimPrefix(line, "Version: ")

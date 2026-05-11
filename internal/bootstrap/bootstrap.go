@@ -70,8 +70,8 @@ func NextVersion(prev string, now time.Time) string {
 		return today + ".1"
 	}
 	prefix := today + "."
-	if strings.HasPrefix(prev, prefix) {
-		nStr := strings.TrimPrefix(prev, prefix)
+	if after, ok := strings.CutPrefix(prev, prefix); ok {
+		nStr := after
 		if n, err := strconv.Atoi(nStr); err == nil && n > 0 {
 			return prefix + strconv.Itoa(n+1)
 		}

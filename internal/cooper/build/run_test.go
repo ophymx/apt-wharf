@@ -368,11 +368,11 @@ func TestRun_Revision_AppendsToFilenameAndVersion(t *testing.T) {
 	}
 
 	res, err := Run(context.Background(), p, Options{
-		OutDir:    t.TempDir(),
-		WorkDir:   work,
-		Revision:  2,
-		KeepWork:  true,
-		NfpmExec:  stub,
+		OutDir:   t.TempDir(),
+		WorkDir:  work,
+		Revision: 2,
+		KeepWork: true,
+		NfpmExec: stub,
 	})
 	if err != nil {
 		t.Fatal(err)

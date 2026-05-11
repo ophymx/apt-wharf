@@ -331,7 +331,7 @@ func validateArchiveName(name string) error {
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return fmt.Errorf("entry name %q traverses up", name)
 	}
-	for _, comp := range strings.Split(cleaned, "/") {
+	for comp := range strings.SplitSeq(cleaned, "/") {
 		if comp == ".." {
 			return fmt.Errorf("entry name %q has .. component", name)
 		}

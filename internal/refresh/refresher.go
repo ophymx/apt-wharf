@@ -202,16 +202,14 @@ func (r *Refresher) fanoutProcess(ctx context.Context, prev map[string]*store.So
 	work := make(chan string)
 	var wg sync.WaitGroup
 	for i := 0; i < r.parallelism; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for name := range work {
 				if err := r.processOneRecorded(ctx, name, prev[name]); err != nil {
 					r.log.Error("source failed; holding prior state",
 						"source", name, "err", err)
 				}
 			}
-		}()
+		})
 	}
 	for name, src := range r.cfg.Sources {
 		if !src.IsEnabled() {

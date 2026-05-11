@@ -108,11 +108,11 @@ func TestRun_RealNfpm(t *testing.T) {
 // TestRun_RealNfpm_Revision builds the same fixture twice — once bare,
 // once with --revision 1 — and asserts:
 //
-//   1. The revised .deb's filename is hugo_0.140.0-1_amd64.deb.
-//   2. dpkg-deb reports Version: 0.140.0-1 in the revised .deb.
-//   3. The X-Cooper-Build-Inputs-Hash control field is *identical* in
-//      both .debs — the load-bearing property of the revision-excluded
-//      hash design.
+//  1. The revised .deb's filename is hugo_0.140.0-1_amd64.deb.
+//  2. dpkg-deb reports Version: 0.140.0-1 in the revised .deb.
+//  3. The X-Cooper-Build-Inputs-Hash control field is *identical* in
+//     both .debs — the load-bearing property of the revision-excluded
+//     hash design.
 //
 // Skipped automatically when nfpm or dpkg-deb is unavailable.
 func TestRun_RealNfpm_Revision(t *testing.T) {

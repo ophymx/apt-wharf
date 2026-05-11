@@ -157,7 +157,7 @@ func (d *ExternalDiscoverer) logStderr(b []byte, isError bool) {
 	if isError {
 		level = slog.LevelInfo
 	}
-	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(string(b), "\n"), "\n") {
 		d.Logger.Log(context.Background(), level, "external stderr",
 			"source", d.Name, "line", line)
 	}
