@@ -54,6 +54,13 @@ type GitHubSource struct {
 type JSONURLSource struct {
 	URL         string `yaml:"url"`
 	VersionPath string `yaml:"version_path"`
+
+	// VersionStripPrefix, when non-empty, is removed from the start
+	// of the version string after gjson extraction. Useful for
+	// vendors whose JSON returns e.g. "go1.26.3" or "v3.13.0" — the
+	// raw value isn't a valid Debian upstream version (must start
+	// with a digit). Stripping happens before grammar validation.
+	VersionStripPrefix string `yaml:"version_strip_prefix"`
 }
 
 // Release is a flat-union: exactly one of Latest, TagPattern, Tag is

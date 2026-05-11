@@ -32,6 +32,42 @@ func TestResolveJSONURL_Happy(t *testing.T) {
 	}
 }
 
+func TestResolveJSONURL_StripPrefix(t *testing.T) {
+	// go.dev's endpoint returns versions like "go1.26.3"; Debian
+	// rejects that since the upstream version must start with a digit.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"version":"go1.26.3","stable":true}]`))
+	}))
+	defer srv.Close()
+
+	res, err := ResolveJSONURL(context.Background(), nil, &config.JSONURLSource{
+		URL:                srv.URL,
+		VersionPath:        "0.version",
+		VersionStripPrefix: "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Version != "1.26.3" {
+		t.Errorf("Version: %q, want 1.26.3", res.Version)
+	}
+}
+
+func TestResolveJSONURL_StripPrefix_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"1.26.3"}`))
+	}))
+	defer srv.Close()
+	_, err := ResolveJSONURL(context.Background(), nil, &config.JSONURLSource{
+		URL:                srv.URL,
+		VersionPath:        "version",
+		VersionStripPrefix: "go", // not present
+	})
+	if err == nil || !strings.Contains(err.Error(), "not found at start") {
+		t.Errorf("expected strip-prefix-not-found error, got %v", err)
+	}
+}
+
 func TestResolveJSONURL_MissingVersionPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"releases":[]}`))

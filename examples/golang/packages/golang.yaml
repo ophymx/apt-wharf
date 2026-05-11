@@ -1,0 +1,50 @@
+---
+# Doc 1 — cooper sidecar
+source:
+  json_url:
+    # go.dev's release-metadata feed. Returns an array; element 0 is
+    # the current stable release.
+    url: "https://go.dev/dl/?mode=json"
+    version_path: "0.version"
+    # Raw value is e.g. "go1.26.3"; strip the prefix so what cooper
+    # sees and Debian validates is a clean upstream version.
+    version_strip_prefix: "go"
+
+arches:
+  # The cooper arch key (left) drives the .deb's Debian
+  # Architecture: header. The asset_url maps that to go.dev's arch
+  # naming, which mostly matches except for armhf → armv6l.
+  amd64:
+    asset_url: "https://go.dev/dl/go${VERSION}.linux-amd64.tar.gz"
+  arm64:
+    asset_url: "https://go.dev/dl/go${VERSION}.linux-arm64.tar.gz"
+  armhf:
+    asset_url: "https://go.dev/dl/go${VERSION}.linux-armv6l.tar.gz"
+
+---
+# Doc 2 — vanilla nfpm
+name: golang
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+description: |
+  The Go programming language toolchain.
+  Installs GOROOT at /opt/go; sets GOROOT + adds /opt/go/bin to PATH
+  via /etc/profile.d/go.sh.
+homepage: https://go.dev/
+license: BSD-3-Clause
+section: devel
+contents:
+  # The tarball expands to a top-level `go/` directory holding bin,
+  # lib, src, pkg, etc. Cooper extracts to <staging>/asset/ so the
+  # directory lands at ${ASSETS}/go.
+  - src: ${ASSETS}/go
+    dst: /opt/go
+  - src: ./go.sh
+    dst: /etc/profile.d/go.sh
+    file_info:
+      mode: 0644
+deb:
+  fields:
+    Bugs: https://github.com/golang/go/issues

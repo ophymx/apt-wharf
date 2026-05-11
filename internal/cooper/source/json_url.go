@@ -84,6 +84,17 @@ func ResolveJSONURL(ctx context.Context, client *http.Client, j *config.JSONURLS
 	if version == "" {
 		return nil, fmt.Errorf("json_url: version_path %q resolved to empty string", j.VersionPath)
 	}
+	if j.VersionStripPrefix != "" {
+		stripped, ok := strings.CutPrefix(version, j.VersionStripPrefix)
+		if !ok {
+			return nil, fmt.Errorf("json_url: version_strip_prefix %q not found at start of extracted version %q",
+				j.VersionStripPrefix, version)
+		}
+		if stripped == "" {
+			return nil, fmt.Errorf("json_url: stripping %q left an empty version string", j.VersionStripPrefix)
+		}
+		version = stripped
+	}
 
 	return &JSONURLResolution{
 		URL:         j.URL,

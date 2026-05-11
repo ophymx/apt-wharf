@@ -1,0 +1,10 @@
+# The Go programming language — demos cooper's json_url source kind
+# alongside the version_strip_prefix knob.
+#
+# Upstream JSON: https://go.dev/dl/?mode=json returns an array of
+# releases; the first element is the current stable. Each release has
+# .version like "go1.26.3" (Debian rejects that — must start with a
+# digit), so we strip the "go" prefix to land at "1.26.3".
+
+packages:
+  - ./packages/golang.yaml
