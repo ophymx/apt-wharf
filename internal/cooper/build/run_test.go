@@ -68,7 +68,7 @@ func fixturePlan(t *testing.T, srv *httptest.Server, assetBytes []byte, sha256He
 	}
 
 	sha := "sha256:" + sha256Hex
-	hash, err := plan.ComputeBuildInputsHash(plan.FormatRevision, &sha, bp)
+	hash, err := plan.ComputeBuildInputsHash(plan.FormatRevision, []*string{&sha}, bp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,13 +90,13 @@ func fixturePlan(t *testing.T, srv *httptest.Server, assetBytes []byte, sha256He
 			},
 			Artifacts: []plan.Artifact{{
 				Arch: "amd64",
-				Asset: plan.Asset{
+				Assets: []plan.Asset{{
 					Name:         "hugo_extended_0.140.0_linux-amd64.tar.gz",
 					URL:          srv.URL + "/asset.tar.gz",
 					Size:         int64(len(assetBytes)),
 					SHA256:       &sha,
 					SHA256Source: &srcVal,
-				},
+				}},
 				Deb: plan.Deb{
 					Filename:        "hugo_0.140.0_amd64.deb",
 					BuildInputsHash: hash,
@@ -309,7 +309,9 @@ func TestRun_SiblingArtifactNotBlockedByFailure(t *testing.T) {
 	armArt.Arch = "arm64"
 	failArt := armArt
 	failArt.Arch = "amd64"
-	failArt.Asset.URL = failSrv.URL + "/missing"
+	// Deep-copy Assets so we don't mutate armArt's slice through the shared backing array.
+	failArt.Assets = append([]plan.Asset(nil), armArt.Assets...)
+	failArt.Assets[0].URL = failSrv.URL + "/missing"
 	// Recompute hash for failArt because Arch isn't in the hash
 	// indirectly (it's in BuildPlan.Nfpm — same in this fixture).
 	failArt.Deb.BuildInputsHash = armArt.Deb.BuildInputsHash
@@ -566,7 +568,7 @@ func TestRun_AssetOptional(t *testing.T) {
 			Source: &plan.Source{Kind: "local"},
 			Artifacts: []plan.Artifact{{
 				Arch:      "all",
-				Asset:     plan.Asset{}, // no URL, no name
+				Assets:    nil, // staves case: no upstream
 				Deb:       plan.Deb{Filename: "demo_1.0.0_all.deb", BuildInputsHash: hash},
 				BuildPlan: bp,
 			}},

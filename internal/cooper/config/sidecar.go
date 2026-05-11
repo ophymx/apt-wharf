@@ -153,19 +153,29 @@ func (r *Release) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
-// Arch is one entry of doc 1's arches: map. Exactly one of Asset /
-// AssetURL is set per the source kind:
+// Arch is one entry of doc 1's arches: map. The recipe picks exactly
+// one of singular / plural per source kind; canonicalizeAssets folds
+// the singular forms into Assets / AssetURLs at load time so downstream
+// code only deals with the plural slices.
 //
-//   - github_release: Asset is the exact-match release-asset name
-//     (`hugo_${VERSION}_linux-amd64.tar.gz`).
-//   - json_url:       AssetURL is a fully-qualified download URL
-//     template (`https://example.com/foo-${VERSION}-${ARCH}.tar.gz`,
-//     with optional signpost-style {token} / {gjson.path}
-//     placeholders against the JSON body).
-//   - xml_url:        AssetURL is a fully-qualified download URL
-//     template with the same ${VERSION} / ${ARCH} substitutions plus
-//     {token} / {xpath:...} placeholders against the XML body.
+//   - github_release: Asset / Assets are exact-match release-asset
+//     names (`hugo_${VERSION}_linux-amd64.tar.gz`). Plural form covers
+//     the cfssl-shape: one release ships N independent binaries with
+//     no bundling archive.
+//   - json_url:       AssetURL / AssetURLs are fully-qualified download
+//     URL templates (`https://example.com/foo-${VERSION}-${ARCH}.tar.gz`,
+//     with optional signpost-style {token} / {gjson.path} placeholders
+//     against the JSON body).
+//   - xml_url:        AssetURL / AssetURLs are URL templates with the
+//     same ${VERSION} / ${ARCH} substitutions plus {token} / {xpath:...}
+//     placeholders against the XML body.
+//
+// The singular forms remain syntactic sugar for the single-asset case
+// (the overwhelmingly common shape). Validation rejects setting both
+// singular and plural in the same arch entry.
 type Arch struct {
-	Asset    string `yaml:"asset"`
-	AssetURL string `yaml:"asset_url"`
+	Asset     string   `yaml:"asset"`
+	AssetURL  string   `yaml:"asset_url"`
+	Assets    []string `yaml:"assets"`
+	AssetURLs []string `yaml:"asset_urls"`
 }

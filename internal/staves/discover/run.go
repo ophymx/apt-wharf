@@ -99,6 +99,9 @@ func processPackage(ctx context.Context, opts Options, dir string) plan.Package 
 		Nfpm:            nfpmJSON,
 		AuxFiles:        auxFiles,
 	}
+	// Staves never has upstream assets — every byte the .deb needs is
+	// in aux_files. Empty Assets slice + nil-shas hash input is the
+	// canonical asset-optional shape.
 	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, nil, bp)
 	if err != nil {
 		return errPkg(pkg.NfpmName, plan.ErrorKindDiscoveryFailed, fmt.Errorf("compute build_inputs_hash: %w", err))
@@ -106,7 +109,7 @@ func processPackage(ctx context.Context, opts Options, dir string) plan.Package 
 
 	artifact := plan.Artifact{
 		Arch:      pkg.Arch,
-		Asset:     plan.Asset{}, // no upstream; cooper-build sees URL=="" and skips download
+		Assets:    nil, // no upstream; cooper-build skips download when Assets is empty
 		Deb:       plan.Deb{Filename: fmt.Sprintf("%s_%s_%s.deb", pkg.NfpmName, pkg.Version, pkg.Arch), BuildInputsHash: hash},
 		BuildPlan: bp,
 	}

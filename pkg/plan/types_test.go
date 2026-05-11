@@ -30,13 +30,13 @@ func TestPlanRoundTrip(t *testing.T) {
       "artifacts": [
         {
           "arch": "amd64",
-          "asset": {
+          "assets": [{
             "name": "hugo_extended_0.140.0_linux-amd64.tar.gz",
             "url": "https://example.invalid/hugo.tar.gz",
             "size": 19283746,
             "sha256": "sha256:abc123",
             "sha256_source": "github_api"
-          },
+          }],
           "deb": {
             "filename": "hugo_0.140.0_amd64.deb",
             "build_inputs_hash": "sha256:deadbeef",
@@ -87,8 +87,11 @@ func TestPlanRoundTrip(t *testing.T) {
 	if art.Arch != "amd64" {
 		t.Errorf("arch: %s", art.Arch)
 	}
-	if art.Asset.SHA256 == nil || *art.Asset.SHA256 != "sha256:abc123" {
-		t.Errorf("asset.sha256: %v", art.Asset.SHA256)
+	if len(art.Assets) != 1 {
+		t.Fatalf("assets: got %d, want 1", len(art.Assets))
+	}
+	if art.Assets[0].SHA256 == nil || *art.Assets[0].SHA256 != "sha256:abc123" {
+		t.Errorf("assets[0].sha256: %v", art.Assets[0].SHA256)
 	}
 	if art.Deb.Path != nil || art.Deb.SHA256 != nil {
 		t.Errorf("deb path/sha256 should be nil in discover output")

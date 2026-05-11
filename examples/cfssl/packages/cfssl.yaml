@@ -1,0 +1,83 @@
+---
+# Doc 1 — cooper sidecar
+source:
+  github:
+    repo: cloudflare/cfssl
+    release: latest
+version_from: tag_strip_v
+
+arches:
+  # cfssl ships one binary per tool per architecture — no bundling
+  # archive. The `assets:` plural lets us enumerate every selector;
+  # each lands at ${ASSETS}/<asset.name> at build time. The collision
+  # check in MatchAssets keeps two selectors from clobbering each
+  # other under the same staging dir.
+  amd64:
+    assets:
+      - "cfssl_${VERSION}_linux_amd64"
+      - "cfssljson_${VERSION}_linux_amd64"
+      - "cfssl-bundle_${VERSION}_linux_amd64"
+      - "cfssl-certinfo_${VERSION}_linux_amd64"
+      - "cfssl-newkey_${VERSION}_linux_amd64"
+      - "cfssl-scan_${VERSION}_linux_amd64"
+      - "mkbundle_${VERSION}_linux_amd64"
+      - "multirootca_${VERSION}_linux_amd64"
+  arm64:
+    assets:
+      - "cfssl_${VERSION}_linux_arm64"
+      - "cfssljson_${VERSION}_linux_arm64"
+      - "cfssl-bundle_${VERSION}_linux_arm64"
+      - "cfssl-certinfo_${VERSION}_linux_arm64"
+      - "cfssl-newkey_${VERSION}_linux_arm64"
+      - "cfssl-scan_${VERSION}_linux_arm64"
+      - "mkbundle_${VERSION}_linux_arm64"
+      - "multirootca_${VERSION}_linux_arm64"
+
+---
+# Doc 2 — vanilla nfpm
+name: cfssl
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+description: |
+  CloudFlare's PKI/TLS swiss army knife.
+  Bundles the cfssl/cfssljson/multirootca/mkbundle toolset for issuing
+  certificates and managing a small CA. Each tool ships as its own
+  static binary; this package installs all eight to /usr/bin/.
+homepage: https://github.com/cloudflare/cfssl
+license: BSD-2-Clause
+section: utils
+contents:
+  - src: ${ASSETS}/cfssl_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/cfssl
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/cfssljson_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/cfssljson
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/cfssl-bundle_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/cfssl-bundle
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/cfssl-certinfo_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/cfssl-certinfo
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/cfssl-newkey_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/cfssl-newkey
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/cfssl-scan_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/cfssl-scan
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/mkbundle_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/mkbundle
+    file_info:
+      mode: 0755
+  - src: ${ASSETS}/multirootca_${VERSION}_linux_${ARCH}
+    dst: /usr/bin/multirootca
+    file_info:
+      mode: 0755

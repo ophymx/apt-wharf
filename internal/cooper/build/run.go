@@ -158,32 +158,42 @@ func buildOne(
 	}
 
 	// Asset-optional path: local-source producers (staves) and any
-	// future tool that bakes all bytes into aux_files emit plans
-	// with Asset.URL == "". Skip download/extract entirely; the
+	// future tool that bakes all bytes into aux_files emit plans with
+	// an empty Assets slice. Skip download/extract entirely; the
 	// aux_files step below carries every file the .deb needs.
-	if art.Asset.URL != "" {
-		assetPath := filepath.Join(assetDir, art.Asset.Name)
-		gotSHA, _, err := opts.Downloader.Fetch(ctx, art.Asset.URL, assetPath, art.Asset.Size)
-		if err != nil {
-			return art, fmt.Errorf("download %s: %w", art.Asset.URL, err)
+	//
+	// For each asset: download, verify SHA256 (or record it when the
+	// plan didn't carry one), and extract in place if the file is an
+	// archive. The asset_*[i] iteration is deterministic — order comes
+	// from the recipe and from MatchAssets/RenderAssetURLs preserving
+	// it through discover.
+	for i := range art.Assets {
+		a := &art.Assets[i]
+		if a.URL == "" {
+			continue
 		}
-		if err := VerifySHA256(art.Asset.SHA256, gotSHA); err != nil {
+		assetPath := filepath.Join(assetDir, a.Name)
+		gotSHA, _, err := opts.Downloader.Fetch(ctx, a.URL, assetPath, a.Size)
+		if err != nil {
+			return art, fmt.Errorf("download %s: %w", a.URL, err)
+		}
+		if err := VerifySHA256(a.SHA256, gotSHA); err != nil {
 			return art, err
 		}
 		// If the plan didn't carry a SHA256, record it now per
 		// cooper-design.md §"Discover JSON contract" ("build streams +
 		// hashes; orchestrator should treat such artifacts as re-import
 		// unconditionally").
-		if art.Asset.SHA256 == nil {
+		if a.SHA256 == nil {
 			s := "sha256:" + gotSHA
-			art.Asset.SHA256 = &s
+			a.SHA256 = &s
 			src := plan.SHA256SourceHEADRequest
-			art.Asset.SHA256Source = &src
+			a.SHA256Source = &src
 		}
 
-		if IsArchive(art.Asset.Name) {
+		if IsArchive(a.Name) {
 			if err := Extract(assetPath, assetDir, ExtractOpts{}); err != nil {
-				return art, fmt.Errorf("extract %s: %w", art.Asset.Name, err)
+				return art, fmt.Errorf("extract %s: %w", a.Name, err)
 			}
 			if err := os.Remove(assetPath); err != nil {
 				return art, fmt.Errorf("remove archive: %w", err)

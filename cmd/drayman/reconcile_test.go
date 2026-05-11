@@ -92,10 +92,10 @@ func makePlan(t *testing.T, packages ...stubPkg) *plan.Plan {
 				`{"name":%q,"version":%q,"arch":%q}`, sp.name, sp.version, arch))
 			pkg.Artifacts = append(pkg.Artifacts, plan.Artifact{
 				Arch: arch,
-				Asset: plan.Asset{
+				Assets: []plan.Asset{{
 					Name: fmt.Sprintf("%s-%s.tar.gz", sp.name, arch),
 					URL:  "https://example.invalid/" + sp.name,
-				},
+				}},
 				Deb: plan.Deb{
 					Filename:        fmt.Sprintf("%s_%s_%s.deb", sp.name, sp.version, arch),
 					BuildInputsHash: fmt.Sprintf("sha256:%s-%s-%s", sp.name, sp.version, arch),

@@ -126,6 +126,34 @@ func MatchAsset(release *github.RepositoryRelease, selector, version string) (*g
 	}
 }
 
+// MatchAssets resolves N selectors against a release in one call. Each
+// selector is run through MatchAsset; the per-arch list lands in the
+// same order so build can stage them in a deterministic layout. Any
+// selector failure aborts the whole resolve so the artifact lands as
+// result=error rather than half-populated.
+//
+// As a defense against same-basename collisions under ${ASSETS}/, the
+// resolved-asset basenames are checked for uniqueness; a duplicate
+// surfaces as a discover error pointing at both selectors.
+func MatchAssets(release *github.RepositoryRelease, selectors []string, version string) ([]*github.ReleaseAsset, error) {
+	out := make([]*github.ReleaseAsset, 0, len(selectors))
+	seen := make(map[string]int, len(selectors))
+	for i, sel := range selectors {
+		a, err := MatchAsset(release, sel, version)
+		if err != nil {
+			return nil, err
+		}
+		name := a.GetName()
+		if prev, ok := seen[name]; ok {
+			return nil, fmt.Errorf("asset name collision under ${ASSETS}/: selectors[%d]=%q and selectors[%d]=%q both resolved to %s",
+				prev, selectors[prev], i, sel, name)
+		}
+		seen[name] = i
+		out = append(out, a)
+	}
+	return out, nil
+}
+
 // AssetSHA256 extracts the "<hex>" portion of a "sha256:<hex>" digest
 // the GitHub API exposes on asset metadata. Returns ok=false if the
 // digest is missing or uses an unexpected algorithm — caller should fall

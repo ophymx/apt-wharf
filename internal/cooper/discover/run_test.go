@@ -165,14 +165,17 @@ func TestRun_HappyPath(t *testing.T) {
 	if a.Arch != "amd64" {
 		t.Errorf("first arch should be amd64 (sorted): %s", a.Arch)
 	}
-	if a.Asset.Name != "hugo_extended_0.140.0_linux-amd64.tar.gz" {
-		t.Errorf("asset.name: %s", a.Asset.Name)
+	if len(a.Assets) != 1 {
+		t.Fatalf("assets: got %d, want 1", len(a.Assets))
 	}
-	if a.Asset.SHA256 == nil || *a.Asset.SHA256 != "sha256:abc123" {
-		t.Errorf("asset.sha256: %v", a.Asset.SHA256)
+	if a.Assets[0].Name != "hugo_extended_0.140.0_linux-amd64.tar.gz" {
+		t.Errorf("asset.name: %s", a.Assets[0].Name)
 	}
-	if a.Asset.SHA256Source == nil || *a.Asset.SHA256Source != plan.SHA256SourceGitHubAPI {
-		t.Errorf("asset.sha256_source: %v", a.Asset.SHA256Source)
+	if a.Assets[0].SHA256 == nil || *a.Assets[0].SHA256 != "sha256:abc123" {
+		t.Errorf("asset.sha256: %v", a.Assets[0].SHA256)
+	}
+	if a.Assets[0].SHA256Source == nil || *a.Assets[0].SHA256Source != plan.SHA256SourceGitHubAPI {
+		t.Errorf("asset.sha256_source: %v", a.Assets[0].SHA256Source)
 	}
 	if a.Deb.Filename != "hugo_0.140.0_amd64.deb" {
 		t.Errorf("deb.filename: %s", a.Deb.Filename)
@@ -391,14 +394,17 @@ func TestRun_JSONURL_HappyPath(t *testing.T) {
 		t.Errorf("arch[0]: %s", a.Arch)
 	}
 	wantURL := "https://download.example.invalid/foo-1.2.3-linux-amd64.tar.gz"
-	if a.Asset.URL != wantURL {
-		t.Errorf("asset.url: %q want %q", a.Asset.URL, wantURL)
+	if len(a.Assets) != 1 {
+		t.Fatalf("assets: %d, want 1", len(a.Assets))
 	}
-	if a.Asset.Name != "foo-1.2.3-linux-amd64.tar.gz" {
-		t.Errorf("asset.name: %q", a.Asset.Name)
+	if a.Assets[0].URL != wantURL {
+		t.Errorf("asset.url: %q want %q", a.Assets[0].URL, wantURL)
 	}
-	if a.Asset.SHA256 != nil {
-		t.Errorf("asset.sha256: %v, want nil (build will stream+hash)", a.Asset.SHA256)
+	if a.Assets[0].Name != "foo-1.2.3-linux-amd64.tar.gz" {
+		t.Errorf("asset.name: %q", a.Assets[0].Name)
+	}
+	if a.Assets[0].SHA256 != nil {
+		t.Errorf("asset.sha256: %v, want nil (build will stream+hash)", a.Assets[0].SHA256)
 	}
 	if a.Deb.Filename != "foo_1.2.3_amd64.deb" {
 		t.Errorf("deb.filename: %s", a.Deb.Filename)
@@ -511,8 +517,8 @@ func TestRun_XMLURL_HappyPath(t *testing.T) {
 
 	a := pkg.Artifacts[0]
 	wantURL := "https://download.example.invalid/foo-1.2.3-linux-amd64.tar.gz"
-	if a.Asset.URL != wantURL {
-		t.Errorf("asset.url: %q want %q", a.Asset.URL, wantURL)
+	if len(a.Assets) != 1 || a.Assets[0].URL != wantURL {
+		t.Errorf("assets[0].url: %v want %q", a.Assets, wantURL)
 	}
 	if a.Deb.Filename != "foo_1.2.3_amd64.deb" {
 		t.Errorf("deb.filename: %s", a.Deb.Filename)

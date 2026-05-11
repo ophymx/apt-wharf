@@ -268,7 +268,7 @@ func processXMLURLPackage(ctx context.Context, opts Options, pkgFile *config.Pac
 
 // buildXMLURLArtifact resolves one (nfpm-doc × arch) combination against
 // an already-fetched XML resolution. Mirrors buildJSONURLArtifact; only
-// the per-arch URL renderer differs (RenderXMLAssetURL vs RenderAssetURL).
+// the per-arch URL renderer differs (RenderXMLAssetURLs vs RenderAssetURLs).
 func buildXMLURLArtifact(
 	opts Options,
 	pkgFile *config.PackageFile,
@@ -278,7 +278,7 @@ func buildXMLURLArtifact(
 	resolvedVersion, arch string,
 ) (plan.Artifact, error) {
 	archCfg := pkgFile.Sidecar.Arches[arch]
-	assetURL, err := cooperSrc.RenderXMLAssetURL(archCfg.AssetURL, resolvedVersion, arch, resolution.RawBody)
+	assetURLs, err := cooperSrc.RenderXMLAssetURLs(archCfg.AssetURLs, resolvedVersion, arch, resolution.RawBody)
 	if err != nil {
 		return plan.Artifact{}, &discoveryError{wrapped: err}
 	}
@@ -305,12 +305,13 @@ func buildXMLURLArtifact(
 		return plan.Artifact{}, &auxError{wrapped: err}
 	}
 
-	planAsset := plan.Asset{
-		Name:         basenameFromURL(assetURL),
-		URL:          assetURL,
-		Size:         0,
-		SHA256:       nil,
-		SHA256Source: nil,
+	planAssets := make([]plan.Asset, len(assetURLs))
+	assetSHAs := make([]*string, len(assetURLs))
+	for i, u := range assetURLs {
+		planAssets[i] = plan.Asset{
+			Name: basenameFromURL(u),
+			URL:  u,
+		}
 	}
 
 	bp := plan.BuildPlan{
@@ -319,7 +320,7 @@ func buildXMLURLArtifact(
 		AuxFiles:        auxFiles,
 	}
 
-	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, nil, bp)
+	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, assetSHAs, bp)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("compute build_inputs_hash: %w", err)
 	}
@@ -331,7 +332,7 @@ func buildXMLURLArtifact(
 
 	return plan.Artifact{
 		Arch:      arch,
-		Asset:     planAsset,
+		Assets:    planAssets,
 		Deb:       deb,
 		BuildPlan: bp,
 	}, nil
@@ -339,7 +340,7 @@ func buildXMLURLArtifact(
 
 // buildArtifact resolves one (nfpm-doc × arch) combination into a
 // plan.Artifact. Failures here turn into per-package errors at the
-// caller. The asset is shared across all nfpm docs in the recipe
+// caller. Assets are shared across all nfpm docs in the recipe
 // (resolved once per arch from the same release); nfpm subtree + aux
 // files + hash + filename are per-doc.
 func buildArtifact(
@@ -352,7 +353,7 @@ func buildArtifact(
 	sourceDateEpoch int64,
 ) (plan.Artifact, error) {
 	archCfg := pkgFile.Sidecar.Arches[arch]
-	asset, err := cooperSrc.MatchAsset(release, archCfg.Asset, resolvedVersion)
+	assets, err := cooperSrc.MatchAssets(release, archCfg.Assets, resolvedVersion)
 	if err != nil {
 		return plan.Artifact{}, &discoveryError{wrapped: err}
 	}
@@ -382,15 +383,19 @@ func buildArtifact(
 		return plan.Artifact{}, &auxError{wrapped: err}
 	}
 
-	// Asset metadata.
-	assetSHA := assetSHAPtr(asset)
-	source := planSourceFromAsset(asset)
-	planAsset := plan.Asset{
-		Name:         asset.GetName(),
-		URL:          asset.GetBrowserDownloadURL(),
-		Size:         int64(asset.GetSize()),
-		SHA256:       assetSHA,
-		SHA256Source: source,
+	// Asset metadata — one plan.Asset per resolved release asset.
+	planAssets := make([]plan.Asset, len(assets))
+	assetSHAs := make([]*string, len(assets))
+	for i, a := range assets {
+		sha := assetSHAPtr(a)
+		planAssets[i] = plan.Asset{
+			Name:         a.GetName(),
+			URL:          a.GetBrowserDownloadURL(),
+			Size:         int64(a.GetSize()),
+			SHA256:       sha,
+			SHA256Source: planSourceFromAsset(a),
+		}
+		assetSHAs[i] = sha
 	}
 
 	bp := plan.BuildPlan{
@@ -399,7 +404,7 @@ func buildArtifact(
 		AuxFiles:        auxFiles,
 	}
 
-	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, assetSHA, bp)
+	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, assetSHAs, bp)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("compute build_inputs_hash: %w", err)
 	}
@@ -411,7 +416,7 @@ func buildArtifact(
 
 	return plan.Artifact{
 		Arch:      arch,
-		Asset:     planAsset,
+		Assets:    planAssets,
 		Deb:       deb,
 		BuildPlan: bp,
 	}, nil
@@ -431,7 +436,7 @@ func buildJSONURLArtifact(
 	resolvedVersion, arch string,
 ) (plan.Artifact, error) {
 	archCfg := pkgFile.Sidecar.Arches[arch]
-	assetURL, err := cooperSrc.RenderAssetURL(archCfg.AssetURL, resolvedVersion, arch, resolution.RawBody)
+	assetURLs, err := cooperSrc.RenderAssetURLs(archCfg.AssetURLs, resolvedVersion, arch, resolution.RawBody)
 	if err != nil {
 		return plan.Artifact{}, &discoveryError{wrapped: err}
 	}
@@ -459,14 +464,17 @@ func buildJSONURLArtifact(
 		return plan.Artifact{}, &auxError{wrapped: err}
 	}
 
-	// Asset metadata: name from the URL basename, size/sha256 unknown
-	// at discover time — build will stream + hash and record.
-	planAsset := plan.Asset{
-		Name:         basenameFromURL(assetURL),
-		URL:          assetURL,
-		Size:         0,
-		SHA256:       nil,
-		SHA256Source: nil,
+	// Asset metadata: one plan.Asset per resolved URL. Size and SHA256
+	// are unknown at discover time for json_url — build will stream +
+	// hash and record. All shas are nil; that flows into the hash as a
+	// slice of N null entries.
+	planAssets := make([]plan.Asset, len(assetURLs))
+	assetSHAs := make([]*string, len(assetURLs))
+	for i, u := range assetURLs {
+		planAssets[i] = plan.Asset{
+			Name: basenameFromURL(u),
+			URL:  u,
+		}
 	}
 
 	bp := plan.BuildPlan{
@@ -475,7 +483,7 @@ func buildJSONURLArtifact(
 		AuxFiles:        auxFiles,
 	}
 
-	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, nil, bp)
+	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, assetSHAs, bp)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("compute build_inputs_hash: %w", err)
 	}
@@ -487,7 +495,7 @@ func buildJSONURLArtifact(
 
 	return plan.Artifact{
 		Arch:      arch,
-		Asset:     planAsset,
+		Assets:    planAssets,
 		Deb:       deb,
 		BuildPlan: bp,
 	}, nil

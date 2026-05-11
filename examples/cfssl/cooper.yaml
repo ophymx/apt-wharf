@@ -1,0 +1,10 @@
+# cfssl — demos cooper's multi-asset-per-arch shape.
+#
+# Cloudflare's cfssl release ships eight independent binaries per
+# architecture (cfssl, cfssljson, cfssl-bundle, cfssl-certinfo,
+# cfssl-newkey, cfssl-scan, mkbundle, multirootca) with no bundling
+# archive. Cooper's `assets:` (plural) form lets the recipe enumerate
+# every selector once and stage them side-by-side under ${ASSETS}/.
+
+packages:
+  - ./packages/cfssl.yaml

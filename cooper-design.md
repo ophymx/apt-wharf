@@ -276,14 +276,27 @@ version_template              STRING                   optional
 version_regex                 STRING                   required when
                                                        version_from == asset_filename
 epoch                         int                      default 0
-arches                        map<arch, { asset: STRING }>  ≥ 1 entry
+arches                        map<arch, {
+                                  asset: STRING        singular (sugar; one asset)
+                                  assets: [STRING]     plural (multi-asset)
+                              }>                       ≥ 1 entry
 ```
 
-Doc 1's only string-substitution surface is the `arches.<arch>.asset:`
-value. The single legal substitution is `${VERSION}` (uppercase, same
+Doc 1's only string-substitution surface is the `arches.<arch>.asset(s):`
+value(s). The single legal substitution is `${VERSION}` (uppercase, same
 syntax as doc 2; resolved per *Version selection* below). After
-substitution, the result is matched for **exact equality** against the
-release's asset names. Zero or more-than-one matches → discover error.
+substitution, each selector is matched for **exact equality** against
+the release's asset names. Zero or more-than-one matches → discover
+error.
+
+Singular `asset:` is syntactic sugar for a single-entry `assets:` list;
+recipes pick whichever reads better. Validation rejects setting both
+on the same arch entry. The plural form covers cases like cfssl, where
+a single release ships N independent binaries with no bundling archive
+— each binary's selector becomes one `assets:` entry and the staged
+files land side-by-side under `${ASSETS}/`. Asset name collisions
+(two selectors resolving to the same release-asset name) are rejected
+at discover time.
 
 ### Cooper's substitution into doc 2
 
@@ -525,13 +538,13 @@ small enough to read by eye.
       "artifacts": [
         {
           "arch": "amd64",
-          "asset": {
+          "assets": [{
             "name":   "hugo_extended_0.140.0_linux-amd64.tar.gz",
             "url":    "https://github.com/.../linux-amd64.tar.gz",
             "size":   19283746,
             "sha256": "sha256:abc123...",
             "sha256_source": "github_api"
-          },
+          }],
           "deb": {
             "filename":          "hugo_0.140.0_amd64.deb",
             "build_inputs_hash": "sha256:deadbeef...",
@@ -563,7 +576,7 @@ small enough to read by eye.
             }
           }
         },
-        { "arch": "arm64", "asset": { "...": "..." }, "deb": { "...": "..." }, "build_plan": { "...": "..." } }
+        { "arch": "arm64", "assets": [ { "...": "..." } ], "deb": { "...": "..." }, "build_plan": { "...": "..." } }
       ]
     },
     {
@@ -640,10 +653,16 @@ version policy*).
 ```
 build_inputs_hash = SHA256(JCS({
     "format_revision": tool.format_revision,
-    "asset_sha256":    artifacts[i].asset.sha256,
+    "asset_sha256s":   [artifacts[i].assets[*].sha256],
     "build_plan":      artifacts[i].build_plan
 }))
 ```
+
+`asset_sha256s` is the per-asset SHA list in artifact order — the
+same order `Assets` appears in the plan. A `null` entry means
+"unknown at discover time; build streams + hashes." An empty list is
+the staves / asset-optional case; the canonical form distinguishes an
+empty array `[]` from a missing/null slice.
 
 That's the full list of inputs. `build_plan` already carries
 everything else: the resolved nfpm config (with name/version/arch/epoch
@@ -913,23 +932,26 @@ block picks one (validation enforces exactly-one):
   `source_date_epoch` comes from the release's `published_at`.
 - **`json_url`**: GET a vendor JSON endpoint, extract the version via
   a gjson path, render per-arch URLs from `arches[].asset_url`
-  (supports `${VERSION}` / `${ARCH}` plus signpost-style `{token}` /
-  `{gjson.path}` placeholders). `source_date_epoch` is derived
-  deterministically from the URL + version since json_url has no
-  canonical "published_at" equivalent.
+  (singular) or `arches[].asset_urls` (plural; same multi-asset
+  shape as github_release). Templates support `${VERSION}` /
+  `${ARCH}` plus signpost-style `{token}` / `{gjson.path}`
+  placeholders. `source_date_epoch` is derived deterministically
+  from the URL + version since json_url has no canonical
+  "published_at" equivalent.
 - **`xml_url`**: XML counterpart to `json_url`. Targets vendors who
   publish version metadata as XML — JetBrains' `updates.xml`
   (`https://www.jetbrains.com/updates/updates.xml`) is the canonical
   case, and RSS / Atom release feeds (Apache projects, some Mozilla
   downloads) fit the same shape. Schema:
   `source.xml_url: { url, version_xpath, version_strip_prefix }`;
-  `arches[].asset_url` supports `${VERSION}` / `${ARCH}` and
-  `{xpath:<expr>}` placeholders against the same body, mirroring
-  json_url's `{gjson.path}` slot. The `xpath:` prefix is required —
-  raw XPath grammar (`[`, `]`, `/`, `=`) inside braces would clash
-  with the surrounding URL grammar. `source_date_epoch` is derived
-  from `(url, version)` exactly the same way json_url does it. XML
-  parsing uses `github.com/antchfx/xmlquery`.
+  `arches[].asset_url` (singular) or `arches[].asset_urls` (plural)
+  supports `${VERSION}` / `${ARCH}` and `{xpath:<expr>}` placeholders
+  against the same body, mirroring json_url's `{gjson.path}` slot.
+  The `xpath:` prefix is required — raw XPath grammar (`[`, `]`,
+  `/`, `=`) inside braces would clash with the surrounding URL
+  grammar. `source_date_epoch` is derived from `(url, version)`
+  exactly the same way json_url does it. XML parsing uses
+  `github.com/antchfx/xmlquery`.
 
 For sources outside any of these categories — including HTML-scraped
 download pages (developer.android.com, flutter.dev, apache directory-
@@ -992,31 +1014,6 @@ scrapers lives where the maintenance reality already is.
 
 ## Deferred (post-v0)
 
-- **Multi-asset per arch** — multiple files from a single source
-  resolution staged into one `.deb`. (Multi-*package* from a single
-  source already shipped via the N-doc recipe format; this is the
-  complementary feature where one .deb pulls multiple files from
-  one release.) Recipe shape: `arches[].assets:` (list) /
-  `arches[].asset_urls:` (list), with the existing
-  `arches[].asset:` / `arches[].asset_url:` (singular) staying as
-  syntactic sugar for the singleton case. Cross-source bundling
-  stays **expressly out of scope**. Implementation: `plan.Artifact.Asset`
-  becomes `Assets []Asset`; `MatchAsset` / `RenderAssetURL` get
-  plural counterparts; `build_inputs_hash` includes every asset's
-  SHA256.
-
-  Skipped for the multi-package commit because most real
-  motivating cases — including ollama's `ollama-linux-<arch>.tar.zst`
-  with both `bin/ollama` and `lib/ollama/cuda_v*` — fit cleanly in
-  the existing one-asset-per-arch model (the archive contains
-  everything; per-package nfpm contents list does the slicing).
-  The cfssl shape (one release with N independent binaries, no
-  bundling archive) is the next driver.
-
-  Implementation impact (when added): each `plan.Package`'s
-  per-arch artifact carries a list of assets instead of a single
-  one; the build pipeline downloads every entry and stages them
-  side by side under `${ASSETS}/`.
 - **Upstream-supplied SHA256 sidecars (`sha256_asset` / `sha256_path`)** — many
   vendors publish a per-asset SHA256 alongside the binary, either
   as a sidecar file (`foo.tar.gz` + `foo.tar.gz.sha256`) or as a

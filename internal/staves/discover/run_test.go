@@ -112,8 +112,8 @@ func TestRun_HappyPath(t *testing.T) {
 	if a.Arch != "all" {
 		t.Errorf("arch: %s", a.Arch)
 	}
-	if a.Asset.URL != "" || a.Asset.Name != "" {
-		t.Errorf("asset should be empty for local source: %+v", a.Asset)
+	if len(a.Assets) != 0 {
+		t.Errorf("assets should be empty for local source: %+v", a.Assets)
 	}
 	if a.Deb.Filename != "demo_1.0.0_all.deb" {
 		t.Errorf("deb.filename: %s", a.Deb.Filename)

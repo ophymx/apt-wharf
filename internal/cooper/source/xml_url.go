@@ -109,6 +109,29 @@ func ResolveXMLURL(ctx context.Context, client *http.Client, x *config.XMLURLSou
 	}, nil
 }
 
+// RenderXMLAssetURLs is the plural counterpart to RenderXMLAssetURL.
+// Renders each template against the same XML body; collision check
+// matches the json_url path (basenames under ${ASSETS}/ must be
+// distinct).
+func RenderXMLAssetURLs(templates []string, version, arch string, body []byte) ([]string, error) {
+	out := make([]string, 0, len(templates))
+	seen := make(map[string]int, len(templates))
+	for i, t := range templates {
+		u, err := RenderXMLAssetURL(t, version, arch, body)
+		if err != nil {
+			return nil, fmt.Errorf("asset_urls[%d]: %w", i, err)
+		}
+		name := basenameOf(u)
+		if prev, ok := seen[name]; ok {
+			return nil, fmt.Errorf("asset name collision under ${ASSETS}/: asset_urls[%d]=%q and asset_urls[%d]=%q both resolved to basename %s",
+				prev, templates[prev], i, t, name)
+		}
+		seen[name] = i
+		out = append(out, u)
+	}
+	return out, nil
+}
+
 // RenderXMLAssetURL substitutes ${VERSION} / ${ARCH} (cooper's standard
 // substitutions) and {token} / {xpath:expr} (signpost-compatible)
 // placeholders in template, returning the final URL. Errors on missing

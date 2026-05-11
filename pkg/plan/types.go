@@ -60,13 +60,20 @@ type Source struct {
 // Artifact is one (package, arch) tuple — the unit at which cooper builds
 // .debs and at which orchestrators dedup against the target apt repo.
 //
+// Assets is the list of upstream files cooper stages under ${ASSETS}/
+// for this (package, arch). Most recipes have a single entry — that's
+// the github_release single-archive case; the plural form covers the
+// cfssl-shape where one release ships N independent binaries with no
+// bundling archive. Empty Assets is the staves case: aux_files alone
+// carries every byte the .deb needs.
+//
 // Result/Error are populated only by `cooper build` when an artifact's
 // build fails — discover never sets them. Empty Result is "ok"; the
 // failure-isolation rule in cooper-design.md §"Phases · Build" lets
 // sibling artifacts in the same package finish even when one errors.
 type Artifact struct {
 	Arch      string    `json:"arch"`
-	Asset     Asset     `json:"asset"`
+	Assets    []Asset   `json:"assets"`
 	Deb       Deb       `json:"deb"`
 	BuildPlan BuildPlan `json:"build_plan"`
 	Result    string    `json:"result,omitempty"`

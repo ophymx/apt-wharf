@@ -349,7 +349,7 @@ arches:
 ---
 name: x
 `,
-			wantSub: "asset: required",
+			wantSub: "asset(s): required",
 		},
 		{
 			name: "asset selector with non-VERSION substitution",

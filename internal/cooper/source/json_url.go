@@ -102,6 +102,51 @@ func ResolveJSONURL(ctx context.Context, client *http.Client, j *config.JSONURLS
 	}, nil
 }
 
+// RenderAssetURLs is the plural counterpart to RenderAssetURL. Renders
+// each template in order; any failure aborts the whole batch so the
+// artifact lands as result=error rather than half-resolved. Same
+// no-collision invariant as MatchAssets: rendered URL basenames must
+// be unique because all assets land under one ${ASSETS}/ directory.
+func RenderAssetURLs(templates []string, version, arch string, body []byte) ([]string, error) {
+	out := make([]string, 0, len(templates))
+	seen := make(map[string]int, len(templates))
+	for i, t := range templates {
+		u, err := RenderAssetURL(t, version, arch, body)
+		if err != nil {
+			return nil, fmt.Errorf("asset_urls[%d]: %w", i, err)
+		}
+		name := basenameOf(u)
+		if prev, ok := seen[name]; ok {
+			return nil, fmt.Errorf("asset name collision under ${ASSETS}/: asset_urls[%d]=%q and asset_urls[%d]=%q both resolved to basename %s",
+				prev, templates[prev], i, t, name)
+		}
+		seen[name] = i
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+// basenameOf is the discover-side equivalent of build's basename
+// extractor — strips query/fragment and returns the URL's last path
+// segment. Used for the discover-time collision check; build's own
+// basenameFromURL stays the source of truth for asset.name.
+func basenameOf(rawURL string) string {
+	end := len(rawURL)
+	for i := 0; i < len(rawURL); i++ {
+		if rawURL[i] == '?' || rawURL[i] == '#' {
+			end = i
+			break
+		}
+	}
+	s := rawURL[:end]
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '/' {
+			return s[i+1:]
+		}
+	}
+	return s
+}
+
 // RenderAssetURL substitutes ${VERSION} / ${ARCH} (cooper's standard
 // substitutions) and {token} / {gjson.path} (signpost-compatible)
 // placeholders in template, returning the final URL. Errors on missing

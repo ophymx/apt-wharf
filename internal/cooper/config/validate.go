@@ -8,6 +8,11 @@ import (
 
 // validateSidecar enforces the doc 1 schema from cooper-design.md.
 // Network-free: regex compilation and structural checks only.
+//
+// validateArches also normalizes Arch entries in place: singular asset /
+// asset_url forms are folded into the corresponding plural slot so
+// downstream code only deals with Assets / AssetURLs. The map is
+// mutated through reassignment so callers see the canonical shape.
 func validateSidecar(s *Sidecar) error {
 	if err := validateSource(&s.Source); err != nil {
 		return err
@@ -185,53 +190,119 @@ func validateArches(src *Source, arches map[string]Arch) error {
 		if arch == "" {
 			return fmt.Errorf("arches: empty arch key")
 		}
+		// Singular/plural mutex per kind. Singular forms are sugar for
+		// a single-entry plural slice; setting both at once is a recipe
+		// authoring error.
+		if a.Asset != "" && len(a.Assets) > 0 {
+			return fmt.Errorf("arches.%s: cannot set both asset and assets (singular is sugar for a single-entry plural slice)", arch)
+		}
+		if a.AssetURL != "" && len(a.AssetURLs) > 0 {
+			return fmt.Errorf("arches.%s: cannot set both asset_url and asset_urls", arch)
+		}
+
 		switch {
 		case src.GitHub != nil:
-			if a.Asset == "" {
-				return fmt.Errorf("arches.%s.asset: required for source.github", arch)
+			if a.AssetURL != "" || len(a.AssetURLs) > 0 {
+				return fmt.Errorf("arches.%s: asset_url/asset_urls not valid for source.github (use asset/assets instead)", arch)
 			}
-			if a.AssetURL != "" {
-				return fmt.Errorf("arches.%s.asset_url: not valid for source.github (use `asset` instead)", arch)
+			// Canonicalize singular → plural.
+			if a.Asset != "" {
+				a.Assets = []string{a.Asset}
+				a.Asset = ""
 			}
-			for _, m := range assetSubstPattern.FindAllStringSubmatch(a.Asset, -1) {
-				if m[1] != "VERSION" {
-					return fmt.Errorf("arches.%s.asset: only ${VERSION} substitution is allowed (saw ${%s})", arch, m[1])
+			if len(a.Assets) == 0 {
+				return fmt.Errorf("arches.%s.asset(s): required for source.github", arch)
+			}
+			for i, asset := range a.Assets {
+				if asset == "" {
+					return fmt.Errorf("arches.%s.assets[%d]: empty entry", arch, i)
+				}
+				for _, m := range assetSubstPattern.FindAllStringSubmatch(asset, -1) {
+					if m[1] != "VERSION" {
+						return fmt.Errorf("arches.%s.assets[%d]: only ${VERSION} substitution is allowed (saw ${%s})", arch, i, m[1])
+					}
 				}
 			}
-		case src.JSONURL != nil:
-			if a.AssetURL == "" {
-				return fmt.Errorf("arches.%s.asset_url: required for source.json_url", arch)
+			if err := checkDuplicateTemplates(arch, "assets", a.Assets); err != nil {
+				return err
 			}
-			if a.Asset != "" {
-				return fmt.Errorf("arches.%s.asset: not valid for source.json_url (use `asset_url` instead)", arch)
+		case src.JSONURL != nil:
+			if a.Asset != "" || len(a.Assets) > 0 {
+				return fmt.Errorf("arches.%s: asset/assets not valid for source.json_url (use asset_url/asset_urls instead)", arch)
+			}
+			if a.AssetURL != "" {
+				a.AssetURLs = []string{a.AssetURL}
+				a.AssetURL = ""
+			}
+			if len(a.AssetURLs) == 0 {
+				return fmt.Errorf("arches.%s.asset_url(s): required for source.json_url", arch)
 			}
 			// Scheme check is deferred to runtime: a template that
 			// starts with a {gjson.path} placeholder (e.g.
 			// `{TBA.0.downloads.linux.link}`) resolves to an http(s)
 			// URL only after the JSON body is fetched. RenderAssetURL
 			// re-checks scheme on the rendered value.
-			for _, m := range assetSubstPattern.FindAllStringSubmatch(a.AssetURL, -1) {
-				if m[1] != "VERSION" && m[1] != "ARCH" {
-					return fmt.Errorf("arches.%s.asset_url: only ${VERSION} and ${ARCH} substitutions are allowed (saw ${%s})", arch, m[1])
+			for i, u := range a.AssetURLs {
+				if u == "" {
+					return fmt.Errorf("arches.%s.asset_urls[%d]: empty entry", arch, i)
+				}
+				for _, m := range assetSubstPattern.FindAllStringSubmatch(u, -1) {
+					if m[1] != "VERSION" && m[1] != "ARCH" {
+						return fmt.Errorf("arches.%s.asset_urls[%d]: only ${VERSION} and ${ARCH} substitutions are allowed (saw ${%s})", arch, i, m[1])
+					}
 				}
 			}
-		case src.XMLURL != nil:
-			if a.AssetURL == "" {
-				return fmt.Errorf("arches.%s.asset_url: required for source.xml_url", arch)
+			if err := checkDuplicateTemplates(arch, "asset_urls", a.AssetURLs); err != nil {
+				return err
 			}
-			if a.Asset != "" {
-				return fmt.Errorf("arches.%s.asset: not valid for source.xml_url (use `asset_url` instead)", arch)
+		case src.XMLURL != nil:
+			if a.Asset != "" || len(a.Assets) > 0 {
+				return fmt.Errorf("arches.%s: asset/assets not valid for source.xml_url (use asset_url/asset_urls instead)", arch)
+			}
+			if a.AssetURL != "" {
+				a.AssetURLs = []string{a.AssetURL}
+				a.AssetURL = ""
+			}
+			if len(a.AssetURLs) == 0 {
+				return fmt.Errorf("arches.%s.asset_url(s): required for source.xml_url", arch)
 			}
 			// Same deferred-scheme-check rationale as json_url: a
 			// template that opens with `{xpath:...}` only resolves to
 			// an http(s) URL once the XML body has been fetched. The
 			// runtime renderer re-validates scheme on the result.
-			for _, m := range assetSubstPattern.FindAllStringSubmatch(a.AssetURL, -1) {
-				if m[1] != "VERSION" && m[1] != "ARCH" {
-					return fmt.Errorf("arches.%s.asset_url: only ${VERSION} and ${ARCH} substitutions are allowed (saw ${%s})", arch, m[1])
+			for i, u := range a.AssetURLs {
+				if u == "" {
+					return fmt.Errorf("arches.%s.asset_urls[%d]: empty entry", arch, i)
+				}
+				for _, m := range assetSubstPattern.FindAllStringSubmatch(u, -1) {
+					if m[1] != "VERSION" && m[1] != "ARCH" {
+						return fmt.Errorf("arches.%s.asset_urls[%d]: only ${VERSION} and ${ARCH} substitutions are allowed (saw ${%s})", arch, i, m[1])
+					}
 				}
 			}
+			if err := checkDuplicateTemplates(arch, "asset_urls", a.AssetURLs); err != nil {
+				return err
+			}
 		}
+		arches[arch] = a
+	}
+	return nil
+}
+
+// checkDuplicateTemplates rejects two entries in the same plural slice
+// whose verbatim templates match. We can't catch every name-collision
+// case at validate time — placeholders (${VERSION}, {gjson.path},
+// {xpath:...}) only resolve at discover time, and the rendered basenames
+// are what land under ${ASSETS}/. But identical templates are a
+// guaranteed collision; rejecting them up-front is cheap and prevents
+// recipes that obviously can't work.
+func checkDuplicateTemplates(arch, field string, entries []string) error {
+	seen := make(map[string]int, len(entries))
+	for i, e := range entries {
+		if prev, ok := seen[e]; ok {
+			return fmt.Errorf("arches.%s.%s: duplicate entry %q (indices %d and %d)", arch, field, e, prev, i)
+		}
+		seen[e] = i
 	}
 	return nil
 }

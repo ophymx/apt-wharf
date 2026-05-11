@@ -1,6 +1,6 @@
 # cooper examples
 
-Seven end-to-end example packages, each scoped to one cooper feature
+Eight end-to-end example packages, each scoped to one cooper feature
 surface. Every example validates with:
 
 ```sh
@@ -21,6 +21,7 @@ like.
 | [`ollama/`](./ollama) | one cooper.yaml producing **two** `.deb`s from the same upstream asset; nfpm `type: tree` for shipping subdirectories |
 | [`jetbrains-toolbox/`](./jetbrains-toolbox) | `json_url` source kind; gjson placeholders in `asset_url` (per-arch download links from the same JSON body) |
 | [`intellij-idea-community/`](./intellij-idea-community) | `xml_url` source kind; XPath against JetBrains' `updates.xml` feed |
+| [`cfssl/`](./cfssl) | **multi-asset per arch** — eight independent binaries from one release staged side-by-side under `${ASSETS}/` |
 
 ## How to run
 
@@ -135,6 +136,26 @@ endpoint once, extracts the build number via `gjson` (`TBA.0.build`),
 and renders each arch's download URL by interpolating
 `{TBA.0.downloads.linux.link}`-style placeholders against the same
 response. No GitHub release; no external producer.
+
+### `cfssl/` — multi-asset per arch
+
+Cloudflare's cfssl release ships eight independent binaries per
+architecture — `cfssl`, `cfssljson`, `cfssl-bundle`, `cfssl-certinfo`,
+`cfssl-newkey`, `cfssl-scan`, `mkbundle`, `multirootca` — with no
+bundling archive. The recipe uses `arches[].assets:` (plural) to
+enumerate every selector; cooper resolves each against the release,
+stages them side-by-side under `${ASSETS}/`, and the nfpm `contents:`
+list installs all eight to `/usr/bin/`.
+
+The same shape applies to any release that publishes loose binaries
+instead of a tarball. The singular `arches[].asset:` form remains
+sugar for the single-binary case; recipes only reach for plural when
+the release actually contains independent files.
+
+Asset-name collisions (two selectors resolving to the same release
+asset) are rejected at discover time — both selectors land under one
+`${ASSETS}/` directory, so identical resolved basenames can't both
+exist.
 
 ### `intellij-idea-community/` — `xml_url` source kind
 
