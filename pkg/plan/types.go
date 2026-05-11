@@ -37,7 +37,9 @@ type Package struct {
 //
 // Field population depends on Kind:
 //   - "github_release": Repo, ReleaseID, ReleaseTag, ReleasePublishedAt.
-//   - "json_url":       URL, Token (the extracted version), nothing else.
+//   - "json_url":       URL, Token (the extracted version).
+//   - "local":          GitCommit, GitDate (provenance for staves and
+//                       any other producer building from in-repo files).
 //
 // All non-Kind fields use omitempty so each kind's record stays focused
 // on its native provenance.
@@ -49,6 +51,8 @@ type Source struct {
 	ReleasePublishedAt string `json:"release_published_at,omitempty"` // RFC 3339 UTC
 	URL                string `json:"url,omitempty"`
 	Token              string `json:"token,omitempty"`
+	GitCommit          string `json:"git_commit,omitempty"`
+	GitDate            string `json:"git_date,omitempty"` // RFC 3339 UTC
 }
 
 // Artifact is one (package, arch) tuple — the unit at which cooper builds

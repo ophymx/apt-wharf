@@ -528,3 +528,83 @@ func TestRun_RejectsNegativeRevision(t *testing.T) {
 		t.Errorf("expected positive-integer error, got %v", err)
 	}
 }
+
+// TestRun_AssetOptional asserts cooper build skips the download +
+// extract phase when Asset.URL is empty (the local-source case driven
+// by staves and other producers that bake every byte into aux_files).
+// The aux_files materialization + nfpm exec path is identical.
+func TestRun_AssetOptional(t *testing.T) {
+	// Hand-rolled plan: no asset URL, aux_files carries the only
+	// payload (one file destined for /usr/share/demo/hello.txt).
+	bp := plan.BuildPlan{
+		SourceDateEpoch: 1715240520,
+		Nfpm: json.RawMessage(`{
+			"name": "demo",
+			"version": "1.0.0",
+			"arch": "all",
+			"platform": "linux",
+			"maintainer": "Demo <demo@example.invalid>",
+			"description": "asset-optional fixture",
+			"contents": [
+				{"src": "./hello.txt", "dst": "/usr/share/demo/hello.txt"}
+			]
+		}`),
+		AuxFiles: map[string]plan.AuxFile{
+			"./hello.txt": {ContentB64: "aGVsbG8K"}, // "hello\n"
+		},
+	}
+	hash, err := plan.ComputeBuildInputsHash(plan.FormatRevision, nil, bp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &plan.Plan{
+		SchemaVersion: plan.SchemaVersion,
+		Tool:          plan.Tool{Name: "staves", Version: "test", FormatRevision: plan.FormatRevision},
+		Packages: []plan.Package{{
+			Name:   "demo",
+			Result: plan.ResultOK,
+			Source: &plan.Source{Kind: "local"},
+			Artifacts: []plan.Artifact{{
+				Arch:      "all",
+				Asset:     plan.Asset{}, // no URL, no name
+				Deb:       plan.Deb{Filename: "demo_1.0.0_all.deb", BuildInputsHash: hash},
+				BuildPlan: bp,
+			}},
+		}},
+	}
+
+	work := t.TempDir()
+	out := t.TempDir()
+
+	var stubOutPath string
+	stub := func(_ context.Context, dir, outputPath string, _ []string) error {
+		stubOutPath = outputPath
+		// Confirm the aux file landed where the recipe says.
+		body, err := os.ReadFile(filepath.Join(dir, "hello.txt"))
+		if err != nil {
+			return err
+		}
+		if string(body) != "hello\n" {
+			t.Errorf("aux body in staging: %q", body)
+		}
+		return os.WriteFile(outputPath, []byte("fake-deb"), 0o644)
+	}
+	res, err := Run(context.Background(), p, Options{
+		OutDir:   out,
+		WorkDir:  work,
+		NfpmExec: stub,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(stubOutPath, "/demo_1.0.0_all.deb") {
+		t.Errorf("nfpm output path: %s", stubOutPath)
+	}
+	art := res.Packages[0].Artifacts[0]
+	if art.Result == plan.ResultError {
+		t.Fatalf("expected ok, got error: %+v", art.Error)
+	}
+	if art.Deb.Path == nil || !strings.HasSuffix(*art.Deb.Path, "/demo_1.0.0_all.deb") {
+		t.Errorf("deb.path: %v", art.Deb.Path)
+	}
+}

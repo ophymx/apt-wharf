@@ -1,0 +1,9 @@
+# Demo recipe set for the staves tool.
+#
+# Staves packages files checked into this repo (configs, systemd
+# units, helper scripts — the kind of in-house payload that has no
+# upstream release). Pipe `staves discover` into `cooper build -` to
+# produce reproducible .debs.
+
+packages:
+  - ./packages/demo-config

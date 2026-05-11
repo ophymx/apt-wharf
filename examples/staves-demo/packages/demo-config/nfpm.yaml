@@ -1,0 +1,20 @@
+# Plain nfpm config — no cooper sidecar, no two-doc structure. The
+# version is pinned literally (staves does no version derivation);
+# bump it by hand when a meaningful change ships.
+name: demo-config
+version: 1.0.0
+arch: all
+platform: linux
+maintainer: "Demo <demo@example.invalid>"
+description: |
+  Demo in-house config package.
+  Drops a /etc/demo/example.conf onto the system; the kind of thing
+  ophymx-common, ophymx-router, etc. do for the user's fleet.
+section: admin
+contents:
+  - src: ./files/etc/demo/example.conf
+    dst: /etc/demo/example.conf
+    file_info:
+      mode: 0644
+scripts:
+  postinstall: ./scripts/postinstall.sh
