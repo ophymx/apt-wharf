@@ -898,13 +898,54 @@ block picks one (validation enforces exactly-one):
   deterministically from the URL + version since json_url has no
   canonical "published_at" equivalent.
 
-For sources outside both categories (vendor HTML pages, Maven
-artifacts, etc.), use the external-producer pattern: emit a valid
-`plan.Plan` JSON document from any program and pipe it into `cooper
-build -`. See *External producers*.
+Planned but not yet built (see *Deferred (post-v0)*):
+
+- **`xml_url`** — same shape as `json_url` but uses XPath against
+  the response body. Targets vendors who publish version metadata
+  as XML — JetBrains' `https://www.jetbrains.com/updates/updates.xml`
+  is the canonical case, and there are RSS / Atom feeds in a similar
+  shape (Apache projects, some Mozilla downloads). Schema sketch:
+  `source.xml_url: { url, version_xpath }`; `arches[].asset_url`
+  supports `${VERSION}` / `${ARCH}` and `{xpath}` placeholders
+  against the same body, mirroring json_url's `{gjson.path}` slot.
+- **`html_url`** — the messiest case: pages that don't expose any
+  structured download index, only HTML. Targets developer.android.com
+  (`https://developer.android.com/studio`), flutter.dev's releases
+  page, apache.org's directory-studio download page, vendor signed-
+  URL endpoints behind a "click here to download" link. Schema
+  sketch: `source.html_url: { url, version_selector, asset_link_selector }`
+  using CSS selectors (e.g. via `golang.org/x/net/html` + a query
+  library) plus a small set of post-extractors (innerText, attribute
+  value, regex over result). The "scraping magic" the design has to
+  absorb: relative-URL resolution, multiple matches (pick first /
+  pick by additional filter), and the inherent fragility of CSS
+  selectors against vendor markup churn — recipe authors accept that
+  these are higher-maintenance than json_url.
+
+For sources outside any of these categories (Maven artifacts,
+sourceforge, SVN tags, …), use the external-producer pattern: emit a
+valid `plan.Plan` JSON document from any program and pipe it into
+`cooper build -`. See *External producers*.
 
 ## Deferred (post-v0)
 
+- **`xml_url` source kind** — analog of `json_url` for XML metadata
+  documents (JetBrains `updates.xml`, RSS / Atom release feeds,
+  Apache project `version.xml` files). Version extraction via XPath
+  (Go has `github.com/antchfx/xmlquery`); `arches[].asset_url`
+  gains `{xpath:...}` placeholders alongside cooper's standard
+  `${VERSION}` / `${ARCH}`. `source_date_epoch` derived the same way
+  json_url does it (hash of url + version).
+- **`html_url` source kind** — for vendors that publish download
+  metadata only on a rendered HTML page (developer.android.com,
+  flutter.dev, apache directory-studio, vendor signed-URL endpoints).
+  CSS-selector-based extraction via `golang.org/x/net/html` + a
+  selector library; the recipe specifies `version_selector` and
+  `asset_link_selector` plus an optional post-extractor
+  (innerText / attribute / regex). Recipe authors accept the
+  inherent brittleness — vendor markup churn breaks selectors more
+  often than vendor JSON breaks gjson paths.
 - **Glob in `cooper.yaml`'s `packages:`** — ergonomics; explicit list is fine for v0.
 - **`--prefetch-hashes` for missing `asset.sha256`** — current contract (build streams + hashes; orchestrator re-imports unconditionally) loses dedup for that artifact. Wait for a real package that surfaces it.
-- **`version_template` under json_url** — for vendors whose extracted version needs post-processing (e.g. stripping a `v` prefix when the JSON includes it). Out of scope for v0; users can re-tag in their JSON or use an external producer.
+- **`sha256_path` knob on `json_url`** — go.dev's feed publishes per-file SHA256 alongside the URL; cooper currently ignores it. Wiring the upstream-supplied hash into `plan.Asset.SHA256` lets the orchestrator's hash-dedup query work on first contact instead of waiting for cooper to stream-hash on first build.
+- **`version_template` under json_url** — for vendors whose extracted version needs post-processing beyond `version_strip_prefix` (e.g. regex-based extraction, composing multiple gjson fields into one version). Out of scope for v0; users can re-tag in their JSON or use an external producer.
