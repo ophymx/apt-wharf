@@ -931,38 +931,67 @@ block picks one (validation enforces exactly-one):
   from `(url, version)` exactly the same way json_url does it. XML
   parsing uses `github.com/antchfx/xmlquery`.
 
-Planned but not yet built (see *Deferred (post-v0)*):
-
-- **`html_url`** — the messiest case: pages that don't expose any
-  structured download index, only HTML. Targets developer.android.com
-  (`https://developer.android.com/studio`), flutter.dev's releases
-  page, apache.org's directory-studio download page, vendor signed-
-  URL endpoints behind a "click here to download" link. Schema
-  sketch: `source.html_url: { url, version_selector, asset_link_selector }`
-  using CSS selectors (e.g. via `golang.org/x/net/html` + a query
-  library) plus a small set of post-extractors (innerText, attribute
-  value, regex over result). The "scraping magic" the design has to
-  absorb: relative-URL resolution, multiple matches (pick first /
-  pick by additional filter), and the inherent fragility of CSS
-  selectors against vendor markup churn — recipe authors accept that
-  these are higher-maintenance than json_url.
-
-For sources outside any of these categories (Maven artifacts,
-sourceforge, SVN tags, …), use the external-producer pattern: emit a
+For sources outside any of these categories — including HTML-scraped
+download pages (developer.android.com, flutter.dev, apache directory-
+studio, vendor "click here to download" wrappers), Maven artifacts,
+sourceforge, SVN tags — use the external-producer pattern: emit a
 valid `plan.Plan` JSON document from any program and pipe it into
-`cooper build -`. See *External producers*.
+`cooper build -`. See *External producers* and *HTML-scraped sources*.
+
+### HTML-scraped sources
+
+We explicitly **do not** ship an `html_url` source kind, and don't
+plan to. Two reasons drive that:
+
+1. **Fragility is asymmetric.** A json_url or xml_url recipe breaks
+   when the vendor renames a field; that's rare and easy to diagnose.
+   An html_url recipe breaks every time the vendor restyles their
+   download page, sometimes silently (a selector still matches but
+   resolves to the wrong element). Every recipe becomes a maintenance
+   liability the way json_url / xml_url recipes don't.
+2. **Most "needs scraping" cases have a hidden API.** Flutter exposes
+   `storage.googleapis.com/flutter_infra_release/releases/releases_linux.json`;
+   Android Studio has `developer.android.com/studio/archive`; most
+   "JS-rendered download page" vendors load their actual data from a
+   discoverable JSON endpoint. Reach for the vendor's network tab
+   before reaching for a CSS selector.
+
+The residual long-tail of genuinely HTML-only sources is best handled
+as an external producer per *External producers*. A typical scraper
+producer is ~30 lines of shell:
+
+```sh
+#!/bin/sh
+# Emits a one-package plan.Plan to stdout. Pipe into `cooper build -`.
+set -eu
+
+version=$(
+  curl -fsSL https://example.com/downloads/ \
+    | grep -oE 'foo-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
+    | head -1 \
+    | sed 's/^foo-//; s/\.tar\.gz$//'
+)
+
+jq -n --arg v "$version" --arg url "https://example.com/foo-$v.tar.gz" '{
+  schema_version: 1,
+  tool: { name: "scrape-foo", version: "0.0.1", format_revision: 1 },
+  discovered_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+  packages: [{
+    name: "foo",
+    result: "ok",
+    source: { kind: "json_url", url: $url, token: $v },
+    artifacts: [...]
+  }]
+}'
+```
+
+The producer owns the fragility — when the vendor restyles, the
+recipe author updates their own grep/sed, not a cooper recipe. Cooper
+keeps a small, declarative surface area; the long tail of one-off
+scrapers lives where the maintenance reality already is.
 
 ## Deferred (post-v0)
 
-- **`html_url` source kind** — for vendors that publish download
-  metadata only on a rendered HTML page (developer.android.com,
-  flutter.dev, apache directory-studio, vendor signed-URL endpoints).
-  CSS-selector-based extraction via `golang.org/x/net/html` + a
-  selector library; the recipe specifies `version_selector` and
-  `asset_link_selector` plus an optional post-extractor
-  (innerText / attribute / regex). Recipe authors accept the
-  inherent brittleness — vendor markup churn breaks selectors more
-  often than vendor JSON breaks gjson paths.
 - **Multi-asset per arch** — multiple files from a single source
   resolution staged into one `.deb`. (Multi-*package* from a single
   source already shipped via the N-doc recipe format; this is the

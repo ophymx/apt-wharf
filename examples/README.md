@@ -165,7 +165,10 @@ the same response body (mirroring `json_url`'s `{gjson.path}` slot).
   and bespoke external producers.
 - Apt-repo proxies (hashicorp-release, k8s-release, etc.). Those are
   signpost's job, not cooper's.
-- HTML-scraped sources (`html_url`) — vendors that publish download
-  metadata only on a rendered page (developer.android.com, flutter.dev,
-  Apache directory-studio). Still on the deferred list pending a
-  CSS-selector + post-extractor design.
+- HTML-scraped sources — vendors that publish download metadata only
+  on a rendered page (developer.android.com, flutter.dev, Apache
+  directory-studio). **Out of scope** for cooper itself: a CSS-selector-
+  based recipe would carry too much fragility per recipe versus the
+  alternative. Use an external producer that scrapes the page and
+  emits a `plan.Plan` JSON document; see cooper-design.md §"HTML-
+  scraped sources" for the rationale and a ~30-line shell example.
