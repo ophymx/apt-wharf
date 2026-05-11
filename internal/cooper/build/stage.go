@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,22 +16,39 @@ import (
 	"github.com/ophymx/apt-signpost/pkg/plan"
 )
 
+// NfpmYAMLOpts carries the on-disk-only adjustments cooper applies when
+// writing nfpm.yaml. None of these flow back into BuildPlan.Nfpm in
+// JSON, so none perturb build_inputs_hash.
+type NfpmYAMLOpts struct {
+	// Hash is the X-Cooper-Build-Inputs-Hash to inject into
+	// deb.fields. Empty = skip injection.
+	Hash string
+	// Revision, when > 0, appends "-N" to the version field. The
+	// caller is responsible for ensuring the bare version contains
+	// no "-" before invoking this (run.go validates upfront).
+	Revision int
+}
+
 // WriteNfpmYAML decodes BuildPlan.Nfpm (json.RawMessage) into a generic
 // map and writes a deterministic YAML representation at target.
 // yaml.v3's default emit sorts mapping keys alphabetically, which makes
 // the on-disk file byte-stable across runs of the same plan.
 //
-// Cooper sets `expand: true` on every contents entry as it writes
-// nfpm.yaml so nfpm's per-entry env-var expansion fires for ${ASSETS}.
-// This is a build-time decision (not part of BuildPlan.Nfpm or
-// build_inputs_hash) — users write vanilla nfpm in doc 2 and shouldn't
-// have to know about the knob.
-func WriteNfpmYAML(bp plan.BuildPlan, target string) error {
+// Applies the on-disk-only adjustments cooper-design.md §"Build"
+// step 4 lists:
+//
+//   (a) expand: true on every contents entry that doesn't already have
+//       it explicitly set.
+//   (b) deb.fields["X-Cooper-Build-Inputs-Hash"] = opts.Hash.
+//   (c) version field gets "-N" appended when opts.Revision > 0.
+func WriteNfpmYAML(bp plan.BuildPlan, opts NfpmYAMLOpts, target string) error {
 	var doc any
 	if err := json.Unmarshal(bp.Nfpm, &doc); err != nil {
 		return fmt.Errorf("decode nfpm json: %w", err)
 	}
 	doc = enableContentsExpand(doc)
+	doc = injectBuildInputsHash(doc, opts.Hash)
+	doc = applyRevision(doc, opts.Revision)
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("marshal nfpm yaml: %w", err)
@@ -39,6 +57,53 @@ func WriteNfpmYAML(bp plan.BuildPlan, target string) error {
 		return err
 	}
 	return os.WriteFile(target, out, 0o644)
+}
+
+// applyRevision sets the nfpm `release` field to <revision> when
+// revision > 0; nfpm's deb packager concatenates it as "-<release>"
+// onto the version field, so the resulting Debian Version is
+// "<version>-<release>". No-op otherwise.
+//
+// We use nfpm's `release` field rather than rewriting `version` because
+// nfpm's default version_schema=semver interprets a "-N" suffix on
+// `version` as a semver prerelease and emits it with a tilde ("~N") in
+// the deb output. The dedicated `release` field bypasses that path.
+func applyRevision(doc any, revision int) any {
+	if revision <= 0 {
+		return doc
+	}
+	root, ok := doc.(map[string]any)
+	if !ok {
+		return doc
+	}
+	root["release"] = strconv.Itoa(revision)
+	return root
+}
+
+// injectBuildInputsHash sets deb.fields["X-Cooper-Build-Inputs-Hash"]
+// = hash on the nfpm doc, creating the `deb` and `deb.fields` maps if
+// absent. No-op when hash is empty (defense in depth for callers that
+// don't have a hash to inject, e.g. unit tests of unrelated adjustments).
+func injectBuildInputsHash(doc any, hash string) any {
+	if hash == "" {
+		return doc
+	}
+	root, ok := doc.(map[string]any)
+	if !ok {
+		return doc
+	}
+	deb, ok := root["deb"].(map[string]any)
+	if !ok {
+		deb = map[string]any{}
+		root["deb"] = deb
+	}
+	fields, ok := deb["fields"].(map[string]any)
+	if !ok {
+		fields = map[string]any{}
+		deb["fields"] = fields
+	}
+	fields["X-Cooper-Build-Inputs-Hash"] = hash
+	return root
 }
 
 // enableContentsExpand walks the nfpm doc, finds the contents:[] list,

@@ -23,6 +23,13 @@ type Options struct {
 	StageOnly bool
 	KeepWork  bool
 
+	// Revision, when > 0, appends "-N" to every artifact's version at
+	// nfpm.yaml-write time. Rejects plans whose nfpm.version already
+	// contains "-" (a recipe-baked debian-revision conflicts with the
+	// orchestrator-supplied one). The build_inputs_hash is NOT
+	// recomputed; see cooper-design.md §"`--revision N` mechanics".
+	Revision int
+
 	// Downloader and NfpmExec are dependencies tests can override.
 	// Defaults: NewDownloader(http.DefaultClient) and DefaultNfpmExec.
 	Downloader *Downloader
@@ -45,6 +52,17 @@ func Run(ctx context.Context, p *plan.Plan, opts Options) (*plan.Plan, error) {
 	}
 	if opts.StageOnly && opts.KeepWork {
 		return nil, fmt.Errorf("--stage-only and --keep-work are mutually exclusive")
+	}
+	if opts.Revision < 0 {
+		return nil, fmt.Errorf("--revision must be a positive integer, got %d", opts.Revision)
+	}
+	if err := rejectAnnotatedPlan(p); err != nil {
+		return nil, err
+	}
+	if opts.Revision > 0 {
+		if err := validateRevisionable(p); err != nil {
+			return nil, err
+		}
 	}
 	if opts.Downloader == nil {
 		opts.Downloader = NewDownloader(http.DefaultClient)
@@ -127,6 +145,12 @@ func buildOne(
 		return art, err
 	}
 
+	// --revision rewrites the version (and therefore the filename and
+	// VERSION env) at on-disk staging time only. Hash is unchanged.
+	if opts.Revision > 0 {
+		art.Deb.Filename = reviseFilename(art.Deb.Filename, art.Arch, opts.Revision)
+	}
+
 	staging := filepath.Join(runDir, pkg.Name, art.Arch)
 	assetDir := filepath.Join(staging, "asset")
 	if err := os.MkdirAll(assetDir, 0o755); err != nil {
@@ -164,7 +188,10 @@ func buildOne(
 	if err := WriteAuxFiles(art.BuildPlan.AuxFiles, staging); err != nil {
 		return art, err
 	}
-	if err := WriteNfpmYAML(art.BuildPlan, filepath.Join(staging, "nfpm.yaml")); err != nil {
+	if err := WriteNfpmYAML(art.BuildPlan, NfpmYAMLOpts{
+		Hash:     art.Deb.BuildInputsHash,
+		Revision: opts.Revision,
+	}, filepath.Join(staging, "nfpm.yaml")); err != nil {
 		return art, err
 	}
 	if err := PinMtimes(staging, art.BuildPlan.SourceDateEpoch); err != nil {
@@ -191,6 +218,85 @@ func buildOne(
 	art.Deb.Path = &pathCopy
 	art.Deb.SHA256 = &shaCopy
 	return art, nil
+}
+
+// rejectAnnotatedPlan refuses to build a plan whose artifacts already
+// carry a populated deb.path — that's the annotated output of a prior
+// cooper build run, not a fresh discover plan. Re-feeding the
+// annotated form would risk double-applying --revision and otherwise
+// confuses the build pipeline; orchestrators should pipe discover
+// output (where deb.path is nil) into build, not vice versa.
+func rejectAnnotatedPlan(p *plan.Plan) error {
+	for _, pkg := range p.Packages {
+		for _, art := range pkg.Artifacts {
+			if art.Deb.Path != nil && *art.Deb.Path != "" {
+				return fmt.Errorf("%s %s: plan looks like cooper build's annotated output (deb.path=%q); pipe a fresh cooper discover plan instead",
+					pkg.Name, art.Arch, *art.Deb.Path)
+			}
+		}
+	}
+	return nil
+}
+
+// validateRevisionable scans every artifact in p for a recipe-baked
+// debian-revision and rejects the plan when --revision is in play. The
+// debian-revision slot belongs to cooper under --revision; a recipe
+// that already populates it conflicts with the orchestrator-supplied
+// one.
+//
+// Two ways a recipe can populate the slot:
+//
+//  1. `version:` contains a "-" (nfpm parses that as a debian-revision
+//     when version_schema=none, or as a semver prerelease otherwise —
+//     either way it's not cooper's slot to claim).
+//  2. `release:` is set to a non-empty value (nfpm's dedicated
+//     debian-revision field).
+func validateRevisionable(p *plan.Plan) error {
+	for _, pkg := range p.Packages {
+		for _, art := range pkg.Artifacts {
+			v, release, err := nfpmVersionAndRelease(art.BuildPlan.Nfpm)
+			if err != nil {
+				return fmt.Errorf("%s %s: %w", pkg.Name, art.Arch, err)
+			}
+			if strings.Contains(v, "-") {
+				return fmt.Errorf("--revision incompatible with %s %s: nfpm.version=%q already contains a debian-revision; drop --revision or fix the recipe's version_template",
+					pkg.Name, art.Arch, v)
+			}
+			if release != "" {
+				return fmt.Errorf("--revision incompatible with %s %s: nfpm.release=%q is set; drop --revision or remove `release:` from the recipe",
+					pkg.Name, art.Arch, release)
+			}
+		}
+	}
+	return nil
+}
+
+// nfpmVersionAndRelease extracts the version and release fields from a
+// build_plan.nfpm RawMessage. Missing or non-string fields return "".
+// The only error path is JSON decode failure.
+func nfpmVersionAndRelease(raw json.RawMessage) (version, release string, err error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", "", fmt.Errorf("decode nfpm json: %w", err)
+	}
+	version, _ = m["version"].(string)
+	release, _ = m["release"].(string)
+	return version, release, nil
+}
+
+// reviseFilename splices "-<revision>" into a <name>_<version>_<arch>.deb
+// filename, between the version and the "_<arch>.deb" suffix. No-op
+// when revision <= 0 or the filename doesn't match the expected shape.
+func reviseFilename(filename, arch string, revision int) string {
+	if revision <= 0 {
+		return filename
+	}
+	suffix := "_" + arch + ".deb"
+	if !strings.HasSuffix(filename, suffix) {
+		return filename
+	}
+	base := filename[:len(filename)-len(suffix)]
+	return fmt.Sprintf("%s-%d%s", base, revision, suffix)
 }
 
 // versionFromArtifact pulls the upstream version out of art.Deb.Filename,

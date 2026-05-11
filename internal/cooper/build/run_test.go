@@ -344,3 +344,187 @@ func envMap(env []string) map[string]string {
 	}
 	return out
 }
+
+// TestRun_Revision_AppendsToFilenameAndVersion asserts --revision N
+// rewrites both the .deb filename (annotated JSON) and the nfpm.yaml
+// version field at on-disk-write time, while leaving build_inputs_hash
+// unchanged.
+func TestRun_Revision_AppendsToFilenameAndVersion(t *testing.T) {
+	asset := makeArchive(t, "x")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+	originalHash := p.Packages[0].Artifacts[0].Deb.BuildInputsHash
+
+	work := t.TempDir()
+	var stubOutPath string
+	var stubEnv []string
+	stub := func(_ context.Context, _, outPath string, env []string) error {
+		stubOutPath = outPath
+		stubEnv = append([]string(nil), env...)
+		return os.WriteFile(outPath, []byte("fake"), 0o644)
+	}
+
+	res, err := Run(context.Background(), p, Options{
+		OutDir:    t.TempDir(),
+		WorkDir:   work,
+		Revision:  2,
+		KeepWork:  true,
+		NfpmExec:  stub,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// nfpm exec received the revised filename.
+	if !strings.HasSuffix(stubOutPath, "/hugo_0.140.0-2_amd64.deb") {
+		t.Errorf("nfpm output path: %s, want suffix /hugo_0.140.0-2_amd64.deb", stubOutPath)
+	}
+	// VERSION env is the revised value (consumers of ${VERSION} in
+	// nfpm.yaml see the same string as the published deb).
+	if got := envMap(stubEnv); got["VERSION"] != "0.140.0-2" {
+		t.Errorf("VERSION env: %q, want 0.140.0-2", got["VERSION"])
+	}
+	// Annotated JSON: filename revised, hash unchanged.
+	art := res.Packages[0].Artifacts[0]
+	if art.Deb.Filename != "hugo_0.140.0-2_amd64.deb" {
+		t.Errorf("deb.filename: %q, want hugo_0.140.0-2_amd64.deb", art.Deb.Filename)
+	}
+	if art.Deb.BuildInputsHash != originalHash {
+		t.Errorf("build_inputs_hash changed under --revision: was %s, now %s", originalHash, art.Deb.BuildInputsHash)
+	}
+
+	// On-disk nfpm.yaml: version stays bare; release: 2 carries the
+	// debian-revision (nfpm appends "-2" at build time).
+	entries, _ := os.ReadDir(work)
+	if len(entries) != 1 {
+		t.Fatalf("expected one run dir, got %d", len(entries))
+	}
+	yamlPath := filepath.Join(work, entries[0].Name(), "hugo", "amd64", "nfpm.yaml")
+	body, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "version: 0.140.0\n") {
+		t.Errorf("nfpm.yaml version should stay bare:\n%s", body)
+	}
+	if !strings.Contains(string(body), "release: \"2\"") {
+		t.Errorf("nfpm.yaml missing release: \"2\":\n%s", body)
+	}
+}
+
+// TestRun_Revision_RejectsVersionContainingHyphen asserts cooper errors
+// out fast when --revision is used against a plan whose nfpm.version
+// already carries a debian-revision (a recipe-baked one). Validation
+// happens before any artifact is built.
+func TestRun_Revision_RejectsVersionContainingHyphen(t *testing.T) {
+	asset := makeArchive(t, "x")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+
+	// Replace nfpm with a version that contains "-".
+	p.Packages[0].Artifacts[0].BuildPlan.Nfpm = json.RawMessage(`{
+		"name": "hugo",
+		"version": "0.140.0-rc1",
+		"arch": "amd64",
+		"platform": "linux"
+	}`)
+
+	called := 0
+	stub := func(context.Context, string, string, []string) error { called++; return nil }
+	_, err := Run(context.Background(), p, Options{
+		OutDir:   t.TempDir(),
+		WorkDir:  t.TempDir(),
+		Revision: 1,
+		NfpmExec: stub,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--revision incompatible") {
+		t.Errorf("error message: %v", err)
+	}
+	if called != 0 {
+		t.Errorf("nfpm should not run when --revision validation fails (got %d calls)", called)
+	}
+}
+
+// TestRun_Revision_RejectsRecipeBakedRelease asserts the validation
+// also catches a recipe that pre-populates nfpm's dedicated `release:`
+// field (the other way a recipe can claim the debian-revision slot).
+func TestRun_Revision_RejectsRecipeBakedRelease(t *testing.T) {
+	asset := makeArchive(t, "x")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+
+	p.Packages[0].Artifacts[0].BuildPlan.Nfpm = json.RawMessage(`{
+		"name": "hugo",
+		"version": "0.140.0",
+		"release": "1",
+		"arch": "amd64",
+		"platform": "linux"
+	}`)
+
+	_, err := Run(context.Background(), p, Options{
+		OutDir:   t.TempDir(),
+		WorkDir:  t.TempDir(),
+		Revision: 1,
+		NfpmExec: func(context.Context, string, string, []string) error { return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "nfpm.release") {
+		t.Errorf("expected release-conflict error, got %v", err)
+	}
+}
+
+// TestRun_RejectsAnnotatedPlan asserts cooper build refuses a plan
+// that already looks like its own annotated output (deb.path populated
+// on any artifact). This is the re-fed-plan guard described in
+// cooper-design.md §"--revision N mechanics".
+func TestRun_RejectsAnnotatedPlan(t *testing.T) {
+	asset := makeArchive(t, "x")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+	// Simulate a prior cooper build run populating deb.path.
+	priorPath := "/tmp/dist/hugo_0.140.0_amd64.deb"
+	p.Packages[0].Artifacts[0].Deb.Path = &priorPath
+
+	called := 0
+	stub := func(context.Context, string, string, []string) error { called++; return nil }
+	_, err := Run(context.Background(), p, Options{
+		OutDir:   t.TempDir(),
+		WorkDir:  t.TempDir(),
+		NfpmExec: stub,
+	})
+	if err == nil || !strings.Contains(err.Error(), "annotated output") {
+		t.Errorf("expected annotated-plan error, got %v", err)
+	}
+	if called != 0 {
+		t.Errorf("nfpm should not run when annotated-plan rejection fires (got %d calls)", called)
+	}
+}
+
+// TestRun_RejectsNegativeRevision asserts the explicit negative-value
+// guard fires in Run() (the CLI also rejects, but Run() is callable from
+// orchestrators directly).
+func TestRun_RejectsNegativeRevision(t *testing.T) {
+	p := &plan.Plan{Packages: []plan.Package{}}
+	_, err := Run(context.Background(), p, Options{
+		OutDir:   t.TempDir(),
+		WorkDir:  t.TempDir(),
+		Revision: -1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "positive integer") {
+		t.Errorf("expected positive-integer error, got %v", err)
+	}
+}

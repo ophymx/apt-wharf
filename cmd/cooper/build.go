@@ -23,10 +23,11 @@ func cmdBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: cooper build <JSON_FILE> [--out-dir DIR] [--work-dir DIR] [--stage-only | --keep-work]")
+		fmt.Fprintln(fs.Output(), "usage: cooper build <JSON_FILE> [--out-dir DIR] [--work-dir DIR] [--revision N] [--stage-only | --keep-work]")
 	}
 	outDir := fs.String("out-dir", "./dist", "where .debs land")
 	workDir := fs.String("work-dir", "./.cooper-work", "staging root")
+	revision := fs.Int("revision", 0, "append -N to every artifact's version at on-disk write time; orchestrator-supplied debian-revision")
 	stageOnly := fs.Bool("stage-only", false, "stage artifacts but skip nfpm exec; keep work dir")
 	keepWork := fs.Bool("keep-work", false, "build normally but skip work-dir cleanup")
 
@@ -40,6 +41,9 @@ func cmdBuild(args []string) error {
 	if *stageOnly && *keepWork {
 		return errors.New("--stage-only and --keep-work are mutually exclusive")
 	}
+	if *revision < 0 {
+		return fmt.Errorf("--revision must be a positive integer, got %d", *revision)
+	}
 
 	in, err := readPlanInput(fs.Arg(0))
 	if err != nil {
@@ -49,6 +53,7 @@ func cmdBuild(args []string) error {
 	res, err := build.Run(context.Background(), in, build.Options{
 		OutDir:    *outDir,
 		WorkDir:   *workDir,
+		Revision:  *revision,
 		StageOnly: *stageOnly,
 		KeepWork:  *keepWork,
 	})

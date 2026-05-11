@@ -19,7 +19,8 @@ func TestWriteNfpmYAML(t *testing.T) {
 		Nfpm: json.RawMessage(`{"name":"hugo","version":"0.140.0","arch":"amd64","contents":[{"src":"${ASSETS}/hugo","dst":"/usr/bin/hugo"}]}`),
 	}
 	target := filepath.Join(t.TempDir(), "nfpm.yaml")
-	if err := WriteNfpmYAML(bp, target); err != nil {
+	const hash = "sha256:deadbeef0000000000000000000000000000000000000000000000000000beef"
+	if err := WriteNfpmYAML(bp, NfpmYAMLOpts{Hash: hash}, target); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(target)
@@ -32,6 +33,30 @@ func TestWriteNfpmYAML(t *testing.T) {
 		"arch: amd64",
 		"src: ${ASSETS}/hugo", // ${ASSETS} preserved verbatim for nfpm
 		"dst: /usr/bin/hugo",
+		"X-Cooper-Build-Inputs-Hash: " + hash,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("missing %q in nfpm.yaml:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteNfpmYAML_PreservesExistingDebFields(t *testing.T) {
+	bp := plan.BuildPlan{
+		Nfpm: json.RawMessage(`{"name":"foo","version":"1.0","deb":{"fields":{"Bugs":"https://example.com/issues"}}}`),
+	}
+	target := filepath.Join(t.TempDir(), "nfpm.yaml")
+	const hash = "sha256:abc"
+	if err := WriteNfpmYAML(bp, NfpmYAMLOpts{Hash: hash}, target); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Bugs: https://example.com/issues",
+		"X-Cooper-Build-Inputs-Hash: " + hash,
 	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("missing %q in nfpm.yaml:\n%s", want, got)

@@ -117,21 +117,29 @@ parses Debian versions the same way.
 
 ### `--revision N` mechanics
 
-`cooper build --revision N` appends `-N` to every artifact's version
-at on-disk `nfpm.yaml`-write time — the third on-disk-only
-adjustment alongside `expand: true` and the
-`X-Cooper-Build-Inputs-Hash` injection. **The `build_inputs_hash`
-is unchanged.** The revision is post-discover metadata, not a build
-input; including it would mean re-discovery never hits the dedup
-branch (infinite re-bumping).
+`cooper build --revision N` sets nfpm's `release: N` field on every
+artifact's on-disk `nfpm.yaml` — the third on-disk-only adjustment
+alongside `expand: true` and the `X-Cooper-Build-Inputs-Hash`
+injection. nfpm's deb packager concatenates `<version>-<release>`
+into the resulting Debian Version, so the published `.deb`'s version
+is `<bare>-N` and its filename is `<name>_<bare>-<N>_<arch>.deb`.
+**The `build_inputs_hash` is unchanged.** The revision is
+post-discover metadata, not a build input; including it would mean
+re-discovery never hits the dedup branch (infinite re-bumping).
 
-`build_plan.nfpm.version` in the JSON stays bare; the published
-`.deb`'s Debian version and filename are `<bare>-N`. `cooper
-discover` is revision-unaware (no `--revision` flag, never emits
-`-N`). `--revision N` errors if any `build_plan.nfpm.version` already
-contains `-` (a recipe that bakes its own debian-revision opts out
-of auto-bump). Re-fed annotated plans (those with `deb.path`
-populated) are rejected unconditionally — see *Build*.
+Cooper uses nfpm's dedicated `release:` field rather than rewriting
+`version:` because nfpm's default `version_schema: semver` interprets
+a `-N` suffix on `version:` as a semver prerelease and emits it as
+`~N` (Debian's tilde-prerelease) in the published `.deb`.
+
+`build_plan.nfpm.version` in the JSON stays bare; `cooper discover`
+is revision-unaware (no `--revision` flag, never emits `release:` or
+`-N`). `--revision N` errors when a recipe has already populated the
+debian-revision slot — either as `-` in `version:` (a baked-in
+revision under `version_schema: none`, or a semver prerelease that
+would conflict) or as a non-empty `release:` field in doc 2. Re-fed
+annotated plans (those with `deb.path` populated) are rejected
+unconditionally — see *Build*.
 
 ### Version monotonicity
 
@@ -440,8 +448,9 @@ for each artifact (across packages[*].artifacts[*]) with result: "ok":
            build_inputs_hash (already "sha256:<hex>" in the JSON), so
            orchestrators and repo managers can query the published
            .deb (see *Orchestrator dedup & version policy*).
-       (c) if --revision N is set: write the version field as
-           "<bare-version>-<N>" (the JSON stays bare).
+       (c) if --revision N is set: write release: "N" alongside the
+           bare version (the JSON stays bare; nfpm concatenates as
+           "<version>-<release>" at build time).
      None of these adjustments flow back into the JSON, so none of
      them perturb build_inputs_hash.
   5. exec `nfpm pkg --packager deb -f nfpm.yaml -t <out-dir>/` with:
@@ -698,17 +707,18 @@ default config path.
   to a subset.
 - **`build <JSON_FILE>`** — reads the JSON plan. `--out-dir` is where
   `.deb`s land (default `./dist/`). `--work-dir` is the staging root
-  (default `./.cooper-work/`). `--revision N` (positive integer)
-  appends `-N` to every artifact's version at on-disk
-  `nfpm.yaml`-write time; the `build_inputs_hash` is **not**
+  (default `./.cooper-work/`). `--revision N` (positive integer) sets
+  nfpm's `release: N` field at on-disk write time so the published
+  `.deb` is versioned `<bare>-N`; the `build_inputs_hash` is **not**
   recomputed (revision is post-discover metadata, not a build input —
-  see *Orchestrator dedup & version policy*). Errors out if any
-  artifact's `build_plan.nfpm.version` already contains `-`.
-  `--stage-only`: do everything *except* the final `nfpm pkg` exec;
-  print one line per artifact giving the path to the resolved
-  `nfpm.yaml`; leave the work dir intact. `--keep-work`: do a normal
-  build but skip cleanup. `--stage-only` and `--keep-work` are
-  mutually exclusive; `--revision` is compatible with either.
+  see *Orchestrator dedup & version policy*). Errors out when a
+  recipe already claims the debian-revision slot (either `-` in
+  `nfpm.version` or a non-empty `nfpm.release`). `--stage-only`: do
+  everything *except* the final `nfpm pkg` exec; print one line per
+  artifact giving the path to the resolved `nfpm.yaml`; leave the
+  work dir intact. `--keep-work`: do a normal build but skip cleanup.
+  `--stage-only` and `--keep-work` are mutually exclusive;
+  `--revision` is compatible with either.
 - **`validate <CONFIG>`** — lint without network. Checks: top-level
   config shape; every multi-doc file's two-document structure; doc 1
   schema; doc 2 well-formed YAML; in-scope path references resolve

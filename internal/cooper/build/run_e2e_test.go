@@ -89,7 +89,96 @@ func TestRun_RealNfpm(t *testing.T) {
 		if !strings.Contains(string(out), "Package: hugo") {
 			t.Errorf("control field missing Package: hugo:\n%s", out)
 		}
+		// Verify the X-Cooper-Build-Inputs-Hash control field is
+		// present and matches the plan's build_inputs_hash.
+		field, err := exec.Command("dpkg-deb", "-f", *art.Deb.Path, "X-Cooper-Build-Inputs-Hash").Output()
+		if err != nil {
+			t.Errorf("dpkg-deb -f X-Cooper-Build-Inputs-Hash failed: %v", err)
+		}
+		got := strings.TrimSpace(string(field))
+		want := art.Deb.BuildInputsHash
+		if got != want {
+			t.Errorf("X-Cooper-Build-Inputs-Hash mismatch:\n  in .deb:   %q\n  in plan:   %q", got, want)
+		}
 	}
 
 	_ = filepath.Walk
+}
+
+// TestRun_RealNfpm_Revision builds the same fixture twice — once bare,
+// once with --revision 1 — and asserts:
+//
+//   1. The revised .deb's filename is hugo_0.140.0-1_amd64.deb.
+//   2. dpkg-deb reports Version: 0.140.0-1 in the revised .deb.
+//   3. The X-Cooper-Build-Inputs-Hash control field is *identical* in
+//      both .debs — the load-bearing property of the revision-excluded
+//      hash design.
+//
+// Skipped automatically when nfpm or dpkg-deb is unavailable.
+func TestRun_RealNfpm_Revision(t *testing.T) {
+	if _, err := exec.LookPath("nfpm"); err != nil {
+		t.Skip("nfpm not on PATH; skipping live e2e")
+	}
+	if _, err := exec.LookPath("dpkg-deb"); err != nil {
+		t.Skip("dpkg-deb not on PATH; skipping field-level e2e")
+	}
+
+	asset := makeArchive(t, "fake hugo binary")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+
+	bareOut, bareWork := t.TempDir(), t.TempDir()
+	revOut, revWork := t.TempDir(), t.TempDir()
+
+	bareRes, err := Run(context.Background(), fixturePlan(t, srv, asset, sha256Of(t, asset)), Options{
+		OutDir: bareOut, WorkDir: bareWork,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revRes, err := Run(context.Background(), fixturePlan(t, srv, asset, sha256Of(t, asset)), Options{
+		OutDir: revOut, WorkDir: revWork, Revision: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bareArt := bareRes.Packages[0].Artifacts[0]
+	revArt := revRes.Packages[0].Artifacts[0]
+
+	if revArt.Deb.Filename != "hugo_0.140.0-1_amd64.deb" {
+		t.Errorf("revised filename: %q, want hugo_0.140.0-1_amd64.deb", revArt.Deb.Filename)
+	}
+	// dpkg-deb reports the in-package Debian Version.
+	out, err := exec.Command("dpkg-deb", "-f", *revArt.Deb.Path, "Version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "0.140.0-1" {
+		t.Errorf("dpkg-deb Version: %q, want 0.140.0-1", got)
+	}
+
+	// Load-bearing: the X-Cooper-Build-Inputs-Hash field is the SAME
+	// across both builds, because the hash is computed from the
+	// discover-time plan only and the revision is an on-disk-only
+	// adjustment.
+	bareField := dpkgDebField(t, *bareArt.Deb.Path, "X-Cooper-Build-Inputs-Hash")
+	revField := dpkgDebField(t, *revArt.Deb.Path, "X-Cooper-Build-Inputs-Hash")
+	if bareField != revField {
+		t.Errorf("X-Cooper-Build-Inputs-Hash drifted under --revision:\n  bare: %q\n  rev:  %q", bareField, revField)
+	}
+	if bareField != bareArt.Deb.BuildInputsHash {
+		t.Errorf("bare field %q != plan hash %q", bareField, bareArt.Deb.BuildInputsHash)
+	}
+}
+
+func dpkgDebField(t *testing.T, debPath, field string) string {
+	t.Helper()
+	out, err := exec.Command("dpkg-deb", "-f", debPath, field).Output()
+	if err != nil {
+		t.Fatalf("dpkg-deb -f %s %s: %v", field, debPath, err)
+	}
+	return strings.TrimSpace(string(out))
 }
