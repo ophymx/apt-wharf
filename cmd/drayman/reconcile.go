@@ -9,51 +9,45 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/aptly"
 	"github.com/ophymx/apt-signpost/internal/drayman/policy"
 	"github.com/ophymx/apt-signpost/pkg/plan"
 )
 
 // cmdReconcile is drayman's end-to-end flow: read a cooper discover
-// plan, query aptly for already-imported artifacts, group surviving
-// artifacts by chosen debian-revision, exec cooper build per group,
-// upload each resulting .deb into aptly, and trigger a publish
-// regeneration. Per-artifact failures are tolerated; the process exits
-// non-zero only when any artifact failed.
+// plan, query the target repo for already-imported artifacts, group
+// surviving artifacts by chosen debian-revision, exec cooper build
+// per group, import each resulting .deb into the backend, and
+// trigger a publish regeneration. Per-artifact failures are
+// tolerated; the process exits non-zero only when any artifact
+// failed.
 func cmdReconcile(args []string) error {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: drayman reconcile <PLAN_FILE> --aptly-url URL --repo NAME [flags]")
+		fmt.Fprintln(fs.Output(), "usage: drayman reconcile <PLAN_FILE> --backend <kind> [backend flags] [common flags]")
 		fs.PrintDefaults()
 	}
-	aptlyURL := fs.String("aptly-url", "", "base URL of aptly API (required)")
-	repo := fs.String("repo", "", "aptly local repository name (required)")
+	bf := registerBackendFlags(fs)
 	cooperBin := fs.String("cooper-bin", "cooper", "path to cooper binary")
 	outDir := fs.String("out-dir", "", "where cooper builds .debs (default: ephemeral; cleaned on exit)")
-	publishPrefix := fs.String("publish-prefix", ".", "aptly publish prefix")
-	publishDist := fs.String("publish-distribution", "", "aptly publish distribution (required unless --dry-run)")
-	skipSigning := fs.Bool("skip-signing", false, "set Signing.Skip on the publish update (for aptly servers without gpg keys)")
-	dryRun := fs.Bool("dry-run", false, "query and decide but don't build, upload, or publish")
+	dryRun := fs.Bool("dry-run", false, "query and decide but don't build, import, or publish")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *aptlyURL == "" || *repo == "" {
-		fs.Usage()
-		return errors.New("--aptly-url and --repo are required")
 	}
 	if fs.NArg() != 1 {
 		fs.Usage()
 		return errors.New("expected exactly one positional PLAN_FILE argument (use - for stdin)")
 	}
-	if !*dryRun && *publishDist == "" {
-		return errors.New("--publish-distribution is required (omit only with --dry-run)")
+	be, err := bf.resolveBackend()
+	if err != nil {
+		return err
+	}
+	if !*dryRun && bf.publishRequiresDistribution() && *bf.publishDist == "" {
+		return errors.New("--publish-distribution is required for --backend aptly (omit only with --dry-run)")
 	}
 
 	p, err := readPlanInput(fs.Arg(0))
@@ -62,9 +56,8 @@ func cmdReconcile(args []string) error {
 	}
 
 	ctx := context.Background()
-	client := aptly.New(*aptlyURL, &http.Client{Timeout: 5 * time.Minute})
 
-	decisions, err := policy.Decide(ctx, client, *repo, p)
+	decisions, err := policy.Decide(ctx, be, p)
 	if err != nil {
 		return err
 	}
@@ -107,8 +100,7 @@ func cmdReconcile(args []string) error {
 	// gets --revision N.
 	groups := groupByRevision(decisions)
 	var anyFailed bool
-	var anyUploaded bool
-	uploadedDir := "drayman-" + newRunID()
+	var anyImported bool
 
 	for _, rev := range sortedRevisions(groups) {
 		group := groups[rev]
@@ -120,32 +112,19 @@ func cmdReconcile(args []string) error {
 		built, failed := collectArtifacts(annotated)
 		anyFailed = anyFailed || failed
 		for _, a := range built {
-			if err := uploadArtifact(ctx, client, uploadedDir, a); err != nil {
-				return fmt.Errorf("upload %s: %w", a.path, err)
+			if err := be.Import(ctx, a.path); err != nil {
+				fmt.Fprintf(os.Stderr, "import failed: %s: %v\n", a.basename, err)
+				anyFailed = true
+				continue
 			}
-			anyUploaded = true
+			fmt.Printf("imported: %s\n", a.basename)
+			anyImported = true
 		}
 	}
 
-	if anyUploaded {
-		// One import call drains the staged directory into the repo.
-		// forceReplace=true so a re-run that produces the same
-		// filename overwrites cleanly rather than erroring; aptly's
-		// design supports same-package re-import.
-		rep, err := client.ImportFromDir(ctx, *repo, uploadedDir, true)
-		if err != nil {
-			return fmt.Errorf("import staged: %w", err)
-		}
-		for _, msg := range rep.Report.Added {
-			fmt.Printf("imported: %s\n", msg)
-		}
-		for _, f := range rep.FailedFiles {
-			fmt.Fprintf(os.Stderr, "import failed: %s\n", f)
-			anyFailed = true
-		}
-
-		if err := client.PublishUpdate(ctx, *publishPrefix, *publishDist, aptly.PublishUpdateOpts{SkipSigning: *skipSigning}); err != nil {
-			return fmt.Errorf("publish update: %w", err)
+	if anyImported {
+		if err := be.Publish(ctx); err != nil {
+			return fmt.Errorf("publish: %w", err)
 		}
 		fmt.Println("publish updated")
 	} else {
@@ -298,18 +277,6 @@ func collectArtifacts(annotated *plan.Plan) ([]builtArtifact, bool) {
 		}
 	}
 	return built, failed
-}
-
-// uploadArtifact stages a single .deb under uploadedDir on the aptly
-// server. The actual import-into-repo happens once after every upload,
-// not per artifact.
-func uploadArtifact(ctx context.Context, c *aptly.Client, uploadedDir string, a builtArtifact) error {
-	_, err := c.UploadFile(ctx, uploadedDir, a.path)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("uploaded: %s\n", a.basename)
-	return nil
 }
 
 // newRunID returns 8 hex chars, suitable for namespacing aptly upload

@@ -7,37 +7,35 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
-	"time"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/aptly"
 	"github.com/ophymx/apt-signpost/internal/drayman/policy"
 	"github.com/ophymx/apt-signpost/pkg/plan"
 )
 
 // cmdPeek implements `drayman peek <PLAN>` — a read-only dry-run that
-// queries aptly and prints the decision drayman would make per artifact,
-// without touching cooper or invoking any mutation. Useful for
-// inspecting policy choices before running the real reconcile.
+// queries the target repo and prints the decision drayman would make
+// per artifact, without touching cooper or invoking any mutation.
+// Backend selected by --backend (aptly | reprepro-local | reprepro-ssh).
 func cmdPeek(args []string) error {
 	fs := flag.NewFlagSet("peek", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: drayman peek <PLAN_FILE> --aptly-url URL --repo NAME")
+		fmt.Fprintln(fs.Output(), "usage: drayman peek <PLAN_FILE> --backend <kind> [backend flags]")
+		fs.PrintDefaults()
 	}
-	aptlyURL := fs.String("aptly-url", "", "base URL of aptly API (required)")
-	repo := fs.String("repo", "", "aptly local repository name (required)")
+	bf := registerBackendFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *aptlyURL == "" || *repo == "" {
-		fs.Usage()
-		return errors.New("--aptly-url and --repo are required")
 	}
 	if fs.NArg() != 1 {
 		fs.Usage()
 		return errors.New("expected exactly one positional PLAN_FILE argument (use - for stdin)")
+	}
+
+	be, err := bf.resolveBackend()
+	if err != nil {
+		return err
 	}
 
 	p, err := readPlanInput(fs.Arg(0))
@@ -45,12 +43,10 @@ func cmdPeek(args []string) error {
 		return fmt.Errorf("read plan: %w", err)
 	}
 
-	client := aptly.New(*aptlyURL, &http.Client{Timeout: 30 * time.Second})
-	decisions, err := policy.Decide(context.Background(), client, *repo, p)
+	decisions, err := policy.Decide(context.Background(), be, p)
 	if err != nil {
 		return err
 	}
-
 	for _, d := range decisions {
 		fmt.Printf("%s\t%s\t%s\t%s\n", d.PackageName, d.Arch, d.Action, d.Reason)
 	}

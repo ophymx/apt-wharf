@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/aptly"
+	"github.com/ophymx/apt-signpost/internal/drayman/backend"
 	"github.com/ophymx/apt-signpost/pkg/plan"
 )
 
@@ -52,25 +52,18 @@ type Decision struct {
 	Reason      string // human-readable rationale, shown in `drayman peek` output
 }
 
-// Querier is the subset of the aptly client that policy needs. Defined
-// here (rather than importing aptly.Client) so tests can stub it out
-// without spinning up an httptest server for every case.
-type Querier interface {
-	HashExists(ctx context.Context, repo, hash string) (bool, error)
-	ListByNameArch(ctx context.Context, repo, name, arch string) ([]aptly.Package, error)
-}
-
 // Decide walks every artifact in p with Result=="ok" and returns a
-// Decision per artifact. Errors short-circuit and surface the
-// (Package, Architecture) that failed.
-func Decide(ctx context.Context, q Querier, repo string, p *plan.Plan) ([]Decision, error) {
+// Decision per artifact. q is bound to a single target repo by
+// construction (see backend.Backend); policy doesn't pass repo
+// identity through method calls.
+func Decide(ctx context.Context, q backend.Querier, p *plan.Plan) ([]Decision, error) {
 	var out []Decision
 	for _, pkg := range p.Packages {
 		if pkg.Result != plan.ResultOK {
 			continue
 		}
 		for _, art := range pkg.Artifacts {
-			d, err := decideOne(ctx, q, repo, pkg, art)
+			d, err := decideOne(ctx, q, pkg, art)
 			if err != nil {
 				return nil, err
 			}
@@ -80,11 +73,11 @@ func Decide(ctx context.Context, q Querier, repo string, p *plan.Plan) ([]Decisi
 	return out, nil
 }
 
-func decideOne(ctx context.Context, q Querier, repo string, pkg plan.Package, art plan.Artifact) (Decision, error) {
+func decideOne(ctx context.Context, q backend.Querier, pkg plan.Package, art plan.Artifact) (Decision, error) {
 	d := Decision{PackageName: pkg.Name, Arch: art.Arch}
 
 	// Step 1: primary dedup by hash.
-	exists, err := q.HashExists(ctx, repo, art.Deb.BuildInputsHash)
+	exists, err := q.HashExists(ctx, art.Deb.BuildInputsHash)
 	if err != nil {
 		return d, fmt.Errorf("%s %s: query hash: %w", pkg.Name, art.Arch, err)
 	}
@@ -99,7 +92,7 @@ func decideOne(ctx context.Context, q Querier, repo string, pkg plan.Package, ar
 	if err != nil {
 		return d, fmt.Errorf("%s %s: parse plan version: %w", pkg.Name, art.Arch, err)
 	}
-	existing, err := q.ListByNameArch(ctx, repo, pkg.Name, art.Arch)
+	existing, err := q.ListByNameArch(ctx, pkg.Name, art.Arch)
 	if err != nil {
 		return d, fmt.Errorf("%s %s: list by name/arch: %w", pkg.Name, art.Arch, err)
 	}

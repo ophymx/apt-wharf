@@ -4,29 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/aptly"
+	"github.com/ophymx/apt-signpost/internal/drayman/backend"
 	"github.com/ophymx/apt-signpost/pkg/plan"
 )
 
-// stubQuerier implements policy.Querier with canned responses keyed by
-// (repo, query-shape).
+// stubQuerier implements backend.Querier with canned responses keyed
+// by query shape.
 type stubQuerier struct {
-	hashesPresent  map[string]bool                 // sha256:<hex> → true
-	listByNameArch map[string][]aptly.Package      // "<name>|<arch>" → packages
+	hashesPresent  map[string]bool              // sha256:<hex> → true
+	listByNameArch map[string][]backend.Package // "<name>|<arch>" → packages
 	hashErr        error
 	listErr        error
 }
 
-func (s *stubQuerier) HashExists(_ context.Context, _, hash string) (bool, error) {
+func (s *stubQuerier) HashExists(_ context.Context, hash string) (bool, error) {
 	if s.hashErr != nil {
 		return false, s.hashErr
 	}
 	return s.hashesPresent[hash], nil
 }
 
-func (s *stubQuerier) ListByNameArch(_ context.Context, _, name, arch string) ([]aptly.Package, error) {
+func (s *stubQuerier) ListByNameArch(_ context.Context, name, arch string) ([]backend.Package, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -56,12 +57,14 @@ func fixturePlan(name, arch, bareVersion, hash string) *plan.Plan {
 	}
 }
 
+func mkPkg(name, version, arch string) backend.Package {
+	return backend.Package{Name: name, Version: version, Architecture: arch}
+}
+
 func TestDecide_HashAlreadyInRepo_Skip(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:abc")
-	q := &stubQuerier{
-		hashesPresent: map[string]bool{"sha256:abc": true},
-	}
-	got, err := Decide(context.Background(), q, "repo", p)
+	q := &stubQuerier{hashesPresent: map[string]bool{"sha256:abc": true}}
+	got, err := Decide(context.Background(), q, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +81,8 @@ func TestDecide_HashAlreadyInRepo_Skip(t *testing.T) {
 
 func TestDecide_FirstBuild_BareVersion(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
-	q := &stubQuerier{
-		hashesPresent: map[string]bool{},
-		// No existing entries for hugo amd64.
-	}
-	got, err := Decide(context.Background(), q, "repo", p)
+	q := &stubQuerier{}
+	got, err := Decide(context.Background(), q, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,13 +94,11 @@ func TestDecide_FirstBuild_BareVersion(t *testing.T) {
 func TestDecide_BareExists_BumpsToRev1(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
 	q := &stubQuerier{
-		listByNameArch: map[string][]aptly.Package{
-			"hugo|amd64": {
-				{Package: "hugo", Version: "0.140.0", Architecture: "amd64", Key: "k"},
-			},
+		listByNameArch: map[string][]backend.Package{
+			"hugo|amd64": {mkPkg("hugo", "0.140.0", "amd64")},
 		},
 	}
-	got, err := Decide(context.Background(), q, "repo", p)
+	got, err := Decide(context.Background(), q, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,16 +110,16 @@ func TestDecide_BareExists_BumpsToRev1(t *testing.T) {
 func TestDecide_ExistingRevisions_FindsMaxAndBumps(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
 	q := &stubQuerier{
-		listByNameArch: map[string][]aptly.Package{
+		listByNameArch: map[string][]backend.Package{
 			"hugo|amd64": {
-				{Package: "hugo", Version: "0.140.0", Architecture: "amd64", Key: "k0"},
-				{Package: "hugo", Version: "0.140.0-1", Architecture: "amd64", Key: "k1"},
-				{Package: "hugo", Version: "0.140.0-3", Architecture: "amd64", Key: "k3"},
-				{Package: "hugo", Version: "0.140.0-10", Architecture: "amd64", Key: "k10"},
+				mkPkg("hugo", "0.140.0", "amd64"),
+				mkPkg("hugo", "0.140.0-1", "amd64"),
+				mkPkg("hugo", "0.140.0-3", "amd64"),
+				mkPkg("hugo", "0.140.0-10", "amd64"),
 			},
 		},
 	}
-	got, err := Decide(context.Background(), q, "repo", p)
+	got, err := Decide(context.Background(), q, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,20 +131,17 @@ func TestDecide_ExistingRevisions_FindsMaxAndBumps(t *testing.T) {
 func TestDecide_DifferentBaseVersionIgnored(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
 	q := &stubQuerier{
-		listByNameArch: map[string][]aptly.Package{
+		listByNameArch: map[string][]backend.Package{
 			"hugo|amd64": {
-				// Existing entries for a DIFFERENT base version — must not
-				// poison the max-revision computation for 0.140.0.
-				{Package: "hugo", Version: "0.139.0-5", Architecture: "amd64", Key: "k1"},
-				{Package: "hugo", Version: "0.139.0-7", Architecture: "amd64", Key: "k2"},
+				mkPkg("hugo", "0.139.0-5", "amd64"),
+				mkPkg("hugo", "0.139.0-7", "amd64"),
 			},
 		},
 	}
-	got, err := Decide(context.Background(), q, "repo", p)
+	got, err := Decide(context.Background(), q, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No matching base-V → publish at bare.
 	if got[0].Action != ActionBuild || got[0].Revision != 0 {
 		t.Errorf("decision: %+v, want build/0 (different base-V should not contribute)", got[0])
 	}
@@ -155,20 +150,16 @@ func TestDecide_DifferentBaseVersionIgnored(t *testing.T) {
 func TestDecide_NonIntegerRevisionsExcludedFromMax(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:new")
 	q := &stubQuerier{
-		listByNameArch: map[string][]aptly.Package{
+		listByNameArch: map[string][]backend.Package{
 			"hugo|amd64": {
-				// Recipe-baked oddity that cooper-only orchestrators
-				// wouldn't produce. Drayman should not crash and should
-				// not include this in max-int-revision computation.
-				{Package: "hugo", Version: "0.140.0-1+nmu1", Architecture: "amd64", Key: "k1"},
+				mkPkg("hugo", "0.140.0-1+nmu1", "amd64"),
 			},
 		},
 	}
-	got, err := Decide(context.Background(), q, "repo", p)
+	got, err := Decide(context.Background(), q, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// "1+nmu1" doesn't parse as int → maxRev stays -1 → publish bare.
 	if got[0].Revision != 0 {
 		t.Errorf("revision: %d, want 0 (non-integer rev ignored)", got[0].Revision)
 	}
@@ -177,17 +168,14 @@ func TestDecide_NonIntegerRevisionsExcludedFromMax(t *testing.T) {
 func TestDecide_EpochInBaseVersion(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "1:0.140.0", "sha256:new")
 	q := &stubQuerier{
-		listByNameArch: map[string][]aptly.Package{
+		listByNameArch: map[string][]backend.Package{
 			"hugo|amd64": {
-				// Different epoch — must not contribute (different
-				// version line per Debian).
-				{Package: "hugo", Version: "0.140.0-5", Architecture: "amd64", Key: "k1"},
-				// Same epoch + base-V → contributes.
-				{Package: "hugo", Version: "1:0.140.0-2", Architecture: "amd64", Key: "k2"},
+				mkPkg("hugo", "0.140.0-5", "amd64"),    // different epoch — ignored
+				mkPkg("hugo", "1:0.140.0-2", "amd64"),  // same epoch — contributes
 			},
 		},
 	}
-	got, err := Decide(context.Background(), q, "repo", p)
+	got, err := Decide(context.Background(), q, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +201,7 @@ func TestDecide_SkipsArtifactsInErrorPackages(t *testing.T) {
 			},
 		},
 	}
-	got, err := Decide(context.Background(), &stubQuerier{}, "repo", p)
+	got, err := Decide(context.Background(), &stubQuerier{}, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,27 +213,11 @@ func TestDecide_SkipsArtifactsInErrorPackages(t *testing.T) {
 	}
 }
 
-func TestDecide_AptlyErrorBubblesUp(t *testing.T) {
+func TestDecide_BackendErrorBubblesUp(t *testing.T) {
 	p := fixturePlan("hugo", "amd64", "0.140.0", "sha256:abc")
-	q := &stubQuerier{hashErr: errors.New("aptly down")}
-	_, err := Decide(context.Background(), q, "repo", p)
-	if err == nil || !errorsContains(err, "aptly down") {
-		t.Errorf("expected aptly-down error, got %v", err)
+	q := &stubQuerier{hashErr: errors.New("backend down")}
+	_, err := Decide(context.Background(), q, p)
+	if err == nil || !strings.Contains(err.Error(), "backend down") {
+		t.Errorf("expected backend-down error, got %v", err)
 	}
-}
-
-func errorsContains(err error, want string) bool {
-	if err == nil {
-		return false
-	}
-	return contains(err.Error(), want)
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
