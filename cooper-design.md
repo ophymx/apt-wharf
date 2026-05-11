@@ -194,6 +194,13 @@ Two YAML documents in one file, separated by `---`. Doc 1 is cooper;
 doc 2 is vanilla nfpm. Strict ordering — no `kind:` discriminator,
 since putting one in doc 2 would break the "vanilla nfpm" property.
 
+> *Forward-compat note.* The two-doc shape is the v0 form; the
+> deferred multi-asset / multi-package feature (see *Deferred*)
+> extends to N documents — doc 1 still answers "how to find assets,"
+> docs 2..N each describe one produced `.deb` from the same source
+> resolution. v0 recipes (exactly two docs) remain valid under that
+> extension; the N>2 case is a strict superset.
+
 ```yaml
 # packages/hugo.yaml
 
@@ -945,19 +952,66 @@ valid `plan.Plan` JSON document from any program and pipe it into
   (innerText / attribute / regex). Recipe authors accept the
   inherent brittleness — vendor markup churn breaks selectors more
   often than vendor JSON breaks gjson paths.
-- **Multi-asset per source** — one source's single resolution
-  (release lookup, JSON fetch, XML fetch, …) contributing several
-  files to one `.deb`. Recipe shape: `arches[].assets:` (list) /
-  `arches[].asset_urls:` (list), syntactic sugar `arches[].asset` /
-  `arches[].asset_url` for the singleton case. Cross-source bundling
-  is **expressly out of scope** — different releases or different
-  repositories are different packages by definition; reproducibility
-  and dedup semantics rely on each `.deb` having exactly one
-  upstream provenance. Implementation: `plan.Artifact.Asset`
-  becomes `Assets []Asset`; `MatchAsset`/`RenderAssetURL` get
-  plural counterparts; `build_inputs_hash` includes every asset's
-  SHA256.
+- **Multi-asset + multi-package per source** — one source resolution
+  contributing multiple files, which may fan out into multiple
+  separate `.deb`s. The recipe shape extends today's two-document
+  format to N documents:
+
+  ```
+  doc 1     cooper sidecar (source, version_from, arches[].assets)
+  doc 2..N  one vanilla-nfpm document per produced .deb
+  ```
+
+  Doc 1 still answers "how do I find assets"; each subsequent doc
+  answers "what .deb do I package, from which assets." Each
+  produced `.deb` is its own `plan.Package` entry with its own
+  `build_inputs_hash`, so drayman's dedup + revision auto-bump
+  work per-output independently.
+
+  Common motivating cases:
+    - One GitHub release publishing many per-arch binaries (cfssl,
+      kubectl-kustomize, etc.) → ship as separate `.deb`s rather
+      than one bundle, or as both.
+    - Upstream tarballs that produce a `foo` runtime + a `foo-dev`
+      headers package from the same source bytes.
+
+  Per-arch asset lists also collapse the singleton/plural choice:
+  `arches[].assets:` (list) / `arches[].asset_urls:` (list), with
+  the existing `asset:` / `asset_url:` (singular) staying as
+  syntactic sugar for one-element lists.
+
+  Cross-source bundling stays **expressly out of scope** —
+  different releases or different repositories are different
+  packages by definition. The multi-doc shape only multiplexes
+  outputs of *one* source resolution, preserving each `.deb`'s
+  single-upstream-provenance invariant.
+
+  Implementation impact: `plan.Artifact.Asset` becomes `Assets
+  []Asset`; `MatchAsset` / `RenderAssetURL` get plural
+  counterparts; `build_inputs_hash` includes every asset's SHA256;
+  cooper-discover emits N `plan.Package` entries per recipe file
+  (each pointing at a subset of the staged asset set).
+- **Upstream-supplied SHA256 sidecars (`sha256_asset` / `sha256_path`)** — many
+  vendors publish a per-asset SHA256 alongside the binary, either
+  as a sidecar file (`foo.tar.gz` + `foo.tar.gz.sha256`) or as a
+  field in their JSON feed. Cooper today only carries SHA256 in
+  the plan when the github_release `digest` API field provides it;
+  json_url ignores any embedded hash; sidecar files aren't
+  fetched. Two related extensions:
+    - `arches[].sha256_asset:` for github_release recipes —
+      naming the sidecar asset; cooper fetches its body and
+      treats the (newline-trimmed, first whitespace-delimited
+      token) value as the expected SHA256.
+    - `source.json_url.sha256_path:` and analogous on `xml_url` —
+      a structured path into the same response body that yielded
+      the version; the resolved string is the asset's SHA256.
+
+  Hash flows into `plan.Asset.SHA256` so drayman's dedup-by-hash
+  query works on first contact instead of waiting for cooper to
+  stream-hash on first build. Modest supply-chain win (still TOFU
+  on the URL itself, but at least we've pinned what bytes that URL
+  is supposed to deliver). Pairs naturally with a future GPG /
+  sigstore verification step.
 - **Glob in `cooper.yaml`'s `packages:`** — ergonomics; explicit list is fine for v0.
 - **`--prefetch-hashes` for missing `asset.sha256`** — current contract (build streams + hashes; orchestrator re-imports unconditionally) loses dedup for that artifact. Wait for a real package that surfaces it.
-- **`sha256_path` knob on `json_url`** — go.dev's feed publishes per-file SHA256 alongside the URL; cooper currently ignores it. Wiring the upstream-supplied hash into `plan.Asset.SHA256` lets the orchestrator's hash-dedup query work on first contact instead of waiting for cooper to stream-hash on first build.
 - **`version_template` under json_url** — for vendors whose extracted version needs post-processing beyond `version_strip_prefix` (e.g. regex-based extraction, composing multiple gjson fields into one version). Out of scope for v0; users can re-tag in their JSON or use an external producer.
