@@ -51,6 +51,9 @@ a bug to resolve (either by changing the code or updating the doc).
 go build -o signpost ./cmd/signpost
 go build -o cooper   ./cmd/cooper
 
+# Local snapshot of all release artifacts (.debs + tarballs + checksums into dist/):
+goreleaser release --snapshot --clean
+
 # Default test run — skips integration-tagged and nfpm-binary-required tests:
 go test ./...
 
@@ -175,13 +178,14 @@ example external producer.
 - `tmp/` is gitignored scratch space — used during recent work to clone
   an old hand-rolled `pkg-builds` codebase for reference. Don't commit
   contents of `tmp/`.
-- `dist/` is gitignored; produced by nfpm packaging.
+- `dist/` is gitignored; produced by `goreleaser release --snapshot --clean`.
 - Both binary names (`/signpost`, `/cooper`) are gitignored at the repo
   root so `go build -o <name>` doesn't pollute the index.
-- `packaging/signpost.nfpm.yaml` and `packaging/cooper.nfpm.yaml` package
-  the two binaries into separate `.deb`s for self-hosting. These are
-  unrelated to cooper's own use of nfpm as a build step. Both configs
-  assume nfpm is invoked from the repo root.
+- `.goreleaser.yaml` at the repo root drives binary builds, tarballs, and
+  `.deb` packaging for both tools across linux/amd64, arm64, armhf, and
+  riscv64. GitHub release publishing is disabled — the config is
+  local-build-only. The nfpm-based `.deb` production here is unrelated to
+  cooper's own runtime use of nfpm as a build step.
 - `examples/` is cooper-only — five copy-paste-ready package
   configurations referenced by the design and validated by the
   regression test. See `examples/README.md` for the per-example

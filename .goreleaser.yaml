@@ -1,0 +1,135 @@
+# Goreleaser config for the apt-signpost / apt-cooper binaries.
+#
+# Local snapshot build (no tag required):
+#   goreleaser release --snapshot --clean
+#
+# Output lands in dist/. GitHub release publishing is disabled below; this
+# config is only the local build pipeline.
+#
+# cmd/discover-zoom is intentionally not built here — it's example code for
+# signpost's external-producer contract, not a shipped binary.
+
+version: 2
+
+project_name: apt-signpost
+
+builds:
+  - id: signpost
+    binary: signpost
+    main: ./cmd/signpost
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64, arm, riscv64]
+    goarm: ["7"]
+
+  - id: cooper
+    binary: cooper
+    main: ./cmd/cooper
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64, arm, riscv64]
+    goarm: ["7"]
+
+archives:
+  - id: signpost
+    ids: [signpost]
+    name_template: "apt-signpost_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+
+  - id: cooper
+    ids: [cooper]
+    name_template: "apt-cooper_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+
+nfpms:
+  - id: signpost
+    package_name: apt-signpost
+    ids: [signpost]
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Ophymx
+    homepage: https://github.com/ophymx/apt-signpost
+    maintainer: Ophymx <ops@ophymx.com>
+    description: |
+      Stitch external .deb downloads into a signed apt repository.
+      apt-signpost hosts and signs the apt metadata (InRelease, Release,
+      Packages*) and HTTP-redirects .deb fetches to upstream URLs, so it
+      never re-hosts vendor binaries. Discovery sources include direct URLs,
+      GitHub releases, and external commands.
+    section: net
+    priority: optional
+    formats: [deb]
+    mtime: "{{ .CommitDate }}"
+    contents:
+      - src: ./packaging/systemd/signpost.service
+        dst: /lib/systemd/system/signpost.service
+        file_info:
+          mode: 0644
+
+      - src: ./config.example.yaml
+        dst: /etc/signpost/config.yaml
+        type: config|noreplace
+        file_info:
+          mode: 0640
+
+      # Ownership of the dirs and conffile is set by postinstall once the
+      # signpost user/group exist. dpkg extracts by numeric uid/gid from
+      # tar headers (always 0/0 here), so naming the owner in file_info
+      # would be a silent no-op.
+      - dst: /var/lib/signpost
+        type: dir
+        file_info:
+          mode: 0750
+
+      - dst: /etc/signpost
+        type: dir
+        file_info:
+          mode: 0750
+    scripts:
+      postinstall: ./packaging/scripts/postinstall.sh
+      preremove: ./packaging/scripts/preremove.sh
+      postremove: ./packaging/scripts/postremove.sh
+    deb:
+      fields:
+        Bugs: https://github.com/ophymx/apt-signpost/issues
+
+  - id: cooper
+    package_name: apt-cooper
+    ids: [cooper]
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Ophymx
+    homepage: https://github.com/ophymx/apt-signpost
+    maintainer: Ophymx <ops@ophymx.com>
+    # Runtime dependency: cooper execs `nfpm` from PATH during `cooper build`.
+    # nfpm is not in Debian's apt archive, so it is not declared as Depends
+    # here; install it separately (e.g. from goreleaser's nfpm .deb release).
+    description: |
+      Turn GitHub release binaries into reproducible .deb files.
+      apt-cooper is a two-phase CLI (discover -> plan.json -> build) that
+      resolves a YAML recipe against a GitHub release, then exec's nfpm to
+      produce a byte-identical .deb for the same inputs. Pairs with
+      any apt-repo manager (aptly, reprepro, ...).
+    section: devel
+    priority: optional
+    formats: [deb]
+    mtime: "{{ .CommitDate }}"
+    deb:
+      fields:
+        Bugs: https://github.com/ophymx/apt-signpost/issues
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  disable: true
+
+release:
+  disable: true
