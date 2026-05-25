@@ -14,9 +14,23 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// IsFlatRepo reports whether a sources stanza targets a deb822 flat
+// ("trivial") repository — distinguished by any suite ending in "/".
+// Flat repos point the URI directly at where Packages.gz lives; deb822
+// requires Components to be omitted in this case.
+func IsFlatRepo(suites []string) bool {
+	for _, s := range suites {
+		if strings.HasSuffix(s, "/") {
+			return true
+		}
+	}
+	return false
+}
 
 // Config is the parsed top-level chandler YAML, post-validation.
 type Config struct {
@@ -266,8 +280,12 @@ func normalize(doc *rawConfig, c *Config) error {
 		if len(s.Suites) == 0 {
 			return fmt.Errorf("sources[%d] (%s): suites is required", i, s.ID)
 		}
-		if len(s.Components) == 0 {
-			return fmt.Errorf("sources[%d] (%s): components is required", i, s.ID)
+		flat := IsFlatRepo([]string(s.Suites))
+		switch {
+		case flat && len(s.Components) > 0:
+			return fmt.Errorf("sources[%d] (%s): components must be absent when suites contains a flat-repo path (ends in '/')", i, s.ID)
+		case !flat && len(s.Components) == 0:
+			return fmt.Errorf("sources[%d] (%s): components is required (omit only when suites ends in '/' — flat repo)", i, s.ID)
 		}
 		if s.Key == "" {
 			return fmt.Errorf("sources[%d] (%s): key is required", i, s.ID)

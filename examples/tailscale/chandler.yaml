@@ -1,0 +1,37 @@
+# Tailscale — per-codename key URL, matrix across debian + ubuntu.
+#
+# Replaces the official install instructions from tailscale.com/kb/1187:
+#
+#   curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+#       | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg
+#   curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
+#       | sudo tee /etc/apt/sources.list.d/tailscale.list
+#
+# Both the key URL and the repo URI vary per distro/codename — Tailscale
+# signs each per-codename repo with its own key, so every matrix .deb
+# carries a different keyring. Demonstrates {{.Distro}} + {{.Codename}}
+# templated into both the keys: URL and the sources: URIs.
+
+package:
+  name: "tailscale-archive-keyring-{{.Codename}}"
+  version: "1.0"
+  description: APT sources and signing key for Tailscale's stable channel.
+  maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+  homepage: https://tailscale.com/kb/1187/install-linux-debian
+
+targets:
+  - { distro: debian, codename: bookworm }
+  - { distro: debian, codename: trixie }
+  - { distro: ubuntu, codename: jammy }
+  - { distro: ubuntu, codename: noble }
+
+keys:
+  tailscale-archive-keyring:
+    url: "https://pkgs.tailscale.com/stable/{{.Distro}}/{{.Codename}}.noarmor.gpg"
+
+sources:
+  - id: tailscale
+    uris: "https://pkgs.tailscale.com/stable/{{.Distro}}"
+    suites: "{{.Codename}}"
+    components: main
+    key: tailscale-archive-keyring

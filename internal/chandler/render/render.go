@@ -31,6 +31,10 @@ type SourceStanza struct {
 // Enabled: yes is always emitted first so operators see the toggle
 // at the top of the file; the bare deb822 format has no comment
 // header (see chandler-design.md "deb822 stanza rendering").
+//
+// Components: is emitted only when non-empty. Flat ("trivial")
+// repositories — suites ending in "/" — omit Components per deb822;
+// config validation enforces the suites/components pairing.
 func Stanza(s SourceStanza) (string, error) {
 	if len(s.Types) == 0 {
 		return "", fmt.Errorf("render: Types is required")
@@ -41,9 +45,6 @@ func Stanza(s SourceStanza) (string, error) {
 	if len(s.Suites) == 0 {
 		return "", fmt.Errorf("render: Suites is required")
 	}
-	if len(s.Components) == 0 {
-		return "", fmt.Errorf("render: Components is required")
-	}
 	if s.SignedBy == "" {
 		return "", fmt.Errorf("render: SignedBy is required")
 	}
@@ -52,7 +53,9 @@ func Stanza(s SourceStanza) (string, error) {
 	fmt.Fprintf(&b, "Types: %s\n", strings.Join(s.Types, " "))
 	fmt.Fprintf(&b, "URIs: %s\n", strings.Join(s.URIs, " "))
 	fmt.Fprintf(&b, "Suites: %s\n", strings.Join(s.Suites, " "))
-	fmt.Fprintf(&b, "Components: %s\n", strings.Join(s.Components, " "))
+	if len(s.Components) > 0 {
+		fmt.Fprintf(&b, "Components: %s\n", strings.Join(s.Components, " "))
+	}
 	if len(s.Architectures) > 0 {
 		fmt.Fprintf(&b, "Architectures: %s\n", strings.Join(s.Architectures, " "))
 	}

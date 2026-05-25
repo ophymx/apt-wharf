@@ -1,0 +1,38 @@
+# Docker CE — simple-mode chandler config (no matrix).
+#
+# Replaces the official install instructions from docs.docker.com:
+#
+#   sudo install -m 0755 -d /etc/apt/keyrings
+#   sudo curl -fsSL https://download.docker.com/linux/debian/gpg \
+#       -o /etc/apt/keyrings/docker.asc
+#   echo "deb [arch=$(dpkg --print-architecture) \
+#         signed-by=/etc/apt/keyrings/docker.asc] \
+#         https://download.docker.com/linux/debian \
+#         $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+#       | sudo tee /etc/apt/sources.list.d/docker.list
+#
+# Two divergences from the upstream instructions, both consistent with
+# chandler's model:
+#   - Key lives at /usr/share/keyrings/docker.gpg (chandler default),
+#     not /etc/apt/keyrings/docker.asc.
+#   - Codename is baked into the package — install the version that
+#     matches your OS instead of relying on $(lsb_release -cs).
+
+package:
+  name: docker-ce-archive-keyring
+  version: "1.0"
+  description: APT sources and signing key for Docker CE on Debian bookworm.
+  maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+  homepage: https://docs.docker.com/engine/install/debian/
+
+keys:
+  docker:
+    url: https://download.docker.com/linux/debian/gpg
+
+sources:
+  - id: docker
+    uris: https://download.docker.com/linux/debian
+    suites: bookworm
+    components: stable
+    architectures: [amd64, arm64]
+    key: docker

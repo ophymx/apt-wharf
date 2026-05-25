@@ -1,0 +1,43 @@
+# PostgreSQL — matrix mode with two sources (pgdg + pgdg-testing).
+#
+# Replaces the official install instructions from wiki.postgresql.org/Apt:
+#
+#   sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail \
+#       https://www.postgresql.org/media/keys/ACCC4CF8.asc
+#   echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+#         https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+#       | sudo tee /etc/apt/sources.list.d/pgdg.list
+#
+# Two sources share one key — the design's canonical "multi-source,
+# matrix" example. pgdg-testing is included so users on a given codename
+# can opt into the testing repo just by editing Enabled: no → yes.
+
+package:
+  name: "postgresql-archive-keyring-{{.Codename}}"
+  version: "1.0"
+  description: APT sources and signing key for the PostgreSQL apt repository (pgdg).
+  maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+  homepage: https://wiki.postgresql.org/wiki/Apt
+
+targets:
+  - { distro: debian, codename: bookworm }
+  - { distro: debian, codename: trixie }
+  - { distro: ubuntu, codename: jammy }
+  - { distro: ubuntu, codename: noble }
+
+keys:
+  pgdg:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+
+sources:
+  - id: pgdg
+    uris: https://apt.postgresql.org/pub/repos/apt
+    suites: "{{.Codename}}-pgdg"
+    components: main
+    key: pgdg
+
+  - id: pgdg-testing
+    uris: https://apt.postgresql.org/pub/repos/apt
+    suites: "{{.Codename}}-pgdg-testing"
+    components: main
+    key: pgdg

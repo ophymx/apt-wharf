@@ -1,0 +1,39 @@
+# HashiCorp — matrix across debian + ubuntu codenames, single source.
+#
+# Replaces the official install instructions from apt.releases.hashicorp.com:
+#
+#   wget -O- https://apt.releases.hashicorp.com/gpg \
+#       | gpg --dearmor \
+#       | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+#   echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+#         https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+#       | sudo tee /etc/apt/sources.list.d/hashicorp.list
+#
+# Slug picked to match the official keyring path
+# (/usr/share/keyrings/hashicorp-archive-keyring.gpg) exactly. Matrix
+# fans out one .deb per supported codename, each with the suite
+# hardcoded — install the version matching your OS.
+
+package:
+  name: "hashicorp-archive-keyring-{{.Codename}}"
+  version: "1.1"
+  description: APT sources and signing key for HashiCorp tools.
+  maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+  homepage: https://www.hashicorp.com/official-packaging-guide
+
+targets:
+  - { distro: debian, codename: bookworm }
+  - { distro: debian, codename: trixie }
+  - { distro: ubuntu, codename: jammy }
+  - { distro: ubuntu, codename: noble }
+
+keys:
+  hashicorp-archive-keyring:
+    url: https://apt.releases.hashicorp.com/gpg
+
+sources:
+  - id: hashicorp
+    uris: https://apt.releases.hashicorp.com
+    suites: "{{.Codename}}"
+    components: main
+    key: hashicorp-archive-keyring

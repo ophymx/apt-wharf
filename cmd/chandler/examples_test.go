@@ -10,7 +10,7 @@ import (
 // regression nets — schema drift trips at test time. Skips when no
 // chandler examples exist yet.
 func TestExamplesValidateClean(t *testing.T) {
-	matches, err := filepath.Glob("../../examples/chandler/*/chandler.yaml")
+	matches, err := filepath.Glob("../../examples/*/chandler.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,43 @@
+# Nvidia CUDA — flat ("trivial") repository, per-arch URIs.
+#
+# The Nvidia CUDA repo breaks three vendor conventions chandler's
+# typical example assumes:
+#
+#  1. Flat repo. Suites is "/" and Components is omitted — the URI
+#     itself points at where Packages.gz lives. Per the deb822 spec.
+#  2. Vendor-specific codename label. Nvidia labels their repos
+#     "debianN" (debian12, debian13) rather than the actual codename;
+#     this YAML hardcodes debian12 (== bookworm). One YAML per
+#     supported Nvidia codename.
+#  3. Per-arch URIs and per-arch keys. amd64 → x86_64, arm64 → sbsa
+#     in the path. chandler doesn't template across arches, so each
+#     arch becomes its own source[] entry with its own key.
+#
+# Replaces the curl|tee install snippet from
+# developer.download.nvidia.com/compute/cuda/repos/<distro>/<arch>/.
+
+package:
+  name: nvidia-cuda-archive-keyring
+  version: "1.0.0"
+  description: APT sources and signing keys for the Nvidia CUDA repository on Debian 12 (bookworm).
+  maintainer: "Jeffrey T. Peckham <abic@ophymx.com>"
+  homepage: https://developer.nvidia.com/cuda-downloads
+
+keys:
+  nvidia-cuda-amd64:
+    url: https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/3bf863cc.pub
+  nvidia-cuda-arm64:
+    url: https://developer.download.nvidia.com/compute/cuda/repos/debian12/sbsa/3bf863cc.pub
+
+sources:
+  - id: nvidia-cuda-amd64
+    uris: https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/
+    suites: "/"
+    architectures: [amd64]
+    key: nvidia-cuda-amd64
+
+  - id: nvidia-cuda-arm64
+    uris: https://developer.download.nvidia.com/compute/cuda/repos/debian12/sbsa/
+    suites: "/"
+    architectures: [arm64]
+    key: nvidia-cuda-arm64

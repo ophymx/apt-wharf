@@ -585,20 +585,15 @@ when nfpm isn't on PATH (same gate as cooper's e2e check).
 
 ## Examples directory
 
-`examples/chandler/` carries copy-paste-ready YAML configs that
-double as the validator's regression corpus. Initial set:
+`examples/<vendor>/chandler.yaml` files double as copy-paste templates
+and as the validator's regression corpus. Same flat layout cooper and
+staves use (`examples/<name>/cooper.yaml`, `examples/<name>/staves.yaml`)
+— each tool's `examples_test.go` globs for its own filename, so the
+three example sets coexist without colliding.
 
-- `examples/chandler/docker-ce/` — simple case, single source.
-- `examples/chandler/postgresql/` — matrix case across four
-  codenames + two sources (pgdg + pgdg-testing).
-- `examples/chandler/tailscale/` — per-codename key URL case
-  (`{{.Codename}}.noarmor.gpg`).
-- `examples/chandler/hashicorp/` — matrix across debian + ubuntu
-  codenames, single source.
-
-The same regression pattern cooper uses (`TestExamplesValidateClean`)
-applies: every `examples/chandler/*/chandler.yaml` runs through
-`chandler validate` and must come back clean.
+`TestExamplesValidateClean` in `cmd/chandler/` sweeps every
+`examples/*/chandler.yaml` through `chandler validate` and must come
+back clean.
 
 ## Implementation status
 
