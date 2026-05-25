@@ -36,6 +36,7 @@ const (
 	SourceKindJSONURL       = "json_url"
 	SourceKindXMLURL        = "xml_url"
 	SourceKindLocal         = "local"
+	SourceKindChandler      = "chandler"
 )
 
 // Asset.SHA256Source values. Nil pointer means "unknown; build must

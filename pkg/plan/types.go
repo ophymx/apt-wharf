@@ -42,19 +42,46 @@ type Package struct {
 //     json_url; XPath in place of gjson against an XML body).
 //   - "local":          GitCommit, GitDate (provenance for staves and
 //     any other producer building from in-repo files).
+//   - "chandler":       GitCommit, GitDate (config-file provenance),
+//     ConfigPath, Target (the matrix-resolved distro/codename for this
+//     package; empty fields in simple mode), FetchedKeys (observed
+//     UID/fingerprint/expiry per fetched keyring).
 //
 // All non-Kind fields use omitempty so each kind's record stays focused
 // on its native provenance.
 type Source struct {
-	Kind               string `json:"kind"`
-	Repo               string `json:"repo,omitempty"`
-	ReleaseID          int64  `json:"release_id,omitempty"`
-	ReleaseTag         string `json:"release_tag,omitempty"`
-	ReleasePublishedAt string `json:"release_published_at,omitempty"` // RFC 3339 UTC
-	URL                string `json:"url,omitempty"`
-	Token              string `json:"token,omitempty"`
-	GitCommit          string `json:"git_commit,omitempty"`
-	GitDate            string `json:"git_date,omitempty"` // RFC 3339 UTC
+	Kind               string       `json:"kind"`
+	Repo               string       `json:"repo,omitempty"`
+	ReleaseID          int64        `json:"release_id,omitempty"`
+	ReleaseTag         string       `json:"release_tag,omitempty"`
+	ReleasePublishedAt string       `json:"release_published_at,omitempty"` // RFC 3339 UTC
+	URL                string       `json:"url,omitempty"`
+	Token              string       `json:"token,omitempty"`
+	GitCommit          string       `json:"git_commit,omitempty"`
+	GitDate            string       `json:"git_date,omitempty"` // RFC 3339 UTC
+	ConfigPath         string       `json:"config_path,omitempty"`
+	Target             *Target      `json:"target,omitempty"`
+	FetchedKeys        []FetchedKey `json:"fetched_keys,omitempty"`
+}
+
+// Target is the chandler matrix-resolved (distro, codename) pair. In
+// chandler's simple mode (no targets: block in the YAML) the struct is
+// emitted with both fields empty so the JSON shape is stable.
+type Target struct {
+	Distro   string `json:"distro"`
+	Codename string `json:"codename"`
+}
+
+// FetchedKey records what chandler observed about a key it fetched
+// from a vendor URL. Pure provenance; chandler does not gate on these
+// values (HTTPS is the trust anchor; see chandler-design.md "Trust
+// model"). Expiry is RFC 3339 UTC or omitted when the key has none.
+type FetchedKey struct {
+	Slug        string `json:"slug"`
+	SourceURL   string `json:"source_url"`
+	Fingerprint string `json:"fingerprint"`
+	UID         string `json:"uid"`
+	Expiry      string `json:"expiry,omitempty"`
 }
 
 // Artifact is one (package, arch) tuple — the unit at which cooper builds
