@@ -12,11 +12,11 @@ import (
 
 	"github.com/google/go-github/v86/github"
 
-	signconfig "github.com/ophymx/apt-signpost/internal/config"
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
-	"github.com/ophymx/apt-signpost/internal/cooper/discover"
-	signsource "github.com/ophymx/apt-signpost/internal/source"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	signconfig "github.com/ophymx/apt-wharf/internal/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/discover"
+	signsource "github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 const cooperVersion = "0.1.0"
@@ -101,7 +101,7 @@ func cmdDiscover(args []string) error {
 }
 
 // buildGitHubClient resolves the configured GitHub token (env or file)
-// and wraps it in apt-signpost's NewGitHubClient transport. Empty token
+// and wraps it in signpost's NewGitHubClient transport. Empty token
 // → unauthenticated client (subject to GitHub's anonymous rate limit).
 func buildGitHubClient(gh config.GitHubConfig) (*github.Client, error) {
 	secret, err := signconfig.LoadSecret(gh.TokenEnv, gh.TokenFile, "github.token_env", "github.token_file")

@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/aptly"
-	"github.com/ophymx/apt-signpost/internal/drayman/backend"
+	"github.com/ophymx/apt-wharf/internal/drayman/aptly"
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
 )
 
 // Backend talks to a single aptly local repository + publication.

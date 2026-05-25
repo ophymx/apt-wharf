@@ -12,7 +12,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
 )
 
 // jsonURLBodyCap bounds metadata-response size, matching signpost's

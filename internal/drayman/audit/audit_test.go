@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/policy"
+	"github.com/ophymx/apt-wharf/internal/drayman/policy"
 )
 
 // fixedNow returns a Logger pinned to a known timestamp so JSONL

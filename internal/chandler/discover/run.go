@@ -22,10 +22,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/chandler/config"
-	"github.com/ophymx/apt-signpost/internal/chandler/keys"
-	"github.com/ophymx/apt-signpost/internal/chandler/render"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/chandler/config"
+	"github.com/ophymx/apt-wharf/internal/chandler/keys"
+	"github.com/ophymx/apt-wharf/internal/chandler/render"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // Chandler-specific error.kind values. The plan-design memo notes that

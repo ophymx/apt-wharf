@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/backend"
-	aptlyBackend "github.com/ophymx/apt-signpost/internal/drayman/backend/aptly"
-	repreproBackend "github.com/ophymx/apt-signpost/internal/drayman/backend/reprepro"
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
+	aptlyBackend "github.com/ophymx/apt-wharf/internal/drayman/backend/aptly"
+	repreproBackend "github.com/ophymx/apt-wharf/internal/drayman/backend/reprepro"
 )
 
 // backendFlags carries the flag pointers shared by `peek` and

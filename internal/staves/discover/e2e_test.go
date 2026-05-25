@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	cooperbuild "github.com/ophymx/apt-signpost/internal/cooper/build"
-	"github.com/ophymx/apt-signpost/internal/staves/config"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	cooperbuild "github.com/ophymx/apt-wharf/internal/cooper/build"
+	"github.com/ophymx/apt-wharf/internal/staves/config"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // TestE2E_StavesDiscoverThenCooperBuild proves the architectural seam:

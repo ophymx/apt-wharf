@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // NfpmYAMLOpts carries the on-disk-only adjustments cooper applies when

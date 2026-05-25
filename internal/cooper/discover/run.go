@@ -11,11 +11,11 @@ import (
 
 	"github.com/google/go-github/v86/github"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
-	cooperSrc "github.com/ophymx/apt-signpost/internal/cooper/source"
-	"github.com/ophymx/apt-signpost/internal/cooper/stage"
-	"github.com/ophymx/apt-signpost/internal/cooper/version"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
+	cooperSrc "github.com/ophymx/apt-wharf/internal/cooper/source"
+	"github.com/ophymx/apt-wharf/internal/cooper/stage"
+	"github.com/ophymx/apt-wharf/internal/cooper/version"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // Options configures one Run invocation. Tool/Now are factored out so

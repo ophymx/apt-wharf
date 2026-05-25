@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/policy"
+	"github.com/ophymx/apt-wharf/internal/drayman/policy"
 )
 
 // Event is one audit record. Fields are populated based on Type;

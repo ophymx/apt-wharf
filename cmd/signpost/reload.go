@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ophymx/apt-signpost/internal/config"
+	"github.com/ophymx/apt-wharf/internal/config"
 )
 
 // assertHotReloadable rejects reloads that would change fields the running

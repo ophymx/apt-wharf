@@ -516,7 +516,7 @@ Chandler is **stateless**: no state files, no cross-run memory.
 
 ## Package layout
 
-Chandler shares the apt-signpost Go module (`github.com/ophymx/apt-signpost`).
+Chandler shares the apt-wharf Go module (`github.com/ophymx/apt-wharf`).
 Following the conventions cooper and staves use, every chandler-internal
 package lives under `internal/chandler/...`:
 

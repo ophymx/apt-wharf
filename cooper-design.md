@@ -796,9 +796,9 @@ Cooper is **stateless**: no state files, no cross-run memory.
 
 ## Package layout
 
-Cooper currently shares a Go module with apt-signpost, so its internal
+Cooper shares the apt-wharf Go module with signpost, so its internal
 packages are namespaced under `internal/cooper/` to avoid colliding
-with the existing apt-signpost internals (`internal/config`,
+with signpost's pre-existing internals (`internal/config`,
 `internal/source`, etc.).
 
 ```

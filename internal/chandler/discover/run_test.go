@@ -16,9 +16,9 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 
-	"github.com/ophymx/apt-signpost/internal/chandler/config"
-	"github.com/ophymx/apt-signpost/internal/chandler/keys"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/chandler/config"
+	"github.com/ophymx/apt-wharf/internal/chandler/keys"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // keyServer returns an httptest.Server that hands out a fresh

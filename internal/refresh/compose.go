@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/bootstrap"
-	"github.com/ophymx/apt-signpost/internal/fetch"
-	"github.com/ophymx/apt-signpost/internal/index"
-	"github.com/ophymx/apt-signpost/internal/store"
+	"github.com/ophymx/apt-wharf/internal/bootstrap"
+	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/index"
+	"github.com/ophymx/apt-wharf/internal/store"
 )
 
 // suiteSegment is the URL segment under /dists/. MVP hardcodes "stable".

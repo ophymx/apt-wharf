@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // makeArchive returns the raw bytes of a .tar.gz containing one

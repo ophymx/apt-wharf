@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/go-github/v86/github"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
-	signsource "github.com/ophymx/apt-signpost/internal/source"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
+	signsource "github.com/ophymx/apt-wharf/internal/source"
 )
 
 type ghAssetJSON struct {

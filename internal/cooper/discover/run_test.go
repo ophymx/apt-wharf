@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
-	signsource "github.com/ophymx/apt-signpost/internal/source"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
+	signsource "github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 const samplePackageBody = `---

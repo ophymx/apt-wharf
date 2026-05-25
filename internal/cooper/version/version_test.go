@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/go-github/v86/github"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
 )
 
 func ts(t *testing.T, s string) github.Timestamp {

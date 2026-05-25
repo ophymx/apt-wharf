@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo holds
 
 Five related command-line tools share one Go module
-(`github.com/ophymx/apt-signpost`):
+(`github.com/ophymx/apt-wharf`):
 
 - **`signpost`** (`cmd/signpost`) — long-running daemon that exposes a signed
   apt repository whose `.deb` requests are HTTP 302-redirected to upstream

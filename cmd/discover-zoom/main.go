@@ -1,6 +1,6 @@
 // Command discover-zoom is an apt-signpost external discoverer for the Zoom
 // Linux client. The wire protocol is implemented by the
-// github.com/ophymx/apt-signpost/external package; this binary just maps a
+// github.com/ophymx/apt-wharf/external package; this binary just maps a
 // version string out of Zoom's metadata endpoint to the published .deb URL.
 //
 // The metadata at https://zoom.us/rest/download?os=linux carries
@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ophymx/apt-signpost/external"
+	"github.com/ophymx/apt-wharf/external"
 )
 
 const assetURL = "https://zoom.us/client/%s/zoom_amd64.deb"

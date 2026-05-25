@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/index"
-	"github.com/ophymx/apt-signpost/internal/store"
+	"github.com/ophymx/apt-wharf/internal/index"
+	"github.com/ophymx/apt-wharf/internal/store"
 )
 
 // SourceStatus captures the last-known state of one source, both content

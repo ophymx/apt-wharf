@@ -31,8 +31,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/backend"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // Action names the per-artifact decision drayman would take.

@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/stage"
-	"github.com/ophymx/apt-signpost/internal/staves/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/stage"
+	"github.com/ophymx/apt-wharf/internal/staves/config"
 )
 
 // cmdValidate implements `staves validate <CONFIG>`. Lints without

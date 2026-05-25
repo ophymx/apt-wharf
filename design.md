@@ -399,7 +399,7 @@ are still legitimate.
 
 #### Go helper package
 
-Tools written in Go can import `github.com/ophymx/apt-signpost/external` for
+Tools written in Go can import `github.com/ophymx/apt-wharf/external` for
 the wire-format types (`Input`, `Probe`, `Output`), `Output.Validate`, and a
 `Run(ProbeFunc) error` helper that wires `os.Stdin`/`os.Stdout` to a
 SIGINT/SIGTERM-cancellable context. `cmd/discover-zoom` ships as a working

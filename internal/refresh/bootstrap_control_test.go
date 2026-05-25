@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/internal/bootstrap"
+	"github.com/ophymx/apt-wharf/internal/bootstrap"
 )
 
 // TestBootstrapControl_FromDeb pins down that the bootstrap stanza we

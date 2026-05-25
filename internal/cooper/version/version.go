@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/go-github/v86/github"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
 )
 
 // debianVersionRE is the upstream-version grammar from Debian Policy:

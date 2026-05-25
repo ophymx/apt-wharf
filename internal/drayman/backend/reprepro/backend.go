@@ -18,7 +18,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/backend"
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
 )
 
 // Backend talks to a reprepro repository (local or remote).

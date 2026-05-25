@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/refresh"
+	"github.com/ophymx/apt-wharf/internal/refresh"
 )
 
 func TestHandler_FileAndRedirect(t *testing.T) {

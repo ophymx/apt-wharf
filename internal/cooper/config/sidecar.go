@@ -51,7 +51,7 @@ type GitHubSource struct {
 //
 // Used for vendors that publish download metadata as JSON without a
 // GitHub release (golang, node, python, jetbrains-toolbox, ...).
-// Mirrors apt-signpost's `json_url` discovery type.
+// Mirrors signpost's `json_url` discovery type.
 type JSONURLSource struct {
 	URL         string `yaml:"url"`
 	VersionPath string `yaml:"version_path"`
@@ -72,7 +72,7 @@ type JSONURLSource struct {
 // arches[].asset_url templates support cooper's standard ${VERSION} /
 // ${ARCH} substitutions plus {token} (resolves to the version) and
 // {xpath:...} placeholders (run any XPath against the same response
-// body, mirroring json_url's {gjson.path} slot). Mirrors apt-signpost's
+// body, mirroring json_url's {gjson.path} slot). Mirrors signpost's
 // `xml_url` discovery type.
 type XMLURLSource struct {
 	URL          string `yaml:"url"`

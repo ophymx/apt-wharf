@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
 )
 
 const jetbrainsLikeUpdates = `<?xml version="1.0" encoding="UTF-8"?>

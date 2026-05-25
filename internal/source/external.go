@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ophymx/apt-signpost/external"
+	"github.com/ophymx/apt-wharf/external"
 )
 
 // envAllowlist names process env vars that are forwarded to external

@@ -1,6 +1,6 @@
 [Unit]
 Description=apt-signpost: signed apt repository that 302-redirects to upstream .debs
-Documentation=https://github.com/ophymx/apt-signpost
+Documentation=https://github.com/ophymx/apt-wharf
 After=network-online.target
 Wants=network-online.target
 

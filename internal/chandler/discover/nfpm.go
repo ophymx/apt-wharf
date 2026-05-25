@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ophymx/apt-signpost/internal/chandler/config"
+	"github.com/ophymx/apt-wharf/internal/chandler/config"
 )
 
 // nfpmSubtree is the resolved nfpm.yaml shape chandler emits per

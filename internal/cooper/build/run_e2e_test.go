@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // TestRun_RealNfpm exercises the full build pipeline against the real

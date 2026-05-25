@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/backend"
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
 )
 
 // parsePackages reads a Debian Packages file (a sequence of RFC822

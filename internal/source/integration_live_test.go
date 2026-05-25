@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/fetch"
-	"github.com/ophymx/apt-signpost/internal/index"
+	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/index"
 )
 
 func liveDiscoverer(t *testing.T, repo, pattern string, includePre bool) *GitHubReleaseDiscoverer {

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/staves/config"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/staves/config"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 const sampleNfpm = `name: demo

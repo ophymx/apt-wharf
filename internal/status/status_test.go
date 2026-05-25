@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-signpost/internal/store"
+	"github.com/ophymx/apt-wharf/internal/store"
 )
 
 func TestSeed_PopulatesEnabledSourcesFromState(t *testing.T) {

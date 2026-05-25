@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/internal/config"
+	"github.com/ophymx/apt-wharf/internal/config"
 )
 
 func baseCfg() *config.Config {

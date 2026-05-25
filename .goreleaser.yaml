@@ -12,7 +12,7 @@
 
 version: 2
 
-project_name: apt-signpost
+project_name: apt-wharf
 
 builds:
   - id: signpost
@@ -102,7 +102,7 @@ nfpms:
     ids: [signpost]
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-signpost
+    homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
     description: |
       Stitch external .deb downloads into a signed apt repository.
@@ -145,14 +145,14 @@ nfpms:
       postremove: ./packaging/scripts/postremove.sh
     deb:
       fields:
-        Bugs: https://github.com/ophymx/apt-signpost/issues
+        Bugs: https://github.com/ophymx/apt-wharf/issues
 
   - id: cooper
     package_name: apt-cooper
     ids: [cooper]
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-signpost
+    homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
     # Runtime dependency: cooper execs `nfpm` from PATH during `cooper build`.
     # nfpm is not in Debian's apt archive, so it is not declared as Depends
@@ -169,14 +169,14 @@ nfpms:
     mtime: "{{ .CommitDate }}"
     deb:
       fields:
-        Bugs: https://github.com/ophymx/apt-signpost/issues
+        Bugs: https://github.com/ophymx/apt-wharf/issues
 
   - id: chandler
     package_name: apt-chandler
     ids: [chandler]
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-signpost
+    homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
     # chandler emits plan.Plan JSON for cooper-build to consume; the actual
     # .deb production runs through cooper, which execs nfpm. Declared
@@ -195,14 +195,14 @@ nfpms:
     mtime: "{{ .CommitDate }}"
     deb:
       fields:
-        Bugs: https://github.com/ophymx/apt-signpost/issues
+        Bugs: https://github.com/ophymx/apt-wharf/issues
 
   - id: drayman
     package_name: apt-drayman
     ids: [drayman]
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-signpost
+    homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
     # Runtime dependencies: drayman shells out to the configured apt-repo
     # manager (aptly or reprepro). Not declared as Depends since either
@@ -219,14 +219,14 @@ nfpms:
     mtime: "{{ .CommitDate }}"
     deb:
       fields:
-        Bugs: https://github.com/ophymx/apt-signpost/issues
+        Bugs: https://github.com/ophymx/apt-wharf/issues
 
   - id: staves
     package_name: apt-staves
     ids: [staves]
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-signpost
+    homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
     # Pairs with cooper the same way chandler does — staves emits a
     # plan.Plan for `cooper build -` to consume.
@@ -244,7 +244,7 @@ nfpms:
     mtime: "{{ .CommitDate }}"
     deb:
       fields:
-        Bugs: https://github.com/ophymx/apt-signpost/issues
+        Bugs: https://github.com/ophymx/apt-wharf/issues
 
 checksum:
   name_template: checksums.txt

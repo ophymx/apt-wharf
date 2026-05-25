@@ -11,7 +11,7 @@ import (
 
 	"github.com/antchfx/xmlquery"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
 )
 
 // xmlURLBodyCap bounds metadata-response size, matching json_url.

@@ -1,4 +1,4 @@
-module github.com/ophymx/apt-signpost
+module github.com/ophymx/apt-wharf
 
 go 1.25.0
 

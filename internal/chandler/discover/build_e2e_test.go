@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	cooperbuild "github.com/ophymx/apt-signpost/internal/cooper/build"
-	"github.com/ophymx/apt-signpost/internal/chandler/keys"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	cooperbuild "github.com/ophymx/apt-wharf/internal/cooper/build"
+	"github.com/ophymx/apt-wharf/internal/chandler/keys"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // TestE2E_BuildsDeb runs the full chandler → cooper-build pipeline

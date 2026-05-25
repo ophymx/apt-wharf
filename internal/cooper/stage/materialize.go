@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // MaterializeAuxFiles reads the bytes for each Ref, renders templates

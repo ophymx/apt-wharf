@@ -9,9 +9,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/ophymx/apt-signpost/internal/chandler/config"
-	"github.com/ophymx/apt-signpost/internal/chandler/discover"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/chandler/config"
+	"github.com/ophymx/apt-wharf/internal/chandler/discover"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 const chandlerVersion = "0.1.0"

@@ -13,10 +13,10 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/audit"
-	"github.com/ophymx/apt-signpost/internal/drayman/backend"
-	"github.com/ophymx/apt-signpost/internal/drayman/policy"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/drayman/audit"
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
+	"github.com/ophymx/apt-wharf/internal/drayman/policy"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // cooperBuildFn is the contract drayman's reconcile loop has with

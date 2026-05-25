@@ -25,11 +25,11 @@ import (
 	openpgpClearsign "github.com/ProtonMail/go-crypto/openpgp/clearsign"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
-	"github.com/ophymx/apt-signpost/internal/config"
-	"github.com/ophymx/apt-signpost/internal/fetch"
-	"github.com/ophymx/apt-signpost/internal/sign"
-	"github.com/ophymx/apt-signpost/internal/source"
-	"github.com/ophymx/apt-signpost/internal/store"
+	"github.com/ophymx/apt-wharf/internal/config"
+	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/sign"
+	"github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/internal/store"
 )
 
 // TestRefresh_EndToEnd wires every package together against a synthetic

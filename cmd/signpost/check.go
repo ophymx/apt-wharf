@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/ophymx/apt-signpost/internal/config"
-	"github.com/ophymx/apt-signpost/internal/fetch"
-	"github.com/ophymx/apt-signpost/internal/index"
-	"github.com/ophymx/apt-signpost/internal/source"
+	"github.com/ophymx/apt-wharf/internal/config"
+	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/index"
+	"github.com/ophymx/apt-wharf/internal/source"
 )
 
 func cmdCheck(args []string, log *slog.Logger) error {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ophymx/apt-signpost/internal/chandler/config"
+	"github.com/ophymx/apt-wharf/internal/chandler/config"
 )
 
 // cmdValidate implements `chandler validate <CONFIG>`. Lints without

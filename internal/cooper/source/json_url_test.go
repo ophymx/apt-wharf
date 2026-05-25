@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
 )
 
 func TestResolveJSONURL_Happy(t *testing.T) {

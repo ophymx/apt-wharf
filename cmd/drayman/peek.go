@@ -9,8 +9,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/policy"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/drayman/policy"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // cmdPeek implements `drayman peek <PLAN>` — a read-only dry-run that

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/config"
-	"github.com/ophymx/apt-signpost/internal/cooper/stage"
+	"github.com/ophymx/apt-wharf/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/internal/cooper/stage"
 )
 
 // cmdValidate implements `cooper validate <CONFIG>` per cooper-design.md

@@ -10,9 +10,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ophymx/apt-signpost/internal/staves/config"
-	"github.com/ophymx/apt-signpost/internal/staves/discover"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/staves/config"
+	"github.com/ophymx/apt-wharf/internal/staves/discover"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 const stavesVersion = "0.1.0"

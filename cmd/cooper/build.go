@@ -9,8 +9,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/ophymx/apt-signpost/internal/cooper/build"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/cooper/build"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // cmdBuild implements `cooper build <JSON_FILE>` per cooper-design.md

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ophymx/apt-signpost/internal/drayman/backend"
-	"github.com/ophymx/apt-signpost/pkg/plan"
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // stubQuerier implements backend.Querier with canned responses keyed

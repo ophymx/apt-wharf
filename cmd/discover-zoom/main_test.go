@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-signpost/external"
+	"github.com/ophymx/apt-wharf/external"
 )
 
 const sampleMetadata = `{
