@@ -69,10 +69,10 @@ type Source struct {
 // raw* types are the on-the-wire YAML shape; the public Config above is
 // the normalized form after validation.
 type rawConfig struct {
-	Package rawPackage           `yaml:"package"`
-	Keys    map[string]rawKey    `yaml:"keys"`
-	Targets []rawTarget          `yaml:"targets"`
-	Sources []rawSource          `yaml:"sources"`
+	Package rawPackage        `yaml:"package"`
+	Keys    map[string]rawKey `yaml:"keys"`
+	Targets []rawTarget       `yaml:"targets"`
+	Sources []rawSource       `yaml:"sources"`
 }
 
 type rawPackage struct {

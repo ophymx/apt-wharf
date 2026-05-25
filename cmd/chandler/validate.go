@@ -32,6 +32,9 @@ func cmdValidate(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := config.ValidateMatrix(cfg); err != nil {
+		return err
+	}
 
 	mode := "simple"
 	if len(cfg.Targets) > 1 {
