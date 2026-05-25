@@ -1,4 +1,4 @@
-# Goreleaser config for the apt-signpost / apt-cooper binaries.
+# Goreleaser config for the apt-signpost / apt-cooper / apt-chandler binaries.
 #
 # Local snapshot build (no tag required):
 #   goreleaser release --snapshot --clean
@@ -38,6 +38,18 @@ builds:
     goarch: [amd64, arm64, arm, riscv64]
     goarm: ["7"]
 
+  - id: chandler
+    binary: chandler
+    main: ./cmd/chandler
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64, arm, riscv64]
+    goarm: ["7"]
+
 archives:
   - id: signpost
     ids: [signpost]
@@ -46,6 +58,10 @@ archives:
   - id: cooper
     ids: [cooper]
     name_template: "apt-cooper_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+
+  - id: chandler
+    ids: [chandler]
+    name_template: "apt-chandler_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
 
 nfpms:
   - id: signpost
@@ -114,6 +130,32 @@ nfpms:
       resolves a YAML recipe against a GitHub release, then exec's nfpm to
       produce a byte-identical .deb for the same inputs. Pairs with
       any apt-repo manager (aptly, reprepro, ...).
+    section: devel
+    priority: optional
+    formats: [deb]
+    mtime: "{{ .CommitDate }}"
+    deb:
+      fields:
+        Bugs: https://github.com/ophymx/apt-signpost/issues
+
+  - id: chandler
+    package_name: apt-chandler
+    ids: [chandler]
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Ophymx
+    homepage: https://github.com/ophymx/apt-signpost
+    maintainer: Ophymx <ops@ophymx.com>
+    # chandler emits plan.Plan JSON for cooper-build to consume; the actual
+    # .deb production runs through cooper, which execs nfpm. Declared
+    # alongside cooper so the two ship as a pair.
+    description: |
+      Turn vendor curl|sudo-tee install rituals into reproducible
+      keyring + sources .debs. apt-chandler is a discover-only CLI that
+      reads a YAML config, fetches and dearmors GPG keys over HTTPS,
+      renders deb822 .sources files, and emits a plan.Plan JSON
+      document for `cooper build -` to turn into a .deb. Replaces the
+      typical README install ritual with a reproducible, version-tracked
+      package.
     section: devel
     priority: optional
     formats: [deb]

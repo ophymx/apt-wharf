@@ -1,4 +1,12 @@
-# cooper examples
+# Examples
+
+Each `examples/<vendor>/` directory holds the YAML for whichever tool(s)
+apply to that vendor; filenames distinguish them — `cooper.yaml` for
+cooper recipes, `chandler.yaml` for chandler recipes. Both tools'
+regression tests glob their respective filename pattern across this
+directory, so the two example sets coexist without colliding.
+
+## cooper examples
 
 Eight end-to-end example packages, each scoped to one cooper feature
 surface. Every example validates with:
@@ -169,14 +177,76 @@ and uses standard `${VERSION}`/`${ARCH}` substitutions in the per-arch
 `{xpath:<expr>}` placeholders for vendors who embed download links in
 the same response body (mirroring `json_url`'s `{gjson.path}` slot).
 
+## chandler examples
+
+Five end-to-end keyring + sources packages, each scoped to one
+chandler feature surface. Replaces the typical
+`curl URL | sudo tee /etc/apt/sources.list.d/...` install ritual with
+a reproducible, version-tracked `.deb`. Every example validates with:
+
+```sh
+chandler validate ./examples/<name>/chandler.yaml
+```
+
+(no network required). Order is roughly increasing complication; the
+`docker-ce` case is what a minimal chandler config looks like.
+
+| Example | What it shows |
+| --- | --- |
+| [`docker-ce/`](./docker-ce) | simple mode (no matrix), single source, hardcoded `bookworm` suite |
+| [`hashicorp/`](./hashicorp) | matrix across 4 codenames (debian + ubuntu), single source, `{{ .Codename }}` in `suites:` |
+| [`postgresql/`](./postgresql) | matrix + two sources (pgdg + pgdg-testing) sharing one key |
+| [`tailscale/`](./tailscale) | `{{ .Distro }}` + `{{ .Codename }}` templated into both the key URL and the repo URI |
+| [`nvidia-cuda/`](./nvidia-cuda) | flat ("trivial") repository — `suites: /`, components absent, per-arch URIs and per-arch keys |
+
+Each YAML carries the verbatim upstream `curl|tee` snippet as a
+header comment, so the file reads as a side-by-side translation
+between the vendor's instructions and chandler's structured form.
+
+### How to run chandler examples
+
+The full pipeline is `chandler discover → cooper build`, with
+`chandler validate` as a network-free dry run:
+
+```sh
+# 1. Lint without network.
+chandler validate ./examples/hashicorp/chandler.yaml
+
+# 2. Fetch keys over HTTPS, render .sources stanzas, emit a plan.
+chandler discover ./examples/hashicorp/chandler.yaml -o /tmp/hc-plan.json
+
+# 3. Read the plan, stage aux_files, exec nfpm, write .deb files.
+cooper build /tmp/hc-plan.json --out-dir /tmp/hc-out
+
+ls /tmp/hc-out
+# hashicorp-archive-keyring-bookworm_1.1_all.deb
+# hashicorp-archive-keyring-trixie_1.1_all.deb
+# hashicorp-archive-keyring-jammy_1.1_all.deb
+# hashicorp-archive-keyring-noble_1.1_all.deb
+```
+
+Or as a single shell pipeline:
+
+```sh
+chandler discover ./examples/hashicorp/chandler.yaml | cooper build - --out-dir /tmp/hc-out
+```
+
+chandler needs no GitHub token — it only fetches the vendor key URL
+named in `keys:`. The config file must be tracked in git so chandler
+can resolve `source_date_epoch` from the commit time; not-in-git is a
+hard error.
+
 ## What you'll need at runtime
 
 - `cooper` itself: `go build -o cooper ./cmd/cooper`.
+- `chandler` for chandler examples: `go build -o chandler ./cmd/chandler`.
 - `nfpm` on `$PATH` for `cooper build` to work.
-  (`cooper validate` and `cooper discover` don't need it.)
-- A GitHub token in `GITHUB_TOKEN` for unauthenticated rate-limit
-  headroom. Anonymous works for one-off runs but quickly hits the
-  60-requests-per-hour anonymous limit.
+  (`cooper validate`, `cooper discover`, `chandler validate`, and
+  `chandler discover` don't need it.)
+- A GitHub token in `GITHUB_TOKEN` for cooper examples — unauthenticated
+  rate-limit headroom. Anonymous works for one-off runs but quickly hits
+  the 60-requests-per-hour anonymous limit. chandler doesn't need it
+  (vendor key URLs aren't rate-limited).
 
 ## What's deliberately *not* covered by these examples
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo holds
 
-Two related-but-distinct command-line tools share one Go module
+Five related command-line tools share one Go module
 (`github.com/ophymx/apt-signpost`):
 
 - **`signpost`** (`cmd/signpost`) — long-running daemon that exposes a signed
@@ -16,18 +16,31 @@ Two related-but-distinct command-line tools share one Go module
   into reproducible `.deb` files via two phases joined by a JSON contract
   (`discover` → `plan.json` → `build`). Execs `nfpm pkg` for the actual
   Debian packaging.
+- **`drayman`** (`cmd/drayman`) — orchestrator that consumes cooper's (or
+  any compatible producer's) discover JSON, dedups against the target apt
+  repo by `X-Cooper-Build-Inputs-Hash`, applies revision auto-bump policy,
+  and pushes resulting `.debs` into aptly or reprepro.
+- **`staves`** (`cmd/staves`) — discover-only CLI that packs locally-checked-in
+  files (configs, systemd units, scripts) into a `plan.Plan` for `cooper build`.
+  Source kind `local`; `source_date_epoch` derives from `git log` of the
+  package directory.
+- **`chandler`** (`cmd/chandler`) — discover-only CLI that turns the vendor
+  `curl URL | sudo tee /etc/apt/sources.list.d/foo.list` install ritual into
+  a reproducible keyring + sources `.deb`. Fetches GPG keys over HTTPS,
+  dearmors in-process, renders deb822 `.sources` files, and emits a
+  `plan.Plan` for `cooper build` to consume.
 
-A third small helper, `cmd/discover-zoom`, is an example *external producer*
+A small helper, `cmd/discover-zoom`, is an example *external producer*
 for signpost's discovery contract (Zoom's vendor JSON endpoint). It demonstrates
 the `internal/source/external.go` pluggable-producer pattern; it is not part
-of either main tool's binary.
+of any main tool's binary.
 
-The two tools intentionally DON'T overlap: signpost serves apt repos but
-doesn't build packages; cooper builds packages but doesn't serve apt repos.
-Their natural deployment is side-by-side behind one reverse proxy, with
-signpost handling the redirect-style packages and the cooper output going
-through a separate apt-repo manager (aptly, reprepro, etc.). The cooper
-design doc explicitly leaves "publish .debs to a hosted repo" out of scope.
+The tools intentionally DON'T overlap by scope: signpost serves apt repos,
+cooper builds packages from upstream binaries, staves packages local files,
+chandler packages keyrings + sources, and drayman hauls all of those into
+a hosted repo. Their natural deployment is signpost in front of vendor URLs
+plus an aptly/reprepro tree fed by drayman from cooper/staves/chandler
+outputs.
 
 ## Authoritative design docs
 
@@ -37,8 +50,15 @@ behavior in either tool.
 - **`design.md`** — apt-signpost. Trust model, refresh cycle, source kinds.
 - **`cooper-design.md`** — apt-cooper. JSON contract, version selection,
   aux-file resolution, security/sandboxing, reproducibility guarantee.
+- **`chandler-design.md`** — apt-chandler. Schema, templating (matrix
+  mode), trust model (HTTPS-only, no fingerprint pinning), deb822
+  rendering, conffile policy, version model.
 - **`design-mvp.md`** — earlier signpost MVP iteration; useful context
   but `design.md` overrides where they disagree.
+
+drayman and staves are designed in-conversation only as of this writing;
+their source-of-truth is the code under `internal/drayman/` and
+`internal/staves/` plus the `plan.Plan` contract in `pkg/plan/`.
 
 When you change observable behavior, update the relevant design doc in the
 same change. When the implementation diverges from the doc, treat that as
@@ -47,9 +67,11 @@ a bug to resolve (either by changing the code or updating the doc).
 ## Common commands
 
 ```sh
-# Build either binary (the gitignore exempts these names at the repo root):
+# Build any binary (gitignore exempts these names at the repo root):
 go build -o signpost ./cmd/signpost
 go build -o cooper   ./cmd/cooper
+go build -o chandler ./cmd/chandler
+# staves and drayman build the same way: go build -o <name> ./cmd/<name>
 
 # Local snapshot of all release artifacts (.debs + tarballs + checksums into dist/):
 goreleaser release --snapshot --clean
@@ -60,15 +82,21 @@ go test ./...
 # Live GitHub integration tests (requires network, optional GITHUB_TOKEN env):
 go test -tags integration ./internal/source/...
 
-# Cooper's reproducibility self-check runs only when nfpm is on PATH;
-# it auto-skips otherwise.
+# Cooper's and chandler's reproducibility self-checks run only when nfpm
+# is on PATH; they auto-skip otherwise.
 go test ./internal/cooper/build/ -run TestRun_RealNfpm
+go test ./internal/chandler/discover/ -run TestE2E
 
-# Lint cooper YAML examples without network:
-go run ./cmd/cooper validate ./examples/hugo/cooper.yaml
+# Lint YAML examples without network:
+go run ./cmd/cooper   validate ./examples/hugo/cooper.yaml
+go run ./cmd/chandler validate ./examples/hashicorp/chandler.yaml
 
 # End-to-end cooper pipeline (needs GITHUB_TOKEN for headroom):
 GITHUB_TOKEN=ghp_xxx go run ./cmd/cooper discover ./examples/hugo/cooper.yaml \
+  | go run ./cmd/cooper build - --out-dir /tmp/out
+
+# End-to-end chandler pipeline (no token; vendor key URLs aren't rate-limited):
+go run ./cmd/chandler discover ./examples/hashicorp/chandler.yaml \
   | go run ./cmd/cooper build - --out-dir /tmp/out
 ```
 
@@ -76,14 +104,15 @@ There is no Makefile, no scripts/, and no CI YAML in the repo.
 
 ## Architectural conventions
 
-### Cooper packages are under `internal/cooper/...`
+### Cooper, drayman, staves, chandler packages live under `internal/<tool>/...`
 
-Cooper shares a Go module with signpost. To avoid colliding with
-signpost's existing `internal/config`, `internal/source`, etc., every
-cooper-internal package lives under `internal/cooper/<name>`. The cooper
-design doc's "Package layout" section reflects this. The eventual split
-to a standalone `github.com/ophymx/apt-cooper` module is a deferred
-import-path rename and shouldn't gate v0 work.
+All four newer tools share a Go module with signpost. To avoid colliding
+with signpost's existing `internal/config`, `internal/source`, etc.,
+their internal packages live under `internal/cooper/<name>`,
+`internal/drayman/<name>`, `internal/staves/<name>`, and
+`internal/chandler/<name>` respectively. The eventual split into
+standalone `github.com/ophymx/apt-cooper` / `apt-chandler` / etc.
+modules is a deferred import-path rename and shouldn't gate v0 work.
 
 ### `pkg/plan` is the public, stable JSON contract
 
@@ -179,17 +208,18 @@ example external producer.
   an old hand-rolled `pkg-builds` codebase for reference. Don't commit
   contents of `tmp/`.
 - `dist/` is gitignored; produced by `goreleaser release --snapshot --clean`.
-- Both binary names (`/signpost`, `/cooper`) are gitignored at the repo
-  root so `go build -o <name>` doesn't pollute the index.
+- Binary names (`/signpost`, `/cooper`, `/chandler`, `/staves`, `/drayman`)
+  are gitignored at the repo root so `go build -o <name>` doesn't pollute
+  the index.
 - `.goreleaser.yaml` at the repo root drives binary builds, tarballs, and
-  `.deb` packaging for both tools across linux/amd64, arm64, armhf, and
-  riscv64. GitHub release publishing is disabled — the config is
-  local-build-only. The nfpm-based `.deb` production here is unrelated to
-  cooper's own runtime use of nfpm as a build step.
-- `examples/` is cooper-only — five copy-paste-ready package
-  configurations referenced by the design and validated by the
-  regression test. See `examples/README.md` for the per-example
-  walkthrough.
+  `.deb` packaging for signpost, cooper, and chandler across linux/amd64,
+  arm64, armhf, and riscv64. GitHub release publishing is disabled — the
+  config is local-build-only. The nfpm-based `.deb` production here is
+  unrelated to cooper's own runtime use of nfpm as a build step.
+- `examples/` carries copy-paste-ready configs for cooper and chandler,
+  flat-layout at `examples/<vendor>/<tool>.yaml`. Each tool's
+  `examples_test.go` globs its own filename pattern, so the example sets
+  coexist. See `examples/README.md` for the per-example walkthrough.
 - `external/` exposes the small public types signpost's external
   discovery contract uses; importable by third-party producers.
 - `packaging/` holds systemd units and shell scripts shipped with
