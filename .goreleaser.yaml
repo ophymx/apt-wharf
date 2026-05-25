@@ -1,4 +1,5 @@
-# Goreleaser config for the apt-signpost / apt-cooper / apt-chandler binaries.
+# Goreleaser config for the apt-signpost / apt-cooper / apt-drayman /
+# apt-staves / apt-chandler binaries.
 #
 # Local snapshot build (no tag required):
 #   goreleaser release --snapshot --clean
@@ -50,6 +51,30 @@ builds:
     goarch: [amd64, arm64, arm, riscv64]
     goarm: ["7"]
 
+  - id: drayman
+    binary: drayman
+    main: ./cmd/drayman
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64, arm, riscv64]
+    goarm: ["7"]
+
+  - id: staves
+    binary: staves
+    main: ./cmd/staves
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64, arm, riscv64]
+    goarm: ["7"]
+
 archives:
   - id: signpost
     ids: [signpost]
@@ -62,6 +87,14 @@ archives:
   - id: chandler
     ids: [chandler]
     name_template: "apt-chandler_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+
+  - id: drayman
+    ids: [drayman]
+    name_template: "apt-drayman_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+
+  - id: staves
+    ids: [staves]
+    name_template: "apt-staves_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
 
 nfpms:
   - id: signpost
@@ -156,6 +189,55 @@ nfpms:
       document for `cooper build -` to turn into a .deb. Replaces the
       typical README install ritual with a reproducible, version-tracked
       package.
+    section: devel
+    priority: optional
+    formats: [deb]
+    mtime: "{{ .CommitDate }}"
+    deb:
+      fields:
+        Bugs: https://github.com/ophymx/apt-signpost/issues
+
+  - id: drayman
+    package_name: apt-drayman
+    ids: [drayman]
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Ophymx
+    homepage: https://github.com/ophymx/apt-signpost
+    maintainer: Ophymx <ops@ophymx.com>
+    # Runtime dependencies: drayman shells out to the configured apt-repo
+    # manager (aptly or reprepro). Not declared as Depends since either
+    # backend may be chosen.
+    description: |
+      Orchestrate cooper / chandler / staves output into an apt repo.
+      apt-drayman consumes plan.Plan JSON from any compatible producer,
+      dedups against the target apt repo by X-Cooper-Build-Inputs-Hash,
+      applies revision auto-bump policy, and pushes .debs into aptly or
+      reprepro.
+    section: devel
+    priority: optional
+    formats: [deb]
+    mtime: "{{ .CommitDate }}"
+    deb:
+      fields:
+        Bugs: https://github.com/ophymx/apt-signpost/issues
+
+  - id: staves
+    package_name: apt-staves
+    ids: [staves]
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Ophymx
+    homepage: https://github.com/ophymx/apt-signpost
+    maintainer: Ophymx <ops@ophymx.com>
+    # Pairs with cooper the same way chandler does — staves emits a
+    # plan.Plan for `cooper build -` to consume.
+    description: |
+      Package locally-checked-in files (configs, systemd units, scripts)
+      as reproducible .debs. apt-staves is a discover-only CLI that
+      walks a directory of nfpm.yaml + payload files, derives
+      source_date_epoch from git commit time, and emits a plan.Plan
+      JSON document for `cooper build -` to turn into a .deb. Fills the
+      "in-house config package" niche that cooper (upstream binaries)
+      and chandler (vendor keyrings) don't cover.
     section: devel
     priority: optional
     formats: [deb]

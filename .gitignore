@@ -2,7 +2,9 @@ config.yml
 config.yaml
 /signpost
 /cooper
+/chandler
 /drayman
+/staves
 /dist/
 *.deb
 /tmp/
