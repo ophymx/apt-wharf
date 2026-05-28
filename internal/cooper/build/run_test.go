@@ -610,3 +610,52 @@ func TestRun_AssetOptional(t *testing.T) {
 		t.Errorf("deb.path: %v", art.Deb.Path)
 	}
 }
+
+// TestRun_RelativeOutDir_PassesAbsPathToNfpm guards against the
+// "open dist/foo.deb: no such file or directory" regression: when
+// --out-dir is relative (the default is "./dist"), nfpm runs with
+// cmd.Dir = staging, so a relative -t path would resolve under the
+// staging directory and fail. Run() must absolutize OutDir before
+// handing it down.
+//
+// Same hazard for WorkDir → ASSETS env: any nfpm content referencing
+// ${ASSETS} would expand to a path relative to staging and break.
+func TestRun_RelativeOutDir_PassesAbsPathToNfpm(t *testing.T) {
+	asset := makeArchive(t, "x")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+
+	t.Chdir(t.TempDir())
+
+	var stubOutPath, stubAssets string
+	stub := func(_ context.Context, _, outputPath string, env []string) error {
+		stubOutPath = outputPath
+		stubAssets = envMap(env)["ASSETS"]
+		return os.WriteFile(outputPath, []byte("fake-deb"), 0o644)
+	}
+
+	res, err := Run(context.Background(), p, Options{
+		OutDir:   "./relout",
+		WorkDir:  "./relwork",
+		NfpmExec: stub,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(stubOutPath) {
+		t.Errorf("nfpm -t must be absolute (else resolves under staging cwd): %s", stubOutPath)
+	}
+	if !filepath.IsAbs(stubAssets) {
+		t.Errorf("ASSETS env must be absolute (else ${ASSETS} expands under staging cwd): %s", stubAssets)
+	}
+	art := res.Packages[0].Artifacts[0]
+	if art.Result == plan.ResultError {
+		t.Fatalf("expected ok, got error: %+v", art.Error)
+	}
+	if art.Deb.Path == nil || !filepath.IsAbs(*art.Deb.Path) {
+		t.Errorf("annotated deb.path should be absolute: %v", art.Deb.Path)
+	}
+}

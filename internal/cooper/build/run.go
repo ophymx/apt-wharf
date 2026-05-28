@@ -50,6 +50,21 @@ func Run(ctx context.Context, p *plan.Plan, opts Options) (*plan.Plan, error) {
 	if opts.WorkDir == "" {
 		opts.WorkDir = "./.cooper-work"
 	}
+	// nfpm runs with cmd.Dir set to the staging directory, so any
+	// relative -t path or ${ASSETS} expansion would resolve against
+	// staging instead of the caller's cwd. Absolutize once here so
+	// everything downstream (debPath, assetDir → ASSETS env) stays
+	// rooted at the caller's cwd.
+	absOut, err := filepath.Abs(opts.OutDir)
+	if err != nil {
+		return nil, fmt.Errorf("out-dir: %w", err)
+	}
+	opts.OutDir = absOut
+	absWork, err := filepath.Abs(opts.WorkDir)
+	if err != nil {
+		return nil, fmt.Errorf("work-dir: %w", err)
+	}
+	opts.WorkDir = absWork
 	if opts.StageOnly && opts.KeepWork {
 		return nil, fmt.Errorf("--stage-only and --keep-work are mutually exclusive")
 	}
