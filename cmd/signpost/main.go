@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -33,7 +34,7 @@ func newLogger(level, format string) *slog.Logger {
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
+		usage(os.Stderr)
 		os.Exit(2)
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -45,13 +46,13 @@ func main() {
 	case "check":
 		err = cmdCheck(os.Args[2:], log)
 	case "-h", "--help", "help":
-		usage()
+		usage(os.Stdout)
 		return
 	case "-v", "--version", "version":
 		fmt.Println(version.String("signpost"))
 		return
 	default:
-		usage()
+		usage(os.Stderr)
 		os.Exit(2)
 	}
 	if err != nil {
@@ -60,8 +61,8 @@ func main() {
 	}
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  signpost serve  --config FILE")
-	fmt.Fprintln(os.Stderr, "  signpost check  --config FILE [--source NAME]")
+func usage(w io.Writer) {
+	fmt.Fprintln(w, "usage:")
+	fmt.Fprintln(w, "  signpost serve  --config FILE")
+	fmt.Fprintln(w, "  signpost check  --config FILE [--source NAME]")
 }

@@ -100,7 +100,9 @@ go run ./cmd/chandler discover ./examples/hashicorp/chandler.yaml \
   | go run ./cmd/cooper build - --out-dir /tmp/out
 ```
 
-There is no Makefile, no scripts/, and no CI YAML in the repo.
+There is no Makefile and no CI YAML in the repo. `scripts/precommit-checks.sh`
+runs `go fmt`, `go vet`, `go fix`, `go build`, and `go test ./...` — invoke it
+manually before pushing.
 
 ## Architectural conventions
 

@@ -7,9 +7,9 @@
 // uploads the resulting .debs to aptly, and triggers a publish update.
 //
 // See cooper-design.md §"Orchestrator dedup & version policy" for the
-// algorithm. drayman is the third tool in the apt-signpost / apt-cooper
-// / apt-drayman trio: signpost serves redirected metadata, cooper
-// builds reproducible .debs, drayman hauls them into the repo.
+// algorithm. drayman is the hauler in the apt-wharf family: cooper /
+// chandler / staves produce reproducible .debs, drayman hauls them
+// into the target apt repo (aptly or reprepro).
 package main
 
 import (

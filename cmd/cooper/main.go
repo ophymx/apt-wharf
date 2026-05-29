@@ -1,9 +1,8 @@
 // Command cooper turns GitHub-released binaries into Debian .deb files.
 //
 // See cooper-design.md for the full design. This binary implements
-// cooper's two phases (discover, build) and a network-free validate
-// linter. discover and build are stubbed in this slice; only validate is
-// wired up.
+// cooper's two phases (discover, build) plus a network-free validate
+// linter.
 package main
 
 import (

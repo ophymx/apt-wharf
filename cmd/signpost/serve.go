@@ -283,5 +283,3 @@ func handleReload(ctx context.Context, current *daemonState, configPath string, 
 	log.Info("config reloaded", "sources", len(newCfg.Sources))
 	return nil
 }
-
-var _ = os.Stderr

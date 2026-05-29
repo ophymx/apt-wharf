@@ -60,7 +60,7 @@ func New(client *http.Client) *Fetcher { return &Fetcher{Client: client} }
 
 // Fetch performs the full extraction pipeline for a single .deb URL.
 func (f *Fetcher) Fetch(ctx context.Context, opts Options) (*Result, error) {
-	res, fullBody, err := f.rangeFetch(ctx, opts)
+	res, err := f.rangeFetch(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -79,26 +79,23 @@ func (f *Fetcher) Fetch(ctx context.Context, opts Options) (*Result, error) {
 	if res.Size == 0 {
 		res.Size = size
 	}
-	_ = fullBody
 	return res, nil
 }
 
-// rangeFetch returns:
-//   - res with Control + Size populated; SHA256 populated only when the
-//     server returned 200 and we hashed the body in-stream.
-//   - fullBody: when the server returned 200 on a range request, the body
-//     bytes (caller may use to avoid a second fetch). nil otherwise.
-func (f *Fetcher) rangeFetch(ctx context.Context, opts Options) (*Result, []byte, error) {
+// rangeFetch returns res with Control + Size populated. SHA256 is populated
+// only when the server returned 200 and we hashed the body in-stream; on
+// 206 the caller is responsible for a follow-up streaming pass.
+func (f *Fetcher) rangeFetch(ctx context.Context, opts Options) (*Result, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opts.URL, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	applyHeaders(req, opts.Headers)
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", HeadWindow-1))
 
 	resp, err := f.Client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("GET %s: %w", opts.URL, err)
+		return nil, fmt.Errorf("GET %s: %w", opts.URL, err)
 	}
 	defer resp.Body.Close()
 
@@ -106,17 +103,17 @@ func (f *Fetcher) rangeFetch(ctx context.Context, opts Options) (*Result, []byte
 	case http.StatusPartialContent:
 		head, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read head: %w", err)
+			return nil, fmt.Errorf("read head: %w", err)
 		}
 		size, err := totalFromContentRange(resp.Header.Get("Content-Range"))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		ctrl, err := f.extractControl(ctx, opts, head, size)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		return &Result{Control: ctrl, Size: size}, nil, nil
+		return &Result{Control: ctrl, Size: size}, nil
 
 	case http.StatusOK:
 		// Server doesn't support range — we got the full body. Hash inline
@@ -126,21 +123,20 @@ func (f *Fetcher) rangeFetch(ctx context.Context, opts Options) (*Result, []byte
 		var buf bytes.Buffer
 		n, err := io.Copy(io.MultiWriter(&buf, h), resp.Body)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read body: %w", err)
+			return nil, fmt.Errorf("read body: %w", err)
 		}
-		full := buf.Bytes()
-		ctrl, err := f.extractControl(ctx, opts, full, n)
+		ctrl, err := f.extractControl(ctx, opts, buf.Bytes(), n)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		return &Result{
 			Control: ctrl,
 			Size:    n,
 			SHA256:  hex.EncodeToString(h.Sum(nil)),
-		}, full, nil
+		}, nil
 
 	default:
-		return nil, nil, fmt.Errorf("GET %s: unexpected status %s", opts.URL, resp.Status)
+		return nil, fmt.Errorf("GET %s: unexpected status %s", opts.URL, resp.Status)
 	}
 }
 
