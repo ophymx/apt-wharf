@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	cooperbuild "github.com/ophymx/apt-wharf/internal/cooper/build"
 	"github.com/ophymx/apt-wharf/internal/chandler/keys"
+	cooperbuild "github.com/ophymx/apt-wharf/internal/cooper/build"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
