@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/ophymx/apt-wharf/internal/version"
 )
 
 // newLogger builds an slog.Logger configured by --log-level and --log-format.
@@ -44,6 +46,9 @@ func main() {
 		err = cmdCheck(os.Args[2:], log)
 	case "-h", "--help", "help":
 		usage()
+		return
+	case "-v", "--version", "version":
+		fmt.Println(version.String("signpost"))
 		return
 	default:
 		usage()

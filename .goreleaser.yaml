@@ -21,7 +21,11 @@ builds:
     env:
       - CGO_ENABLED=0
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags:
+      - -s -w
+      - -X github.com/ophymx/apt-wharf/internal/version.Version={{ .Version }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Commit={{ .Commit }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux]
     goarch: [amd64, arm64, arm, riscv64]
@@ -33,7 +37,11 @@ builds:
     env:
       - CGO_ENABLED=0
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags:
+      - -s -w
+      - -X github.com/ophymx/apt-wharf/internal/version.Version={{ .Version }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Commit={{ .Commit }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux]
     goarch: [amd64, arm64, arm, riscv64]
@@ -45,7 +53,11 @@ builds:
     env:
       - CGO_ENABLED=0
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags:
+      - -s -w
+      - -X github.com/ophymx/apt-wharf/internal/version.Version={{ .Version }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Commit={{ .Commit }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux]
     goarch: [amd64, arm64, arm, riscv64]
@@ -57,7 +69,11 @@ builds:
     env:
       - CGO_ENABLED=0
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags:
+      - -s -w
+      - -X github.com/ophymx/apt-wharf/internal/version.Version={{ .Version }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Commit={{ .Commit }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux]
     goarch: [amd64, arm64, arm, riscv64]
@@ -69,7 +85,11 @@ builds:
     env:
       - CGO_ENABLED=0
     flags: [-trimpath]
-    ldflags: [-s -w]
+    ldflags:
+      - -s -w
+      - -X github.com/ophymx/apt-wharf/internal/version.Version={{ .Version }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Commit={{ .Commit }}
+      - -X github.com/ophymx/apt-wharf/internal/version.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux]
     goarch: [amd64, arm64, arm, riscv64]

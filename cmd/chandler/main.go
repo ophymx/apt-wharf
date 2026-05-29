@@ -14,6 +14,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/ophymx/apt-wharf/internal/version"
 )
 
 func main() {
@@ -29,6 +31,9 @@ func main() {
 		err = cmdDiscover(os.Args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
+		return
+	case "-v", "--version", "version":
+		fmt.Println(version.String("chandler"))
 		return
 	default:
 		fmt.Fprintf(os.Stderr, "chandler: unknown subcommand %q\n", os.Args[1])

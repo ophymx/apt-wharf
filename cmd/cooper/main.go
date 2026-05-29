@@ -9,6 +9,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/ophymx/apt-wharf/internal/version"
 )
 
 func main() {
@@ -26,6 +28,9 @@ func main() {
 		err = cmdBuild(os.Args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
+		return
+	case "-v", "--version", "version":
+		fmt.Println(version.String("cooper"))
 		return
 	default:
 		fmt.Fprintf(os.Stderr, "cooper: unknown subcommand %q\n", os.Args[1])
