@@ -124,6 +124,7 @@ nfpms:
     vendor: Ophymx
     homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
+    license: MIT
     description: |
       Stitch external .deb downloads into a signed apt repository.
       apt-signpost hosts and signs the apt metadata (InRelease, Release,
@@ -174,6 +175,7 @@ nfpms:
     vendor: Ophymx
     homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
+    license: MIT
     # Runtime dependency: cooper execs `nfpm` from PATH during `cooper build`.
     # nfpm is not in Debian's apt archive, so it is not declared as Depends
     # here; install it separately (e.g. from goreleaser's nfpm .deb release).
@@ -198,6 +200,7 @@ nfpms:
     vendor: Ophymx
     homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
+    license: MIT
     # chandler emits plan.Plan JSON for cooper-build to consume; the actual
     # .deb production runs through cooper, which execs nfpm. Declared
     # alongside cooper so the two ship as a pair.
@@ -224,6 +227,7 @@ nfpms:
     vendor: Ophymx
     homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
+    license: MIT
     # Runtime dependencies: drayman shells out to the configured apt-repo
     # manager (aptly or reprepro). Not declared as Depends since either
     # backend may be chosen.
@@ -248,6 +252,7 @@ nfpms:
     vendor: Ophymx
     homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
+    license: MIT
     # Pairs with cooper the same way chandler does — staves emits a
     # plan.Plan for `cooper build -` to consume.
     description: |

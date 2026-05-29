@@ -183,3 +183,8 @@ go test -tags integration ./internal/source/...  # live GitHub
 
 Cooper's and chandler's reproducibility self-checks run only when `nfpm`
 is on `$PATH`; they auto-skip otherwise.
+
+## License
+
+[MIT](./LICENSE). All runtime dependencies are MIT, Apache-2.0, BSD-2/3,
+or public domain — none copyleft.
