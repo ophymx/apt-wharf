@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/ophymx/apt-wharf/internal/drayman/backend"
@@ -21,11 +22,12 @@ type backendFlags struct {
 	kind *string
 
 	// aptly
-	aptlyURL      *string
-	repo          *string
-	publishPrefix *string
-	publishDist   *string
-	skipSigning   *bool
+	aptlyURL         *string
+	aptlyBearerToken *string
+	repo             *string
+	publishPrefix    *string
+	publishDist      *string
+	skipSigning      *bool
 
 	// reprepro (local + ssh share most)
 	repreproBasedir *string
@@ -36,16 +38,17 @@ type backendFlags struct {
 
 func registerBackendFlags(fs *flag.FlagSet) *backendFlags {
 	bf := &backendFlags{
-		kind:            fs.String("backend", "aptly", "repo backend: aptly | reprepro-local | reprepro-ssh"),
-		aptlyURL:        fs.String("aptly-url", "", "(aptly) base URL of aptly API"),
-		repo:            fs.String("repo", "", "(aptly) local repository name"),
-		publishPrefix:   fs.String("publish-prefix", ".", "(aptly) publish prefix"),
-		publishDist:     fs.String("publish-distribution", "", "(aptly) publish distribution"),
-		skipSigning:     fs.Bool("skip-signing", false, "(aptly) set Signing.Skip on publish update"),
-		repreproBasedir: fs.String("reprepro-basedir", "", "(reprepro) -b argument; path to repo basedir"),
-		distribution:    fs.String("distribution", "", "(reprepro) apt distribution name"),
-		component:       fs.String("component", "main", "(reprepro) apt component"),
-		sshDest:         fs.String("ssh-dest", "", "(reprepro-ssh) ssh destination (user@host or ssh_config alias)"),
+		kind:             fs.String("backend", "aptly", "repo backend: aptly | reprepro-local | reprepro-ssh"),
+		aptlyURL:         fs.String("aptly-url", "", "(aptly) base URL of aptly API"),
+		aptlyBearerToken: fs.String("aptly-bearer-token", os.Getenv("APTLY_TOKEN"), "(aptly) bearer token for Authorization header; defaults to $APTLY_TOKEN"),
+		repo:             fs.String("repo", "", "(aptly) local repository name"),
+		publishPrefix:    fs.String("publish-prefix", ".", "(aptly) publish prefix"),
+		publishDist:      fs.String("publish-distribution", "", "(aptly) publish distribution"),
+		skipSigning:      fs.Bool("skip-signing", false, "(aptly) set Signing.Skip on publish update"),
+		repreproBasedir:  fs.String("reprepro-basedir", "", "(reprepro) -b argument; path to repo basedir"),
+		distribution:     fs.String("distribution", "", "(reprepro) apt distribution name"),
+		component:        fs.String("component", "main", "(reprepro) apt component"),
+		sshDest:          fs.String("ssh-dest", "", "(reprepro-ssh) ssh destination (user@host or ssh_config alias)"),
 	}
 	return bf
 }
@@ -59,9 +62,13 @@ func (bf *backendFlags) resolveBackend() (backend.Backend, error) {
 		if *bf.aptlyURL == "" || *bf.repo == "" {
 			return nil, errors.New("--backend aptly requires --aptly-url and --repo")
 		}
+		hc := &http.Client{Timeout: 5 * time.Minute}
+		if *bf.aptlyBearerToken != "" {
+			hc.Transport = bearerTransport{token: *bf.aptlyBearerToken, base: http.DefaultTransport}
+		}
 		return aptlyBackend.New(aptlyBackend.Opts{
 			BaseURL:       *bf.aptlyURL,
-			HTTPClient:    &http.Client{Timeout: 5 * time.Minute},
+			HTTPClient:    hc,
 			Repo:          *bf.repo,
 			PublishPrefix: *bf.publishPrefix,
 			Distribution:  *bf.publishDist,
@@ -97,4 +104,19 @@ func newRunID() string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// bearerTransport injects a static Authorization: Bearer header on
+// every aptly API request. Used when --aptly-bearer-token / $APTLY_TOKEN
+// is set; aptly itself has no native auth, but reverse proxies in
+// front of it commonly enforce bearer tokens.
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (b bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	r.Header.Set("Authorization", "Bearer "+b.token)
+	return b.base.RoundTrip(r)
 }
