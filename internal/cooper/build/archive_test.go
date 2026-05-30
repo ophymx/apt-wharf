@@ -338,6 +338,101 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
+// buildTarGzWithPAXGlobal mirrors buildTarGz but prepends a single PAX
+// global header carrying a "comment" record — the exact shape git
+// archive emits at the top of every github.com/<repo>/archive/refs/
+// tags/*.tar.gz. tar.Writer is picky about TypeXGlobalHeader (only
+// PAXRecords + Format may be set), so this is a separate helper rather
+// than a tarEntry extension.
+func buildTarGzWithPAXGlobal(t *testing.T, entries []tarEntry) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "in.tar.gz")
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+
+	if err := tw.WriteHeader(&tar.Header{
+		Typeflag:   tar.TypeXGlobalHeader,
+		Format:     tar.FormatPAX,
+		PAXRecords: map[string]string{"comment": "0123456789abcdef0123456789abcdef01234567"},
+	}); err != nil {
+		t.Fatalf("write PAX global: %v", err)
+	}
+
+	for _, e := range entries {
+		typ := e.Type
+		if typ == 0 {
+			typ = tar.TypeReg
+		}
+		hdr := &tar.Header{
+			Name:     e.Name,
+			Mode:     e.Mode,
+			Size:     int64(len(e.Body)),
+			Typeflag: typ,
+			Linkname: e.Linkname,
+		}
+		if typ != tar.TypeReg && typ != tar.TypeRegA {
+			hdr.Size = 0
+		}
+		if hdr.Mode == 0 {
+			hdr.Mode = 0o644
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+		if hdr.Size > 0 {
+			if _, err := tw.Write([]byte(e.Body)); err != nil {
+				t.Fatalf("write body: %v", err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gz close: %v", err)
+	}
+	if err := os.WriteFile(p, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	return p
+}
+
+func TestExtract_SkipsPAXGlobalHeader(t *testing.T) {
+	// git archive prepends a PAX global header carrying the commit
+	// hash to every github.com/<repo>/archive/refs/tags/*.tar.gz.
+	// Cooper used to reject this with "unsupported tar type 103".
+	path := buildTarGzWithPAXGlobal(t, []tarEntry{
+		{Name: "foo/bar", Body: "hello"},
+	})
+	dest := t.TempDir()
+	if err := Extract(path, dest, ExtractOpts{}); err != nil {
+		t.Fatalf("extract should succeed past PAX global header, got %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dest, "foo/bar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "hello" {
+		t.Errorf("body: %q, want hello", body)
+	}
+}
+
+func TestExtract_PAXNotCountedTowardMaxFiles(t *testing.T) {
+	// Two real files plus one PAX global. MaxFiles=2 must succeed —
+	// PAX headers aren't files and shouldn't burn count budget.
+	path := buildTarGzWithPAXGlobal(t, []tarEntry{
+		{Name: "a", Body: "a"},
+		{Name: "b", Body: "b"},
+	})
+	dest := t.TempDir()
+	if err := Extract(path, dest, ExtractOpts{MaxFiles: 2}); err != nil {
+		t.Errorf("PAX globals shouldn't count toward MaxFiles, got %v", err)
+	}
+}
+
 func TestExtract_BytesAboveCeiling(t *testing.T) {
 	// Synthesize a (tiny, valid) archive so we know any failure is the
 	// ceiling check rejecting opts, not extraction itself.

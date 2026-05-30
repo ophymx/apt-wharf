@@ -158,6 +158,17 @@ func extractTar(r io.Reader, destDir string, opts ExtractOpts) error {
 		if err != nil {
 			return fmt.Errorf("tar header: %w", err)
 		}
+
+		// PAX extended/global headers are metadata-only: tar.Reader has
+		// already merged the contents into subsequent file Headers as
+		// needed. They aren't files and shouldn't materialize on disk
+		// or count against opts.MaxFiles. Emitted by git archive (every
+		// github.com/owner/repo/archive/refs/tags/*.tar.gz), GNU tar
+		// 1.30+, bsdtar — most modern upstream tarballs.
+		if hdr.Typeflag == tar.TypeXHeader || hdr.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
+
 		fileCount++
 		if fileCount > opts.MaxFiles {
 			return fmt.Errorf("archive has more than %d entries", opts.MaxFiles)
