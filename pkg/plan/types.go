@@ -101,12 +101,29 @@ type FetchedKey struct {
 // failure-isolation rule in cooper-design.md §"Phases · Build" lets
 // sibling artifacts in the same package finish even when one errors.
 type Artifact struct {
-	Arch      string    `json:"arch"`
-	Assets    []Asset   `json:"assets"`
-	Deb       Deb       `json:"deb"`
-	BuildPlan BuildPlan `json:"build_plan"`
-	Result    string    `json:"result,omitempty"`
-	Error     *Error    `json:"error,omitempty"`
+	Arch      string         `json:"arch"`
+	Assets    []Asset        `json:"assets"`
+	Deb       Deb            `json:"deb"`
+	BuildPlan BuildPlan      `json:"build_plan"`
+	Extract   *ExtractLimits `json:"extract,omitempty"`
+	Result    string         `json:"result,omitempty"`
+	Error     *Error         `json:"error,omitempty"`
+}
+
+// ExtractLimits is the optional per-artifact override for cooper-build's
+// archive-extraction safety caps. nil means "use cooper's defaults"
+// (1 GiB / 100 000 entries). Either field at zero also falls back to
+// the corresponding default. Lives outside BuildPlan so it does not
+// participate in build_inputs_hash — two builds with different caps
+// but the same logical inputs produce byte-identical .deb output.
+//
+// Cooper's `discover` populates this from the recipe's `extract:`
+// block; external producers may set it directly. Hard ceilings (see
+// cooper-design.md §"Security & sandboxing") still apply at build
+// time even when the JSON declares larger values.
+type ExtractLimits struct {
+	MaxBytes int64 `json:"max_bytes,omitempty"`
+	MaxFiles int   `json:"max_files,omitempty"`
 }
 
 // Asset describes the upstream binary cooper will fetch.

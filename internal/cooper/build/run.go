@@ -207,7 +207,7 @@ func buildOne(
 		}
 
 		if IsArchive(a.Name) {
-			if err := Extract(assetPath, assetDir, ExtractOpts{}); err != nil {
+			if err := Extract(assetPath, assetDir, extractOptsFromArtifact(art)); err != nil {
 				return art, fmt.Errorf("extract %s: %w", a.Name, err)
 			}
 			if err := os.Remove(assetPath); err != nil {
@@ -395,4 +395,17 @@ func AnyArtifactFailed(p *plan.Plan) bool {
 		}
 	}
 	return false
+}
+
+// extractOptsFromArtifact translates the plan-side ExtractLimits into
+// the build-side ExtractOpts. nil and zero fields fall through; the
+// Extract function handles the "≤ 0 → default" substitution itself.
+func extractOptsFromArtifact(art plan.Artifact) ExtractOpts {
+	if art.Extract == nil {
+		return ExtractOpts{}
+	}
+	return ExtractOpts{
+		MaxBytes: art.Extract.MaxBytes,
+		MaxFiles: art.Extract.MaxFiles,
+	}
 }

@@ -29,6 +29,13 @@ const (
 	defaultMaxBytes int64 = 1 << 30
 	defaultMaxFiles       = 100_000
 
+	// Build-side hard ceilings, mirroring the validate-time check in
+	// internal/cooper/config. Independent enforcement at both layers
+	// means an external producer can't sidestep the safety net by
+	// emitting a plan with absurd extract values.
+	extractCeilingBytes int64 = 64 << 30 // 64 GiB
+	extractCeilingFiles       = 2_000_000
+
 	// maxComponentBytes mirrors stage.maxPathComponentBytes — every
 	// path component the tarball declares must fit a typical filesystem.
 	maxComponentBytes = 255
@@ -56,8 +63,14 @@ func Extract(archivePath, destDir string, opts ExtractOpts) error {
 	if opts.MaxBytes <= 0 {
 		opts.MaxBytes = defaultMaxBytes
 	}
+	if opts.MaxBytes > extractCeilingBytes {
+		return fmt.Errorf("extract opts: max_bytes %d exceeds ceiling of %d", opts.MaxBytes, extractCeilingBytes)
+	}
 	if opts.MaxFiles <= 0 {
 		opts.MaxFiles = defaultMaxFiles
+	}
+	if opts.MaxFiles > extractCeilingFiles {
+		return fmt.Errorf("extract opts: max_files %d exceeds ceiling of %d", opts.MaxFiles, extractCeilingFiles)
 	}
 
 	lower := strings.ToLower(archivePath)

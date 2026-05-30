@@ -287,6 +287,11 @@ arches                        map<arch, {
                                   asset: STRING        singular (sugar; one asset)
                                   assets: [STRING]     plural (multi-asset)
                               }>                       ≥ 1 entry
+extract.max_bytes             STRING (humanized)       optional; default 1 GiB
+                              ("8GiB", "4096MB", or    (ceiling 64 GiB)
+                              bare integer bytes)
+extract.max_files             int                      optional; default 100k
+                                                       (ceiling 2,000,000)
 ```
 
 Doc 1's only string-substitution surface is the `arches.<arch>.asset(s):`
@@ -637,6 +642,13 @@ Field notes:
   intentional.
 - **`deb.path` / `deb.sha256`** are `null` in discover output and
   populated in build output. Same JSON shape on both sides.
+- **`artifact.extract`** is an optional sibling of `build_plan` with
+  `max_bytes` (int64) and `max_files` (int); absent means "use cooper's
+  defaults" (1 GiB / 100 000). Populated by discover from the recipe's
+  `extract:` block; external producers may set it directly. Lives
+  outside `build_plan` so it doesn't enter `build_inputs_hash` —
+  two builds with different extract caps but the same logical inputs
+  still produce byte-identical `.deb`s.
 - **Artifact-level `result` / `error`** are absent on discover output
   (artifact failures collapse into a package-level error there) and
   populated by build only when an individual artifact's pipeline
@@ -847,6 +859,13 @@ For asset extraction:
 
 - Hard caps on uncompressed size (default 1 GiB) and file count
   (default 100 000) per asset.
+- Recipes that legitimately need higher caps (large IDEs, framework
+  distributions) declare them explicitly in the sidecar's `extract:`
+  block — `max_bytes` accepts humanized suffixes (`8GiB`, `4096MB`,
+  bare byte counts), `max_files` is a positive int. Both knobs fall
+  back to the defaults above when unset. A hard ceiling of 64 GiB /
+  2 000 000 files applies on top, so a malicious or compromised
+  recipe can't disable the safety net entirely.
 - Refuse `..` path components, absolute paths, `\0`.
 - Refuse symlinks/hardlinks pointing outside the destination prefix.
 - Refuse devices, FIFOs, sockets, setuid/setgid bits. Modes masked

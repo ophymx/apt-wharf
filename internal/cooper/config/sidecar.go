@@ -23,6 +23,36 @@ type Sidecar struct {
 	VersionRegex    string          `yaml:"version_regex"`
 	Epoch           int             `yaml:"epoch"`
 	Arches          map[string]Arch `yaml:"arches"`
+	Extract         *ExtractLimits  `yaml:"extract"`
+}
+
+// ExtractLimits is the optional per-recipe override for the archive-
+// extraction safety caps. See cooper-design.md §"Security & sandboxing"
+// — defaults apply when the block is absent or a single knob is unset.
+// MaxBytes is humanized at the YAML surface ("8GiB", "4096MB", or a
+// bare integer byte count); maxBytesParsed is memoized by validate.
+type ExtractLimits struct {
+	MaxBytes string `yaml:"max_bytes"`
+	MaxFiles int    `yaml:"max_files"`
+
+	maxBytesParsed int64 // populated by validateExtract
+}
+
+// ResolvedMaxBytes returns the parsed byte cap. 0 means "use default";
+// the build-side Extract function already handles that translation.
+func (e *ExtractLimits) ResolvedMaxBytes() int64 {
+	if e == nil {
+		return 0
+	}
+	return e.maxBytesParsed
+}
+
+// ResolvedMaxFiles returns the file-count cap. 0 means "use default."
+func (e *ExtractLimits) ResolvedMaxFiles() int {
+	if e == nil {
+		return 0
+	}
+	return e.MaxFiles
 }
 
 // Source is a discriminated union over discovery backends. Exactly one

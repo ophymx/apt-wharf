@@ -337,6 +337,7 @@ func buildXMLURLArtifact(
 		Assets:    planAssets,
 		Deb:       deb,
 		BuildPlan: bp,
+		Extract:   extractLimitsFromSidecar(pkgFile.Sidecar.Extract),
 	}, nil
 }
 
@@ -421,6 +422,7 @@ func buildArtifact(
 		Assets:    planAssets,
 		Deb:       deb,
 		BuildPlan: bp,
+		Extract:   extractLimitsFromSidecar(pkgFile.Sidecar.Extract),
 	}, nil
 }
 
@@ -500,6 +502,7 @@ func buildJSONURLArtifact(
 		Assets:    planAssets,
 		Deb:       deb,
 		BuildPlan: bp,
+		Extract:   extractLimitsFromSidecar(pkgFile.Sidecar.Extract),
 	}, nil
 }
 
@@ -665,6 +668,7 @@ func buildExternalArtifact(
 		Assets:    []plan.Asset{planAsset},
 		Deb:       deb,
 		BuildPlan: bp,
+		Extract:   extractLimitsFromSidecar(pkgFile.Sidecar.Extract),
 	}, nil
 }
 
@@ -679,6 +683,21 @@ func renderPlainAssetURL(template, version, arch string) (string, error) {
 		return "", fmt.Errorf("rendered URL %q still contains an unresolved ${...} placeholder", out)
 	}
 	return out, nil
+}
+
+// extractLimitsFromSidecar copies the recipe's extract: block into the
+// plan-level shape. Returns nil when the recipe didn't set the block,
+// so the JSON omits the field entirely and build falls back to cooper's
+// defaults. Validation has already memoized max_bytes into the int64
+// form on the ExtractLimits struct, so this is a straight projection.
+func extractLimitsFromSidecar(e *config.ExtractLimits) *plan.ExtractLimits {
+	if e == nil {
+		return nil
+	}
+	return &plan.ExtractLimits{
+		MaxBytes: e.ResolvedMaxBytes(),
+		MaxFiles: e.ResolvedMaxFiles(),
+	}
 }
 
 // basenameFromURL returns the last path segment of a URL, used as the

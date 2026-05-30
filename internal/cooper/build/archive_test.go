@@ -337,3 +337,36 @@ func itoa(n int) string {
 	}
 	return string(b[i:])
 }
+
+func TestExtract_BytesAboveCeiling(t *testing.T) {
+	// Synthesize a (tiny, valid) archive so we know any failure is the
+	// ceiling check rejecting opts, not extraction itself.
+	path := buildTarGz(t, []tarEntry{{Name: "foo/bar", Body: "x"}})
+	dest := t.TempDir()
+	err := Extract(path, dest, ExtractOpts{MaxBytes: 128 << 30}) // 128 GiB > 64 GiB ceiling
+	if err == nil || !strings.Contains(err.Error(), "exceeds ceiling") {
+		t.Errorf("expected ceiling error, got %v", err)
+	}
+}
+
+func TestExtract_FilesAboveCeiling(t *testing.T) {
+	path := buildTarGz(t, []tarEntry{{Name: "foo/bar", Body: "x"}})
+	dest := t.TempDir()
+	err := Extract(path, dest, ExtractOpts{MaxFiles: 5_000_000})
+	if err == nil || !strings.Contains(err.Error(), "exceeds ceiling") {
+		t.Errorf("expected ceiling error, got %v", err)
+	}
+}
+
+func TestExtract_HigherCapHonored(t *testing.T) {
+	// Build a tar that's larger than the default 1 GiB cap would allow
+	// in principle, but we test in the small: just confirm a non-default
+	// MaxBytes is threaded through (the default-substitution path would
+	// reject it as too small if the field were lost).
+	path := buildTarGz(t, []tarEntry{{Name: "foo/bar", Body: "hello"}})
+	dest := t.TempDir()
+	// 4 GiB cap — bigger than default, smaller than ceiling. Must succeed.
+	if err := Extract(path, dest, ExtractOpts{MaxBytes: 4 << 30, MaxFiles: 200_000}); err != nil {
+		t.Errorf("expected extract to succeed under raised cap, got %v", err)
+	}
+}

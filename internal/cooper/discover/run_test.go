@@ -690,6 +690,63 @@ func TestRun_External(t *testing.T) {
 	}
 }
 
+func TestRun_External_ExtractLimitsPropagate(t *testing.T) {
+	dir := t.TempDir()
+	pkgBody := `---
+source:
+  external:
+    command: ["./discover.sh"]
+arches:
+  amd64: {}
+extract:
+  max_bytes: 8GiB
+  max_files: 50000
+---
+name: bigide
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: large IDE that needs roomier extract caps
+contents:
+  - src: ${ASSETS}/bigide
+    dst: /opt/bigide
+`
+	scriptBody := `#!/bin/sh
+echo '{"version":"1.0.0","assets":[{"arch":"amd64","url":"https://example.invalid/bigide-1.0.0-amd64.tar.gz"}]}'
+`
+	writeFile(t, filepath.Join(dir, "packages/bigide.yaml"), pkgBody)
+	writeFile(t, filepath.Join(dir, "packages/discover.sh"), scriptBody)
+	if err := os.Chmod(filepath.Join(dir, "packages/discover.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "packages/bigide"), "x")
+	writeFile(t, filepath.Join(dir, "cooper.yaml"), "packages:\n  - ./packages/bigide.yaml\n")
+
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Tool: plan.Tool{Name: "cooper", Version: "0.0.0-test", FormatRevision: plan.FormatRevision}}
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultOK {
+		t.Fatalf("result: %s err: %+v", pkg.Result, pkg.Error)
+	}
+	art := pkg.Artifacts[0]
+	if art.Extract == nil {
+		t.Fatal("artifact.Extract nil — extract: block didn't propagate")
+	}
+	if art.Extract.MaxBytes != 8<<30 {
+		t.Errorf("MaxBytes: %d, want %d", art.Extract.MaxBytes, int64(8<<30))
+	}
+	if art.Extract.MaxFiles != 50000 {
+		t.Errorf("MaxFiles: %d", art.Extract.MaxFiles)
+	}
+}
+
 func TestRun_External_URLDriftRejected(t *testing.T) {
 	dir := t.TempDir()
 	// Recipe pins the URL shape; script returns a URL that doesn't fit.

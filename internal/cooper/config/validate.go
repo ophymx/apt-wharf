@@ -5,8 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+)
+
+// Hard ceilings on per-recipe extract overrides — keep the safety net
+// non-disablable. See cooper-design.md §"Security & sandboxing".
+const (
+	extractCeilingBytes int64 = 64 << 30 // 64 GiB
+	extractCeilingFiles       = 2_000_000
 )
 
 // validateSidecar enforces the doc 1 schema from cooper-design.md.
@@ -35,7 +43,106 @@ func validateSidecar(s *Sidecar, yamlDir string) error {
 	if err := validateArches(&s.Source, s.Arches); err != nil {
 		return err
 	}
+	if err := validateExtract(s.Extract); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateExtract checks the optional extract: block and memoizes the
+// parsed MaxBytes int64 on the struct. Both knobs fall back to cooper's
+// defaults independently when unset; setting the block but leaving both
+// knobs zero is rejected as an authoring error.
+func validateExtract(e *ExtractLimits) error {
+	if e == nil {
+		return nil
+	}
+	if e.MaxBytes == "" && e.MaxFiles == 0 {
+		return fmt.Errorf("extract: must set at least one of max_bytes, max_files")
+	}
+	if e.MaxBytes != "" {
+		n, err := parseHumanBytes(e.MaxBytes)
+		if err != nil {
+			return fmt.Errorf("extract.max_bytes %q: %w", e.MaxBytes, err)
+		}
+		if n <= 0 {
+			return fmt.Errorf("extract.max_bytes %q: must be positive", e.MaxBytes)
+		}
+		if n > extractCeilingBytes {
+			return fmt.Errorf("extract.max_bytes %q: exceeds hard ceiling of %d bytes", e.MaxBytes, extractCeilingBytes)
+		}
+		e.maxBytesParsed = n
+	}
+	if e.MaxFiles < 0 {
+		return fmt.Errorf("extract.max_files: must be non-negative (got %d)", e.MaxFiles)
+	}
+	if e.MaxFiles > extractCeilingFiles {
+		return fmt.Errorf("extract.max_files %d: exceeds hard ceiling of %d", e.MaxFiles, extractCeilingFiles)
+	}
+	return nil
+}
+
+// parseHumanBytes accepts bare integer bytes ("8589934592"), SI suffixes
+// (K/M/G/T = ×1000^n), and binary suffixes (Ki/Mi/Gi/Ti = ×1024^n).
+// Optional trailing "B" is accepted for either form ("8GiB", "8GB"). No
+// floating-point input — recipe authors should use round numbers, and
+// hand-rolling against strconv.ParseFloat is more surface area than the
+// readability gain. Case-sensitive on the unit letter; lowercase "ki",
+// "mi" etc. are rejected to keep the grammar narrow.
+func parseHumanBytes(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty")
+	}
+	// Strip optional trailing "B".
+	body := strings.TrimSuffix(s, "B")
+	// Find where the digits end.
+	cut := 0
+	for cut < len(body) && body[cut] >= '0' && body[cut] <= '9' {
+		cut++
+	}
+	if cut == 0 {
+		return 0, fmt.Errorf("no leading digits")
+	}
+	numPart := body[:cut]
+	unitPart := body[cut:]
+
+	n, err := strconv.ParseInt(numPart, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse %q: %w", numPart, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("negative value")
+	}
+
+	var mul int64 = 1
+	switch unitPart {
+	case "":
+		mul = 1
+	case "K":
+		mul = 1_000
+	case "M":
+		mul = 1_000_000
+	case "G":
+		mul = 1_000_000_000
+	case "T":
+		mul = 1_000_000_000_000
+	case "Ki":
+		mul = 1 << 10
+	case "Mi":
+		mul = 1 << 20
+	case "Gi":
+		mul = 1 << 30
+	case "Ti":
+		mul = 1 << 40
+	default:
+		return 0, fmt.Errorf("unknown unit %q (want K/M/G/T or Ki/Mi/Gi/Ti)", unitPart)
+	}
+	// Overflow check: n * mul must fit in int64.
+	if mul > 0 && n > (1<<62)/mul {
+		return 0, fmt.Errorf("value overflows int64")
+	}
+	return n * mul, nil
 }
 
 func validateSource(src *Source, yamlDir string) error {
