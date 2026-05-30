@@ -174,3 +174,69 @@ echo "{\"version\":\"$FOO\",\"assets\":[{\"arch\":\"amd64\",\"url\":\"https://ex
 		t.Errorf("Version: %q, want 9.9.9 (env not threaded through)", res.Version)
 	}
 }
+
+func TestResolveExternal_EnvForward(t *testing.T) {
+	dir := t.TempDir()
+	// Script reads MY_TOKEN and reports it as the version so the test
+	// can observe what made it across.
+	writeScript(t, dir, `#!/bin/sh
+echo "{\"version\":\"$MY_TOKEN\",\"assets\":[{\"arch\":\"amd64\",\"url\":\"https://example.invalid/x.tar.gz\"}]}"
+`)
+	t.Setenv("MY_TOKEN", "1.2.3")
+	res, err := ResolveExternal(context.Background(), &config.ExternalSource{
+		Command:    []string{"./discover.sh"},
+		EnvForward: []string{"MY_TOKEN"},
+	}, dir)
+	if err != nil {
+		t.Fatalf("ResolveExternal: %v", err)
+	}
+	if res.Version != "1.2.3" {
+		t.Errorf("Version: %q, want 1.2.3 (MY_TOKEN didn't forward)", res.Version)
+	}
+}
+
+func TestResolveExternal_EnvForward_UnsetIsSilent(t *testing.T) {
+	dir := t.TempDir()
+	// Script reports whether ABSENT_VAR was set in its env.
+	writeScript(t, dir, `#!/bin/sh
+if [ -n "${ABSENT_VAR+x}" ]; then v="leaked"; else v="1.0.0"; fi
+echo "{\"version\":\"$v\",\"assets\":[{\"arch\":\"amd64\",\"url\":\"https://example.invalid/x.tar.gz\"}]}"
+`)
+	t.Setenv("ABSENT_VAR", "")
+	// Make sure it's truly unset in os.Environ — t.Setenv with empty
+	// value still sets it. Use os.Unsetenv directly.
+	if err := os.Unsetenv("ABSENT_VAR"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ResolveExternal(context.Background(), &config.ExternalSource{
+		Command:    []string{"./discover.sh"},
+		EnvForward: []string{"ABSENT_VAR"},
+	}, dir)
+	if err != nil {
+		t.Fatalf("ResolveExternal: %v", err)
+	}
+	if res.Version != "1.0.0" {
+		t.Errorf("Version: %q, want 1.0.0 — unset env_forward var leaked into child", res.Version)
+	}
+}
+
+func TestResolveExternal_LiteralEnvBeatsForward(t *testing.T) {
+	dir := t.TempDir()
+	writeScript(t, dir, `#!/bin/sh
+echo "{\"version\":\"$FOO\",\"assets\":[{\"arch\":\"amd64\",\"url\":\"https://example.invalid/x.tar.gz\"}]}"
+`)
+	// Caller's env has FOO=fromhost; recipe pins FOO=fromrecipe via
+	// the literal env: map. Recipe value must win.
+	t.Setenv("FOO", "fromhost")
+	res, err := ResolveExternal(context.Background(), &config.ExternalSource{
+		Command:    []string{"./discover.sh"},
+		Env:        map[string]string{"FOO": "fromrecipe"},
+		EnvForward: []string{"FOO"},
+	}, dir)
+	if err != nil {
+		t.Fatalf("ResolveExternal: %v", err)
+	}
+	if res.Version != "fromrecipe" {
+		t.Errorf("Version: %q, want fromrecipe — literal env should override forward", res.Version)
+	}
+}

@@ -87,7 +87,7 @@ func ResolveExternal(ctx context.Context, e *config.ExternalSource, workdir stri
 
 	cmd := exec.CommandContext(cmdCtx, e.Command[0], e.Command[1:]...)
 	cmd.Dir = workdir
-	cmd.Env = buildExternalEnv(e.Env)
+	cmd.Env = buildExternalEnv(e.Env, e.EnvForward)
 	// Share signpost's procgroup-SIGKILL + WaitDelay discipline so
 	// grandchildren spawned by a wrapper shell can't survive timeout.
 	signsource.SetProcAttrs(cmd)
@@ -158,9 +158,30 @@ func ResolveExternal(ctx context.Context, e *config.ExternalSource, workdir stri
 	}, nil
 }
 
-func buildExternalEnv(extra map[string]string) []string {
-	out := make([]string, 0, len(externalEnvAllowlist)+len(extra))
+// buildExternalEnv assembles the child environment in three layers:
+//
+//  1. proxy allowlist (HTTP[S]_PROXY / NO_PROXY in either case form),
+//     forwarded from the caller if set.
+//  2. envForward — caller-named vars (e.g. GITHUB_TOKEN) forwarded
+//     from the caller's environment. Silently dropped if the var
+//     isn't set on the caller; matches the proxy-allowlist behavior
+//     so per-recipe env_forward lists don't have to predict the
+//     deployment environment exactly.
+//  3. extra — the per-source `env:` literal map.
+//
+// Later entries win on key collision (standard exec.Cmd behavior), so
+// the per-source literal `env:` value always overrides whatever the
+// caller's environment happened to carry. A name appearing in both the
+// proxy allowlist and envForward results in two entries with the same
+// value — harmless.
+func buildExternalEnv(extra map[string]string, envForward []string) []string {
+	out := make([]string, 0, len(externalEnvAllowlist)+len(envForward)+len(extra))
 	for _, name := range externalEnvAllowlist {
+		if v, ok := os.LookupEnv(name); ok {
+			out = append(out, name+"="+v)
+		}
+	}
+	for _, name := range envForward {
 		if v, ok := os.LookupEnv(name); ok {
 			out = append(out, name+"="+v)
 		}

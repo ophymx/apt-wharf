@@ -272,7 +272,9 @@ source.github.release         "latest"                 default
                               { tag: STRING }
 source.github.include_prerelease  bool                 default false
 source.external.command       [STRING, ...]            required (argv)
-source.external.env           map<STRING, STRING>      optional
+source.external.env           map<STRING, STRING>      optional (literal)
+source.external.env_forward   [STRING, ...]            optional; forward
+                                                       caller env if set
 source.external.timeout       DURATION                 default 30s
 version_from                  tag | tag_strip_v | asset_filename | fixed
                               (rejected when source.external is set;
@@ -997,7 +999,7 @@ block picks one (validation enforces exactly-one):
   assets[]}` JSON from its stdout. The script owns the upstream-
   specific scraping; cooper continues to own everything downstream
   (`build_inputs_hash`, `source_date_epoch`, aux_files, BuildPlan
-  rendering). Schema: `source.external: { command, env, timeout }`.
+  rendering). Schema: `source.external: { command, env, env_forward, timeout }`.
   Use this for vendors that don't fit github / json / xml — Apache
   project autoindexes (apache directory-studio is the canonical
   case), vendor "click here to download" wrappers, SourceForge,
@@ -1021,18 +1023,33 @@ The recipe field shape:
 source:
   external:
     command: ["./discover.sh"]   # path resolved relative to cooper.yaml's dir
-    env:                          # optional; merged onto the env allowlist
+    env:                          # optional; literal key/value pairs
       FOO: bar
+    env_forward:                  # optional; forward from caller's env if set
+      - GITHUB_TOKEN
     timeout: 30s                  # optional; default 30s (time.ParseDuration)
 ```
 
 Cooper exec's `command` with `cwd` set to the cooper.yaml's directory
 (so `./discover.sh` resolves naturally regardless of where cooper was
-invoked from) and a stripped environment containing only `HTTP_PROXY`,
-`HTTPS_PROXY`, `NO_PROXY` (plus lowercase forms) and the per-source
-`env`. The child-process discipline matches signpost's
-`internal/source/external.go`: proc-group SIGKILL on timeout, stderr
-captured and surfaced in error messages, exit 0 = success.
+invoked from) and a stripped environment built in three layers:
+
+1. **Proxy allowlist** — `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` plus
+   lowercase forms, forwarded from the caller's environment if set.
+2. **`env_forward`** — caller-named vars (typically `GITHUB_TOKEN` and
+   similar secret/auth tokens) forwarded from the caller's environment.
+   Names not set on the caller are silently dropped, matching the proxy-
+   allowlist behavior — recipes don't have to predict the deployment
+   environment exactly. Validation rejects empty names and names
+   containing `=` / NUL.
+3. **`env`** — literal key/value pairs from the recipe.
+
+Later layers win on key collision (standard `exec.Cmd` behavior), so
+the recipe's literal `env:` always overrides whatever the caller's
+environment happened to carry. The child-process discipline matches
+signpost's `internal/source/external.go`: proc-group SIGKILL on
+timeout, stderr captured and surfaced in error messages, exit 0 =
+success.
 
 The script reads no stdin and writes one JSON document to stdout:
 

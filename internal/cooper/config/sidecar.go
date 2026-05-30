@@ -123,9 +123,10 @@ type XMLURLSource struct {
 // build_inputs_hash, source_date_epoch, aux_files, BuildPlan rendering
 // downstream. See cooper-design.md §"External source script contract".
 type ExternalSource struct {
-	Command []string          `yaml:"command"`
-	Env     map[string]string `yaml:"env"`
-	Timeout string            `yaml:"timeout"`
+	Command    []string          `yaml:"command"`
+	Env        map[string]string `yaml:"env"`
+	EnvForward []string          `yaml:"env_forward"`
+	Timeout    string            `yaml:"timeout"`
 }
 
 // Release is a flat-union: exactly one of Latest, TagPattern, Tag is

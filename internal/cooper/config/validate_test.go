@@ -133,3 +133,35 @@ func TestValidateExtract_NegativeFiles(t *testing.T) {
 		t.Errorf("expected non-negative error, got %v", err)
 	}
 }
+
+func TestValidateSource_ExternalEnvForward_Happy(t *testing.T) {
+	src := &Source{External: &ExternalSource{
+		Command:    []string{"./d.sh"},
+		EnvForward: []string{"GITHUB_TOKEN", "MY_OTHER_VAR"},
+	}}
+	if err := validateSource(src, ""); err != nil {
+		t.Errorf("expected ok, got %v", err)
+	}
+}
+
+func TestValidateSource_ExternalEnvForward_EmptyEntry(t *testing.T) {
+	src := &Source{External: &ExternalSource{
+		Command:    []string{"./d.sh"},
+		EnvForward: []string{"GITHUB_TOKEN", ""},
+	}}
+	err := validateSource(src, "")
+	if err == nil || !strings.Contains(err.Error(), "empty entry") {
+		t.Errorf("expected empty-entry error, got %v", err)
+	}
+}
+
+func TestValidateSource_ExternalEnvForward_EqualsRejected(t *testing.T) {
+	src := &Source{External: &ExternalSource{
+		Command:    []string{"./d.sh"},
+		EnvForward: []string{"FOO=BAR"},
+	}}
+	err := validateSource(src, "")
+	if err == nil || !strings.Contains(err.Error(), "must not contain") {
+		t.Errorf("expected '=' rejection, got %v", err)
+	}
+}

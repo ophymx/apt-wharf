@@ -228,6 +228,14 @@ func validateSource(src *Source, yamlDir string) error {
 				return fmt.Errorf("source.external.timeout %q: must be positive", e.Timeout)
 			}
 		}
+		for i, name := range e.EnvForward {
+			if name == "" {
+				return fmt.Errorf("source.external.env_forward[%d]: empty entry", i)
+			}
+			if strings.ContainsAny(name, "=\x00") {
+				return fmt.Errorf("source.external.env_forward[%d] %q: env var name must not contain '=' or NUL", i, name)
+			}
+		}
 		// command[0] executable-exists check: only fires for explicit
 		// path forms ("./script.sh", "/abs/path"). Bare names are
 		// assumed to resolve via PATH at runtime — cooper does not try
