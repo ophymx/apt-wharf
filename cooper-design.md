@@ -271,10 +271,17 @@ source.github.release         "latest"                 default
                               { tag_pattern: REGEX }
                               { tag: STRING }
 source.github.include_prerelease  bool                 default false
+source.external.command       [STRING, ...]            required (argv)
+source.external.env           map<STRING, STRING>      optional
+source.external.timeout       DURATION                 default 30s
 version_from                  tag | tag_strip_v | asset_filename | fixed
+                              (rejected when source.external is set;
+                              version comes from the script's .version)
 version_template              STRING                   optional
+                              (rejected when source.external is set)
 version_regex                 STRING                   required when
                                                        version_from == asset_filename
+                              (rejected when source.external is set)
 epoch                         int                      default 0
 arches                        map<arch, {
                                   asset: STRING        singular (sugar; one asset)
@@ -439,10 +446,16 @@ for each package file in cooper.yaml.packages:
 emit one JSON document on stdout.
 ```
 
-Discover is read-only and side-effect-free. A failed package becomes an
-`error` entry; it does not abort the run. Network use is bounded —
-one GitHub releases API call per package, plus optional `HEAD` per
-asset when SHA256 isn't on the release payload.
+Discover does not modify any cooper-owned state. A failed package
+becomes an `error` entry; it does not abort the run. Network use is
+bounded — one GitHub releases API call per package, plus optional
+`HEAD` per asset when SHA256 isn't on the release payload. The
+algorithm above is the github_release path; json_url, xml_url, and
+external substitute their own discovery step (HTTP GET + gjson, HTTP
+GET + XPath, and child-process exec respectively) at step 2 but
+otherwise follow the same shape. External-source recipes exec a
+user-supplied script; cooper sandboxes it but the script's own side
+effects are the script author's responsibility.
 
 ### Build
 
@@ -688,6 +701,15 @@ algorithm for one release cycle.
 
 ## External producers
 
+> Most cases that previously reached for this pattern are now covered
+> by the `external` source kind (see *Source kinds → External source
+> script contract*) — the source-kind path leaves cooper in charge of
+> `build_inputs_hash`, `source_date_epoch`, aux_files, and BuildPlan
+> rendering, and only asks the recipe author for version + URLs +
+> optional sha256. Reach for the full producer contract below when
+> the recipe needs dynamic control over `nfpm.yaml` itself or wants
+> to emit multi-package plans from a single program.
+
 Any program emitting a valid JSON document on stdout is a producer
 that can pipe into `cooper build`. `cooper discover` is just the
 built-in producer for the GitHub case.
@@ -924,7 +946,7 @@ Test coverage at v0 release:
 
 ## Source kinds
 
-Cooper ships three built-in discovery backends. The recipe's `source:`
+Cooper ships four built-in discovery backends. The recipe's `source:`
 block picks one (validation enforces exactly-one):
 
 - **`github_release`** (the original): fetch a GitHub release, match
@@ -952,13 +974,105 @@ block picks one (validation enforces exactly-one):
   grammar. `source_date_epoch` is derived from `(url, version)`
   exactly the same way json_url does it. XML parsing uses
   `github.com/antchfx/xmlquery`.
+- **`external`**: exec a user-supplied script and read `{version,
+  assets[]}` JSON from its stdout. The script owns the upstream-
+  specific scraping; cooper continues to own everything downstream
+  (`build_inputs_hash`, `source_date_epoch`, aux_files, BuildPlan
+  rendering). Schema: `source.external: { command, env, timeout }`.
+  Use this for vendors that don't fit github / json / xml — Apache
+  project autoindexes (apache directory-studio is the canonical
+  case), vendor "click here to download" wrappers, SourceForge,
+  Maven artifacts, ad-hoc HTML. See *External source script
+  contract* below.
 
-For sources outside any of these categories — including HTML-scraped
-download pages (developer.android.com, flutter.dev, apache directory-
-studio, vendor "click here to download" wrappers), Maven artifacts,
-sourceforge, SVN tags — use the external-producer pattern: emit a
-valid `plan.Plan` JSON document from any program and pipe it into
-`cooper build -`. See *External producers* and *HTML-scraped sources*.
+For sources still outside this set — typically because the recipe
+needs dynamic control over the `nfpm.yaml` itself, not just version
+plus URL — fall back to the heavier *external producer* pattern:
+emit a full `plan.Plan` JSON document from any program and pipe it
+into `cooper build -`. External source covers most of the long tail
+that previously required producers; the producer pattern is now the
+escape hatch for cases where cooper's BuildPlan rendering itself is
+insufficient.
+
+### External source script contract
+
+The recipe field shape:
+
+```yaml
+source:
+  external:
+    command: ["./discover.sh"]   # path resolved relative to cooper.yaml's dir
+    env:                          # optional; merged onto the env allowlist
+      FOO: bar
+    timeout: 30s                  # optional; default 30s (time.ParseDuration)
+```
+
+Cooper exec's `command` with `cwd` set to the cooper.yaml's directory
+(so `./discover.sh` resolves naturally regardless of where cooper was
+invoked from) and a stripped environment containing only `HTTP_PROXY`,
+`HTTPS_PROXY`, `NO_PROXY` (plus lowercase forms) and the per-source
+`env`. The child-process discipline matches signpost's
+`internal/source/external.go`: proc-group SIGKILL on timeout, stderr
+captured and surfaced in error messages, exit 0 = success.
+
+The script reads no stdin and writes one JSON document to stdout:
+
+```json
+{
+  "version": "2.0.0.v20210717-M17",
+  "assets": [
+    {
+      "arch":   "amd64",
+      "url":    "https://dlcdn.apache.org/.../linux.gtk.x86_64.tar.gz",
+      "sha256": "<hex>"
+    }
+  ]
+}
+```
+
+`assets[].arch` must match a key in the recipe's `arches:` map;
+cooper rejects an asset whose arch isn't declared. `assets[].sha256`
+is optional (see *Trust model* below). Single-arch sources emit one
+`assets[]` entry; multi-arch sources emit N.
+
+**Version.** When `source.external:` is set, the version comes from
+the script's `.version` field. `version_from`, `version_template`,
+and `version_regex` are rejected at validate time — the script names
+the version directly; layering a separate extraction step on top
+would just add ambiguity. `epoch` and the Debian-revision knobs
+(`--revision`, auto-bump) still apply at the recipe layer.
+
+**Asset URL validation.** The script's `url` is authoritative.
+`arches[].asset_url` is optional for external sources: if absent,
+cooper trusts the script. If present, it's treated as a validation
+template — cooper renders it (with `${VERSION}` / `${ARCH}`
+substitutions) and rejects the discover if the script's URL doesn't
+match. Opt-in URL-drift guardrail; useful when the recipe author
+wants to pin the URL shape independent of the script's scraping
+logic.
+
+**Trust model: SHA256.** If the script returns `sha256`, cooper
+trusts it and writes it into `plan.Asset.SHA256` directly from
+discover — Apache `.sha256` sidecars and other vendor-published
+digests are exactly the upstream authority for that bytestream. If
+`sha256` is absent, cooper falls back to "compute at build time"
+(matching json_url's current behavior). Cooper does **not** fetch
+the asset at discover time to verify the script's hash; that would
+blur the discover-vs-build network split. The script is in the
+recipe's TCB — if you don't trust your own discovery script you
+have a different problem.
+
+**source_date_epoch.** Derived deterministically from
+`(version, command path)`, mirroring json_url's `(url, version)`
+derivation. The script does not supply an epoch; letting it would
+let two consecutive discover runs of the same upstream produce
+different epochs and thus different `build_inputs_hash` values.
+
+**Validate.** `cooper validate` checks that `command[0]` exists and
+is executable when its path starts with `./` or `/`; bare names are
+assumed to resolve on `PATH` (cooper does not try to model the
+runtime environment). Validate never exec's the script — lint stays
+fully offline.
 
 ### HTML-scraped sources
 
@@ -979,12 +1093,12 @@ plan to. Two reasons drive that:
    before reaching for a CSS selector.
 
 The residual long-tail of genuinely HTML-only sources is best handled
-as an external producer per *External producers*. A typical scraper
-producer is ~30 lines of shell:
+as an `external` source (see *External source script contract*). A
+typical scraper script is ~20 lines of shell:
 
 ```sh
 #!/bin/sh
-# Emits a one-package plan.Plan to stdout. Pipe into `cooper build -`.
+# Emits {version, assets[]} to stdout. Cooper handles everything else.
 set -eu
 
 version=$(
@@ -993,24 +1107,23 @@ version=$(
     | head -1 \
     | sed 's/^foo-//; s/\.tar\.gz$//'
 )
+url="https://example.com/foo-$version.tar.gz"
+sha256=$(curl -fsSL "$url.sha256" | awk '{print $1}')
 
-jq -n --arg v "$version" --arg url "https://example.com/foo-$v.tar.gz" '{
-  schema_version: 1,
-  tool: { name: "scrape-foo", version: "0.0.1", format_revision: 1 },
-  discovered_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-  packages: [{
-    name: "foo",
-    result: "ok",
-    source: { kind: "json_url", url: $url, token: $v },
-    artifacts: [...]
-  }]
+jq -n --arg v "$version" --arg u "$url" --arg s "$sha256" '{
+  version: $v,
+  assets: [{ arch: "amd64", url: $u, sha256: $s }]
 }'
 ```
 
-The producer owns the fragility — when the vendor restyles, the
-recipe author updates their own grep/sed, not a cooper recipe. Cooper
-keeps a small, declarative surface area; the long tail of one-off
-scrapers lives where the maintenance reality already is.
+The script owns the fragility — when the vendor restyles, the recipe
+author updates their own grep/sed, not a cooper recipe. Cooper keeps
+a small, declarative surface area; the long tail of one-off scrapers
+lives where the maintenance reality already is.
+
+For recipes that need to control more than version + URLs — e.g.
+when the `nfpm.yaml` itself has to be computed at discover time —
+fall through to the heavier external-producer pattern below.
 
 ## Deferred (post-v0)
 
@@ -1018,9 +1131,10 @@ scrapers lives where the maintenance reality already is.
   vendors publish a per-asset SHA256 alongside the binary, either
   as a sidecar file (`foo.tar.gz` + `foo.tar.gz.sha256`) or as a
   field in their JSON feed. Cooper today only carries SHA256 in
-  the plan when the github_release `digest` API field provides it;
-  json_url ignores any embedded hash; sidecar files aren't
-  fetched. Two related extensions:
+  the plan when the github_release `digest` API field provides it
+  or when an `external` source's script returns `assets[].sha256`;
+  json_url ignores any embedded hash; sidecar files aren't fetched
+  for github_release / json_url / xml_url. Two related extensions:
     - `arches[].sha256_asset:` for github_release recipes —
       naming the sidecar asset; cooper fetches its body and
       treats the (newline-trimmed, first whitespace-delimited
@@ -1035,6 +1149,15 @@ scrapers lives where the maintenance reality already is.
   on the URL itself, but at least we've pinned what bytes that URL
   is supposed to deliver). Pairs naturally with a future GPG /
   sigstore verification step.
+- **Shared HTML-autoindex helper** (`cmd/discover-apache-autoindex/` or
+  similar) — several packages migrating off the legacy reprepro tree
+  (Apache directory-studio, ZooKeeper, etc.) will likely all want to
+  scrape an Apache-style autoindex for the latest version subdir plus
+  a tarball + sidecar `.sha256`. Build a few per-package
+  `discover.sh` scripts first; factor the common shape into a
+  helper binary (or a shell library shipped alongside) only once the
+  boilerplate is concrete. Don't gate the external-source v1 on
+  having this helper ready.
 - **Glob in `cooper.yaml`'s `packages:`** — ergonomics; explicit list is fine for v0.
 - **`--prefetch-hashes` for missing `asset.sha256`** — current contract (build streams + hashes; orchestrator re-imports unconditionally) loses dedup for that artifact. Wait for a real package that surfaces it.
 - **`version_template` under json_url** — for vendors whose extracted version needs post-processing beyond `version_strip_prefix` (e.g. regex-based extraction, composing multiple gjson fields into one version). Out of scope for v0; users can re-tag in their JSON or use an external producer.
