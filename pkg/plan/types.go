@@ -40,6 +40,8 @@ type Package struct {
 //   - "json_url":       URL, Token (the extracted version).
 //   - "xml_url":        URL, Token (the extracted version, same shape as
 //     json_url; XPath in place of gjson against an XML body).
+//   - "external":       URL (the discovery command's first element — the
+//     script path), Token (the script-emitted version).
 //   - "local":          GitCommit, GitDate (provenance for staves and
 //     any other producer building from in-repo files).
 //   - "chandler":       GitCommit, GitDate (config-file provenance),

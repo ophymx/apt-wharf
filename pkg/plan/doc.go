@@ -35,6 +35,7 @@ const (
 	SourceKindGitHubRelease = "github_release"
 	SourceKindJSONURL       = "json_url"
 	SourceKindXMLURL        = "xml_url"
+	SourceKindExternal      = "external"
 	SourceKindLocal         = "local"
 	SourceKindChandler      = "chandler"
 )
@@ -42,8 +43,9 @@ const (
 // Asset.SHA256Source values. Nil pointer means "unknown; build must
 // compute and record."
 const (
-	SHA256SourceGitHubAPI   = "github_api"
-	SHA256SourceHEADRequest = "head_request"
+	SHA256SourceGitHubAPI      = "github_api"
+	SHA256SourceHEADRequest    = "head_request"
+	SHA256SourceExternalScript = "external_script"
 )
 
 // Error.Kind values.

@@ -572,3 +572,169 @@ func TestRun_JSONURL_InvalidVersion(t *testing.T) {
 		t.Errorf("expected version_invalid error, got result=%s err=%+v", pkg.Result, pkg.Error)
 	}
 }
+
+const externalPackageBody = `---
+source:
+  external:
+    command: ["./discover.sh"]
+arches:
+  amd64:
+    asset_url: "https://example.invalid/foo-${VERSION}-${ARCH}.tar.gz"
+  arm64:
+    asset_url: "https://example.invalid/foo-${VERSION}-${ARCH}.tar.gz"
+---
+name: foo
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: External-source test package
+contents:
+  - src: ${ASSETS}/foo
+    dst: /usr/bin/foo
+`
+
+const externalDiscoverScript = `#!/bin/sh
+cat <<'EOF'
+{
+  "version": "1.2.3",
+  "assets": [
+    { "arch": "amd64", "url": "https://example.invalid/foo-1.2.3-amd64.tar.gz", "sha256": "0000000000000000000000000000000000000000000000000000000000000001" },
+    { "arch": "arm64", "url": "https://example.invalid/foo-1.2.3-arm64.tar.gz" }
+  ]
+}
+EOF
+`
+
+func TestRun_External(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "packages/foo.yaml"), externalPackageBody)
+	writeFile(t, filepath.Join(dir, "packages/discover.sh"), externalDiscoverScript)
+	if err := os.Chmod(filepath.Join(dir, "packages/discover.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Aux file referenced by the nfpm doc — not actually needed for an
+	// external source, but discover walks aux refs unconditionally.
+	writeFile(t, filepath.Join(dir, "packages/foo"), "binary contents")
+	writeFile(t, filepath.Join(dir, "cooper.yaml"),
+		"packages:\n  - ./packages/foo.yaml\n")
+
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		Tool: plan.Tool{Name: "cooper", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
+		Now: func() time.Time {
+			t, _ := time.Parse(time.RFC3339, "2026-05-10T12:34:56Z")
+			return t
+		},
+	}
+
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 {
+		t.Fatalf("packages: %d", len(got.Packages))
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultOK {
+		t.Fatalf("result: %s err: %+v", pkg.Result, pkg.Error)
+	}
+	if pkg.Source == nil || pkg.Source.Kind != plan.SourceKindExternal {
+		t.Errorf("source: %+v", pkg.Source)
+	}
+	if pkg.Source.Token != "1.2.3" {
+		t.Errorf("source.token: %s", pkg.Source.Token)
+	}
+	if pkg.Source.URL != "./discover.sh" {
+		t.Errorf("source.url: %s", pkg.Source.URL)
+	}
+	if len(pkg.Artifacts) != 2 {
+		t.Fatalf("artifacts: %d", len(pkg.Artifacts))
+	}
+
+	// amd64 first (sorted): has script-provided SHA256.
+	amd64 := pkg.Artifacts[0]
+	if amd64.Arch != "amd64" {
+		t.Errorf("artifacts[0].arch: %s", amd64.Arch)
+	}
+	if got := amd64.Assets[0].URL; got != "https://example.invalid/foo-1.2.3-amd64.tar.gz" {
+		t.Errorf("amd64 url: %s", got)
+	}
+	if amd64.Assets[0].SHA256 == nil || *amd64.Assets[0].SHA256 != "sha256:0000000000000000000000000000000000000000000000000000000000000001" {
+		t.Errorf("amd64 sha256: %v", amd64.Assets[0].SHA256)
+	}
+	if amd64.Assets[0].SHA256Source == nil || *amd64.Assets[0].SHA256Source != plan.SHA256SourceExternalScript {
+		t.Errorf("amd64 sha256_source: %v", amd64.Assets[0].SHA256Source)
+	}
+	if amd64.Deb.Filename != "foo_1.2.3_amd64.deb" {
+		t.Errorf("amd64 deb filename: %s", amd64.Deb.Filename)
+	}
+
+	// arm64: no SHA256 (script omitted it).
+	arm64 := pkg.Artifacts[1]
+	if arm64.Assets[0].SHA256 != nil {
+		t.Errorf("arm64 sha256 should be nil, got %v", *arm64.Assets[0].SHA256)
+	}
+
+	// build_inputs_hash recomputes cleanly for the amd64 artifact.
+	ok, recomputed, err := plan.VerifyBuildInputsHash(opts.Tool, amd64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Errorf("amd64 hash recompute mismatch: stored=%s recomputed=%s",
+			amd64.Deb.BuildInputsHash, recomputed)
+	}
+}
+
+func TestRun_External_URLDriftRejected(t *testing.T) {
+	dir := t.TempDir()
+	// Recipe pins the URL shape; script returns a URL that doesn't fit.
+	pkgBody := `---
+source:
+  external:
+    command: ["./discover.sh"]
+arches:
+  amd64:
+    asset_url: "https://example.invalid/foo-${VERSION}-${ARCH}.tar.gz"
+---
+name: foo
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: drift test
+contents:
+  - src: ${ASSETS}/foo
+    dst: /usr/bin/foo
+`
+	scriptBody := `#!/bin/sh
+echo '{"version":"1.2.3","assets":[{"arch":"amd64","url":"https://example.invalid/MISMATCH-1.2.3.tar.gz"}]}'
+`
+	writeFile(t, filepath.Join(dir, "packages/foo.yaml"), pkgBody)
+	writeFile(t, filepath.Join(dir, "packages/discover.sh"), scriptBody)
+	if err := os.Chmod(filepath.Join(dir, "packages/discover.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "packages/foo"), "x")
+	writeFile(t, filepath.Join(dir, "cooper.yaml"), "packages:\n  - ./packages/foo.yaml\n")
+
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Tool: plan.Tool{Name: "cooper", Version: "0.0.0-test", FormatRevision: plan.FormatRevision}}
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultError {
+		t.Fatalf("expected drift-validation error, got result=%s", pkg.Result)
+	}
+	if !strings.Contains(pkg.Error.Message, "does not match recipe template") {
+		t.Errorf("error message: %s", pkg.Error.Message)
+	}
+}

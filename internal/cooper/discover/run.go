@@ -101,6 +101,8 @@ func processPackage(ctx context.Context, opts Options, path string) []plan.Packa
 		return processJSONURLPackage(ctx, opts, pkgFile, refsByDoc)
 	case pkgFile.Sidecar.Source.XMLURL != nil:
 		return processXMLURLPackage(ctx, opts, pkgFile, refsByDoc)
+	case pkgFile.Sidecar.Source.External != nil:
+		return processExternalPackage(ctx, opts, pkgFile, refsByDoc)
 	default:
 		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed,
 			fmt.Errorf("source: no backend selected (validate should have caught this)"))}
@@ -499,6 +501,184 @@ func buildJSONURLArtifact(
 		Deb:       deb,
 		BuildPlan: bp,
 	}, nil
+}
+
+// processExternalPackage is the external-source counterpart to
+// processJSONURLPackage. One child-process exec resolves version +
+// per-arch URLs (and optionally SHA256); cooper handles the rest of
+// the BuildPlan rendering downstream. source_date_epoch is derived
+// deterministically from (command path, version) since the script
+// doesn't supply a "published at" equivalent.
+func processExternalPackage(ctx context.Context, opts Options, pkgFile *config.PackageFile, refsByDoc [][]stage.Ref) []plan.Package {
+	resolution, err := cooperSrc.ResolveExternal(ctx, pkgFile.Sidecar.Source.External, pkgFile.Dir)
+	if err != nil {
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed, err)}
+	}
+
+	resolvedVersion := resolution.Version
+	if !version.MatchesDebianGrammar(resolvedVersion) {
+		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindVersionInvalid,
+			fmt.Errorf("version %q (from external script %s) does not match Debian's grammar `^[0-9][A-Za-z0-9.+~-]*$`",
+				resolvedVersion, resolution.Command))}
+	}
+
+	source := &plan.Source{
+		Kind:  plan.SourceKindExternal,
+		URL:   resolution.Command,
+		Token: resolvedVersion,
+	}
+
+	archNames := sortedKeys(pkgFile.Sidecar.Arches)
+	// Reject script replies whose arches don't match the recipe's
+	// arches map. Surfaced once per recipe rather than per nfpm doc;
+	// a mismatch is a recipe-level configuration error, not a per-doc
+	// build failure.
+	for _, arch := range archNames {
+		if _, ok := resolution.Assets[arch]; !ok {
+			return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed,
+				fmt.Errorf("external script %s: no asset for arch %q (declared in recipe arches)", resolution.Command, arch))}
+		}
+	}
+	for scriptArch := range resolution.Assets {
+		if _, ok := pkgFile.Sidecar.Arches[scriptArch]; !ok {
+			return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed,
+				fmt.Errorf("external script %s: returned asset for arch %q not declared in recipe arches", resolution.Command, scriptArch))}
+		}
+	}
+
+	out := make([]plan.Package, 0, len(pkgFile.NfpmDocs))
+	for i, doc := range pkgFile.NfpmDocs {
+		artifacts := make([]plan.Artifact, 0, len(archNames))
+		failed := false
+		for _, arch := range archNames {
+			art, err := buildExternalArtifact(opts, pkgFile, &doc, refsByDoc[i], resolution, resolvedVersion, arch)
+			if err != nil {
+				out = append(out, errPkg(doc.Name, errKindFor(err), err))
+				failed = true
+				break
+			}
+			artifacts = append(artifacts, art)
+		}
+		if failed {
+			continue
+		}
+		out = append(out, plan.Package{
+			Name:      doc.Name,
+			Result:    plan.ResultOK,
+			Source:    source,
+			Artifacts: artifacts,
+		})
+	}
+	return out
+}
+
+// buildExternalArtifact resolves one (nfpm-doc × arch) combination
+// against the already-exec'd script reply. The script's URL is
+// authoritative; arches[].asset_url (if set on the recipe) is rendered
+// as a drift-validation template and the script URL must match. SHA256
+// from the script (if present) flows straight into plan.Asset.SHA256
+// so drayman's dedup-by-hash query works on first contact instead of
+// waiting for build to stream-hash.
+func buildExternalArtifact(
+	opts Options,
+	pkgFile *config.PackageFile,
+	doc *config.NfpmDoc,
+	refs []stage.Ref,
+	resolution *cooperSrc.ExternalResolution,
+	resolvedVersion, arch string,
+) (plan.Artifact, error) {
+	asset := resolution.Assets[arch]
+	archCfg := pkgFile.Sidecar.Arches[arch]
+
+	// Opt-in URL-drift guardrail: if the recipe declared asset_url(s),
+	// render it and require the script's URL to match. Catches "script
+	// suddenly returned an unexpected URL shape" as a recipe-level
+	// configuration error rather than letting it silently propagate.
+	if len(archCfg.AssetURLs) > 0 {
+		expected, err := renderPlainAssetURL(archCfg.AssetURLs[0], resolvedVersion, arch)
+		if err != nil {
+			return plan.Artifact{}, &discoveryError{wrapped: fmt.Errorf("arches.%s.asset_url: %w", arch, err)}
+		}
+		if expected != asset.URL {
+			return plan.Artifact{}, &discoveryError{wrapped: fmt.Errorf("arches.%s: script URL %q does not match recipe template (expected %q)", arch, asset.URL, expected)}
+		}
+	}
+
+	nfpmClone, err := stage.CloneNfpm(&doc.Node)
+	if err != nil {
+		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
+	}
+	stage.SubstituteNfpm(nfpmClone, resolvedVersion, arch)
+	nfpmJSON, err := stage.NfpmToJSON(nfpmClone)
+	if err != nil {
+		return plan.Artifact{}, fmt.Errorf("encode nfpm: %w", err)
+	}
+
+	vars := stage.Vars{
+		Name:        doc.Name,
+		Version:     resolvedVersion,
+		Arch:        arch,
+		Epoch:       pkgFile.Sidecar.Epoch,
+		PublishedAt: time.Unix(resolution.SourceEpoch, 0).UTC().Format(time.RFC3339),
+	}
+	auxFiles, err := stage.MaterializeAuxFiles(refs, vars)
+	if err != nil {
+		return plan.Artifact{}, &auxError{wrapped: err}
+	}
+
+	var shaPtr, shaSource *string
+	if asset.SHA256 != "" {
+		s := asset.SHA256
+		if !strings.HasPrefix(s, "sha256:") {
+			s = "sha256:" + s
+		}
+		shaPtr = &s
+		src := plan.SHA256SourceExternalScript
+		shaSource = &src
+	}
+
+	planAsset := plan.Asset{
+		Name:         basenameFromURL(asset.URL),
+		URL:          asset.URL,
+		SHA256:       shaPtr,
+		SHA256Source: shaSource,
+	}
+
+	bp := plan.BuildPlan{
+		SourceDateEpoch: resolution.SourceEpoch,
+		Nfpm:            nfpmJSON,
+		AuxFiles:        auxFiles,
+	}
+
+	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, []*string{shaPtr}, bp)
+	if err != nil {
+		return plan.Artifact{}, fmt.Errorf("compute build_inputs_hash: %w", err)
+	}
+
+	deb := plan.Deb{
+		Filename:        fmt.Sprintf("%s_%s_%s.deb", doc.Name, debVersionString(resolvedVersion, pkgFile.Sidecar.Epoch), arch),
+		BuildInputsHash: hash,
+	}
+
+	return plan.Artifact{
+		Arch:      arch,
+		Assets:    []plan.Asset{planAsset},
+		Deb:       deb,
+		BuildPlan: bp,
+	}, nil
+}
+
+// renderPlainAssetURL handles the external-source URL-drift template:
+// only ${VERSION} and ${ARCH} substitutions (no JSON/XML placeholders,
+// since there's no body to query against). Kept separate from the
+// json_url / xml_url renderers so its restricted grammar is explicit.
+func renderPlainAssetURL(template, version, arch string) (string, error) {
+	out := strings.ReplaceAll(template, "${VERSION}", version)
+	out = strings.ReplaceAll(out, "${ARCH}", arch)
+	if strings.Contains(out, "${") {
+		return "", fmt.Errorf("rendered URL %q still contains an unresolved ${...} placeholder", out)
+	}
+	return out, nil
 }
 
 // basenameFromURL returns the last path segment of a URL, used as the

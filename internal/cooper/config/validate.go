@@ -2,19 +2,28 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // validateSidecar enforces the doc 1 schema from cooper-design.md.
 // Network-free: regex compilation and structural checks only.
 //
+// yamlDir is the directory containing the cooper.yaml being validated;
+// it's used to resolve relative paths in source.external.command for
+// the executable-exists lint check. Pass "" to skip that check (caller
+// has no directory context — e.g. ad-hoc validation of an
+// in-memory Sidecar).
+//
 // validateArches also normalizes Arch entries in place: singular asset /
 // asset_url forms are folded into the corresponding plural slot so
 // downstream code only deals with Assets / AssetURLs. The map is
 // mutated through reassignment so callers see the canonical shape.
-func validateSidecar(s *Sidecar) error {
-	if err := validateSource(&s.Source); err != nil {
+func validateSidecar(s *Sidecar, yamlDir string) error {
+	if err := validateSource(&s.Source, yamlDir); err != nil {
 		return err
 	}
 	if err := validateVersionSelection(s); err != nil {
@@ -29,7 +38,7 @@ func validateSidecar(s *Sidecar) error {
 	return nil
 }
 
-func validateSource(src *Source) error {
+func validateSource(src *Source, yamlDir string) error {
 	count := 0
 	if src.GitHub != nil {
 		count++
@@ -40,13 +49,16 @@ func validateSource(src *Source) error {
 	if src.XMLURL != nil {
 		count++
 	}
+	if src.External != nil {
+		count++
+	}
 	switch count {
 	case 0:
-		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url")
+		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url, source.external")
 	case 1:
 		// ok
 	default:
-		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url (got %d)", count)
+		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url, source.external (got %d)", count)
 	}
 
 	if src.GitHub != nil {
@@ -87,6 +99,51 @@ func validateSource(src *Source) error {
 		}
 		if !strings.HasPrefix(x.URL, "http://") && !strings.HasPrefix(x.URL, "https://") {
 			return fmt.Errorf("source.xml_url.url %q must use http or https scheme", x.URL)
+		}
+	}
+
+	if src.External != nil {
+		e := src.External
+		if len(e.Command) == 0 {
+			return fmt.Errorf("source.external.command: required (argv slice)")
+		}
+		for i, arg := range e.Command {
+			if arg == "" {
+				return fmt.Errorf("source.external.command[%d]: empty entry", i)
+			}
+		}
+		if e.Timeout != "" {
+			d, err := time.ParseDuration(e.Timeout)
+			if err != nil {
+				return fmt.Errorf("source.external.timeout %q: %w", e.Timeout, err)
+			}
+			if d <= 0 {
+				return fmt.Errorf("source.external.timeout %q: must be positive", e.Timeout)
+			}
+		}
+		// command[0] executable-exists check: only fires for explicit
+		// path forms ("./script.sh", "/abs/path"). Bare names are
+		// assumed to resolve via PATH at runtime — cooper does not try
+		// to model the runtime environment. yamlDir == "" means the
+		// caller doesn't have directory context; skip the check.
+		if yamlDir != "" {
+			cmd0 := e.Command[0]
+			if strings.HasPrefix(cmd0, "./") || strings.HasPrefix(cmd0, "../") || filepath.IsAbs(cmd0) {
+				abs := cmd0
+				if !filepath.IsAbs(abs) {
+					abs = filepath.Join(yamlDir, cmd0)
+				}
+				info, err := os.Stat(abs)
+				if err != nil {
+					return fmt.Errorf("source.external.command[0] %q: %w", cmd0, err)
+				}
+				if info.IsDir() {
+					return fmt.Errorf("source.external.command[0] %q: is a directory", cmd0)
+				}
+				if info.Mode().Perm()&0o111 == 0 {
+					return fmt.Errorf("source.external.command[0] %q: not executable (mode %v)", cmd0, info.Mode().Perm())
+				}
+			}
 		}
 	}
 	return nil
@@ -147,6 +204,22 @@ func validateVersionSelection(s *Sidecar) error {
 		}
 		if s.VersionTemplate != "" {
 			return fmt.Errorf("version_template: not valid when source is xml_url (post-v0)")
+		}
+		return nil
+	}
+
+	// external: the script names the version directly via the JSON
+	// reply's .version field. Layering a recipe-level extraction step
+	// on top would add ambiguity (which value wins?).
+	if s.Source.External != nil {
+		if s.VersionFrom != "" {
+			return fmt.Errorf("version_from: must be unset when source is external (version comes from the script's .version field)")
+		}
+		if s.VersionRegex != "" {
+			return fmt.Errorf("version_regex: not valid when source is external")
+		}
+		if s.VersionTemplate != "" {
+			return fmt.Errorf("version_template: not valid when source is external")
 		}
 		return nil
 	}
@@ -270,6 +343,32 @@ func validateArches(src *Source, arches map[string]Arch) error {
 			// template that opens with `{xpath:...}` only resolves to
 			// an http(s) URL once the XML body has been fetched. The
 			// runtime renderer re-validates scheme on the result.
+			for i, u := range a.AssetURLs {
+				if u == "" {
+					return fmt.Errorf("arches.%s.asset_urls[%d]: empty entry", arch, i)
+				}
+				for _, m := range assetSubstPattern.FindAllStringSubmatch(u, -1) {
+					if m[1] != "VERSION" && m[1] != "ARCH" {
+						return fmt.Errorf("arches.%s.asset_urls[%d]: only ${VERSION} and ${ARCH} substitutions are allowed (saw ${%s})", arch, i, m[1])
+					}
+				}
+			}
+			if err := checkDuplicateTemplates(arch, "asset_urls", a.AssetURLs); err != nil {
+				return err
+			}
+		case src.External != nil:
+			if a.Asset != "" || len(a.Assets) > 0 {
+				return fmt.Errorf("arches.%s: asset/assets not valid for source.external (the script supplies the URL)", arch)
+			}
+			// asset_url is optional for external sources. When present
+			// it's used as a URL-drift validation template: cooper
+			// renders it (with ${VERSION} / ${ARCH}) and rejects the
+			// discover if the script's URL doesn't match. Absence means
+			// "trust the script's URL outright."
+			if a.AssetURL != "" {
+				a.AssetURLs = []string{a.AssetURL}
+				a.AssetURL = ""
+			}
 			for i, u := range a.AssetURLs {
 				if u == "" {
 					return fmt.Errorf("arches.%s.asset_urls[%d]: empty entry", arch, i)

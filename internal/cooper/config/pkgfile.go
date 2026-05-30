@@ -66,7 +66,7 @@ func LoadPackage(path string) (*PackageFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: doc 1 (cooper sidecar): %w", abs, err)
 	}
-	if err := validateSidecar(&sidecar); err != nil {
+	if err := validateSidecar(&sidecar, filepath.Dir(abs)); err != nil {
 		return nil, fmt.Errorf("%s: doc 1 (cooper sidecar): %w", abs, err)
 	}
 

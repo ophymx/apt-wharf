@@ -26,13 +26,16 @@ type Sidecar struct {
 }
 
 // Source is a discriminated union over discovery backends. Exactly one
-// of GitHub / JSONURL / XMLURL must be set; validation enforces this.
-// Vendors that don't fit any built-in kind go through external
-// producers per cooper-design.md §"External producers".
+// of GitHub / JSONURL / XMLURL / External must be set; validation
+// enforces this. For sources still outside this set — typically when
+// the recipe needs dynamic control over nfpm.yaml itself — fall back
+// to the external-producer pattern per cooper-design.md §"External
+// producers".
 type Source struct {
-	GitHub  *GitHubSource  `yaml:"github"`
-	JSONURL *JSONURLSource `yaml:"json_url"`
-	XMLURL  *XMLURLSource  `yaml:"xml_url"`
+	GitHub   *GitHubSource   `yaml:"github"`
+	JSONURL  *JSONURLSource  `yaml:"json_url"`
+	XMLURL   *XMLURLSource   `yaml:"xml_url"`
+	External *ExternalSource `yaml:"external"`
 }
 
 // GitHubSource selects a GitHub release. Release defaults to "latest"
@@ -83,6 +86,16 @@ type XMLURLSource struct {
 	// feeds prefix their version strings ("v2024.1.4") in a way that's
 	// invalid as a Debian upstream version.
 	VersionStripPrefix string `yaml:"version_strip_prefix"`
+}
+
+// ExternalSource exec's a user-supplied discovery script. The script
+// emits {version, assets[{arch, url, sha256}]} on stdout; cooper owns
+// build_inputs_hash, source_date_epoch, aux_files, BuildPlan rendering
+// downstream. See cooper-design.md §"External source script contract".
+type ExternalSource struct {
+	Command []string          `yaml:"command"`
+	Env     map[string]string `yaml:"env"`
+	Timeout string            `yaml:"timeout"`
 }
 
 // Release is a flat-union: exactly one of Latest, TagPattern, Tag is

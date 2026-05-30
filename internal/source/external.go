@@ -76,7 +76,7 @@ func (d *ExternalDiscoverer) Probe(ctx context.Context, in ProbeInput) (*ProbeRe
 	// whole group on context cancel — otherwise grandchildren (e.g. `sleep`
 	// invoked by a wrapper shell) would survive and keep stdio pipes open.
 	// WaitDelay is a belt-and-suspenders cap in case the kill races.
-	setProcAttrs(cmd)
+	SetProcAttrs(cmd)
 	cmd.WaitDelay = 2 * time.Second
 
 	payload := external.Input{}
