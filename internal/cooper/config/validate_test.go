@@ -155,6 +155,36 @@ func TestValidateSource_ExternalEnvForward_EmptyEntry(t *testing.T) {
 	}
 }
 
+func TestValidateSource_GitHub_SourceArchiveAllowsMissingAsset(t *testing.T) {
+	s := Sidecar{
+		Source: Source{GitHub: &GitHubSource{
+			Repo:          "foo/bar",
+			Release:       &Release{Latest: true},
+			SourceArchive: true,
+		}},
+		VersionFrom: VersionFromTagStripV,
+		Arches:      map[string]Arch{"all": {}},
+	}
+	if err := validateSidecar(&s, ""); err != nil {
+		t.Errorf("archive-only recipe should validate, got %v", err)
+	}
+}
+
+func TestValidateSource_GitHub_NoSourceArchiveRequiresAsset(t *testing.T) {
+	s := Sidecar{
+		Source: Source{GitHub: &GitHubSource{
+			Repo:    "foo/bar",
+			Release: &Release{Latest: true},
+		}},
+		VersionFrom: VersionFromTagStripV,
+		Arches:      map[string]Arch{"amd64": {}},
+	}
+	err := validateSidecar(&s, "")
+	if err == nil || !strings.Contains(err.Error(), "required for source.github") {
+		t.Errorf("missing asset without source_archive should be rejected, got %v", err)
+	}
+}
+
 func TestValidateSource_ExternalEnvForward_EqualsRejected(t *testing.T) {
 	src := &Source{External: &ExternalSource{
 		Command:    []string{"./d.sh"},

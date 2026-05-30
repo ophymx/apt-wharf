@@ -63,16 +63,33 @@ func ComputeBuildInputsHash(formatRevision int, assetSHA256s []*string, buildPla
 // canonical form matches what discover computed (JCS distinguishes
 // nil from an empty slice — null vs [], different bytes).
 func VerifyBuildInputsHash(tool Tool, art Artifact) (ok bool, recomputed string, err error) {
-	var shas []*string
-	if len(art.Assets) > 0 {
-		shas = make([]*string, len(art.Assets))
-		for i, a := range art.Assets {
-			shas[i] = a.SHA256
-		}
-	}
-	got, err := ComputeBuildInputsHash(tool.FormatRevision, shas, art.BuildPlan)
+	got, err := ComputeBuildInputsHash(tool.FormatRevision, ArtifactAssetSHAs(art), art.BuildPlan)
 	if err != nil {
 		return false, "", err
 	}
 	return got == art.Deb.BuildInputsHash, got, nil
+}
+
+// ArtifactAssetSHAs returns the canonical slice of upstream-asset SHAs
+// that contributes to an artifact's build_inputs_hash. Named assets
+// (Artifact.Assets) come first in their declared order; an
+// Artifact.SourceArchive (if set) is appended last. Discover and
+// VerifyBuildInputsHash both call through this helper so the slice
+// ordering rule lives in one place.
+//
+// Returns nil — not an empty slice — for asset-optional artifacts
+// with no SourceArchive (the staves case). JCS distinguishes null
+// from [], so this distinction is load-bearing for hash stability.
+func ArtifactAssetSHAs(art Artifact) []*string {
+	if len(art.Assets) == 0 && art.SourceArchive == nil {
+		return nil
+	}
+	shas := make([]*string, 0, len(art.Assets)+1)
+	for _, a := range art.Assets {
+		shas = append(shas, a.SHA256)
+	}
+	if art.SourceArchive != nil {
+		shas = append(shas, art.SourceArchive.SHA256)
+	}
+	return shas
 }

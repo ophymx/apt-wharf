@@ -271,6 +271,10 @@ source.github.release         "latest"                 default
                               { tag_pattern: REGEX }
                               { tag: STRING }
 source.github.include_prerelease  bool                 default false
+source.github.source_archive  bool                     default false
+                              (also fetch
+                              archive/refs/tags/<tag>.tar.gz;
+                              arches[].asset becomes optional)
 source.external.command       [STRING, ...]            required (argv)
 source.external.env           map<STRING, STRING>      optional (literal)
 source.external.env_forward   [STRING, ...]            optional; forward
@@ -314,22 +318,24 @@ at discover time.
 
 ### Cooper's substitution into doc 2
 
-Cooper substitutes a fixed set of three variables into doc 2;
-anything else passes through verbatim.
+Cooper substitutes a fixed set of variables into doc 2; anything
+else passes through verbatim.
 
 | Variable     | Resolved by | Where in JSON                                    |
 | ------------ | ----------- | ------------------------------------------------ |
 | `${VERSION}` | discover    | substituted to a literal in `build_plan.nfpm`    |
 | `${ARCH}`    | discover    | substituted to a literal in `build_plan.nfpm`    |
 | `${ASSETS}`  | build       | left symbolic; build sets it as an env var when exec'ing nfpm |
+| `${SOURCE}`  | build       | symbolic; set as env var only when the artifact carries a `source_archive` (otherwise unset — recipes that reference `${SOURCE}` without enabling source_archive will fail nfpm expansion) |
 
-For nfpm to expand `${ASSETS}` at build time, every `contents[]`
-entry needs `expand: true`. Cooper sets that flag (preserving any
-explicit user value) when writing the on-disk `nfpm.yaml`; see
-*Build* step 4 for the full set of on-disk-only adjustments.
+For nfpm to expand `${ASSETS}` / `${SOURCE}` at build time, every
+`contents[]` entry needs `expand: true`. Cooper sets that flag
+(preserving any explicit user value) when writing the on-disk
+`nfpm.yaml`; see *Build* step 4 for the full set of on-disk-only
+adjustments.
 
 That's the full set. There is no `${AUX}`, no `${TMPL_*}`, no
-cooper-specific env-var namespace beyond `${ASSETS}`.
+cooper-specific env-var namespace beyond `${ASSETS}` / `${SOURCE}`.
 
 ### Aux file resolution (and templating)
 
@@ -644,6 +650,16 @@ Field notes:
   intentional.
 - **`deb.path` / `deb.sha256`** are `null` in discover output and
   populated in build output. Same JSON shape on both sides.
+- **`artifact.source_archive`** is an optional sibling of `assets[]`
+  populated when the recipe sets `source.github.source_archive: true`.
+  Shape mirrors `asset` (name, url, size, sha256, sha256_source);
+  the URL is the auto-composed
+  `https://github.com/<repo>/archive/refs/tags/<tag>.tar.gz`. SHA256
+  is `null` at discover time (the API doesn't expose a digest for
+  archive URLs); build streams + hashes during download, records the
+  value in the re-emitted JSON, and stages the extracted tree under a
+  per-artifact `source/` dir whose absolute path becomes the
+  `${SOURCE}` env var when exec'ing nfpm.
 - **`artifact.extract`** is an optional sibling of `build_plan` with
   `max_bytes` (int64) and `max_files` (int); absent means "use cooper's
   defaults" (1 GiB / 100 000). Populated by discover from the recipe's
@@ -973,6 +989,16 @@ block picks one (validation enforces exactly-one):
 - **`github_release`** (the original): fetch a GitHub release, match
   per-arch assets by exact name with `${VERSION}` substitution.
   `source_date_epoch` comes from the release's `published_at`.
+  Optionally set `source.github.source_archive: true` to also fetch
+  the auto-generated source archive
+  (`https://github.com/<repo>/archive/refs/tags/<tag>.tar.gz`)
+  alongside the named binary assets. The source archive is staged
+  under `${SOURCE}/` instead of `${ASSETS}/` so recipes can pull
+  contrib scripts, completions, or other files from upstream
+  source without losing the binary-release path. Three valid
+  shapes: binary-only (source_archive omitted; `arches[].asset`
+  required, today's default), archive-only (source_archive: true,
+  no `arches[].asset` set — use `arches: {all: {}}`), or both.
 - **`json_url`**: GET a vendor JSON endpoint, extract the version via
   a gjson path, render per-arch URLs from `arches[].asset_url`
   (singular) or `arches[].asset_urls` (plural; same multi-asset

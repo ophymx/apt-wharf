@@ -172,6 +172,18 @@ func buildOne(
 		return art, fmt.Errorf("staging: %w", err)
 	}
 
+	// sourceDir hosts the extracted source_archive when the artifact
+	// carries one; absolute path is plumbed into the SOURCE env var
+	// for nfpm. Created up-front so the var has a stable target even
+	// for archive-only recipes whose first reference is a glob.
+	sourceDir := ""
+	if art.SourceArchive != nil {
+		sourceDir = filepath.Join(staging, "source")
+		if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+			return art, fmt.Errorf("source staging: %w", err)
+		}
+	}
+
 	// Asset-optional path: local-source producers (staves) and any
 	// future tool that bakes all bytes into aux_files emit plans with
 	// an empty Assets slice. Skip download/extract entirely; the
@@ -216,6 +228,35 @@ func buildOne(
 		}
 	}
 
+	// Source archive (source.github.source_archive: true). Always an
+	// archive; download → verify-or-record SHA → extract into sourceDir.
+	// Per-arch redundant downloads are tolerated for v1 — same archive
+	// fetched once per arch. Add a download cache in Options if/when the
+	// bandwidth becomes a real problem.
+	if art.SourceArchive != nil {
+		sa := art.SourceArchive
+		archivePath := filepath.Join(sourceDir, sa.Name)
+		gotSHA, _, err := opts.Downloader.Fetch(ctx, sa.URL, archivePath, sa.Size)
+		if err != nil {
+			return art, fmt.Errorf("download source_archive %s: %w", sa.URL, err)
+		}
+		if err := VerifySHA256(sa.SHA256, gotSHA); err != nil {
+			return art, fmt.Errorf("source_archive: %w", err)
+		}
+		if sa.SHA256 == nil {
+			s := "sha256:" + gotSHA
+			sa.SHA256 = &s
+			src := plan.SHA256SourceHEADRequest
+			sa.SHA256Source = &src
+		}
+		if err := Extract(archivePath, sourceDir, extractOptsFromArtifact(art)); err != nil {
+			return art, fmt.Errorf("extract source_archive %s: %w", sa.Name, err)
+		}
+		if err := os.Remove(archivePath); err != nil {
+			return art, fmt.Errorf("remove source archive: %w", err)
+		}
+	}
+
 	if err := WriteAuxFiles(art.BuildPlan.AuxFiles, staging); err != nil {
 		return art, err
 	}
@@ -235,7 +276,7 @@ func buildOne(
 	}
 
 	debPath := filepath.Join(opts.OutDir, art.Deb.Filename)
-	env := BuildEnv(versionFromArtifact(pkg.Name, art), art.Arch, assetDir, art.BuildPlan.SourceDateEpoch)
+	env := BuildEnv(versionFromArtifact(pkg.Name, art), art.Arch, assetDir, sourceDir, art.BuildPlan.SourceDateEpoch)
 	if err := opts.NfpmExec(ctx, staging, debPath, env); err != nil {
 		return art, err
 	}

@@ -70,10 +70,18 @@ type Source struct {
 
 // GitHubSource selects a GitHub release. Release defaults to "latest"
 // when omitted.
+//
+// SourceArchive opts the recipe into also fetching the auto-generated
+// source archive (https://github.com/<repo>/archive/refs/tags/<tag>.tar.gz)
+// alongside any named binary assets. When true, arches[].asset(s)
+// becomes optional — recipes that only want the source tarball
+// declare arches: {all: {}} and skip the asset selector. See
+// cooper-design.md §"Source kinds → github_release".
 type GitHubSource struct {
 	Repo              string   `yaml:"repo"`
 	Release           *Release `yaml:"release"`
 	IncludePrerelease bool     `yaml:"include_prerelease"`
+	SourceArchive     bool     `yaml:"source_archive"`
 }
 
 // JSONURLSource fetches a vendor JSON metadata endpoint, extracts the

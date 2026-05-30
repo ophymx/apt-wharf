@@ -101,13 +101,14 @@ type FetchedKey struct {
 // failure-isolation rule in cooper-design.md §"Phases · Build" lets
 // sibling artifacts in the same package finish even when one errors.
 type Artifact struct {
-	Arch      string         `json:"arch"`
-	Assets    []Asset        `json:"assets"`
-	Deb       Deb            `json:"deb"`
-	BuildPlan BuildPlan      `json:"build_plan"`
-	Extract   *ExtractLimits `json:"extract,omitempty"`
-	Result    string         `json:"result,omitempty"`
-	Error     *Error         `json:"error,omitempty"`
+	Arch          string         `json:"arch"`
+	Assets        []Asset        `json:"assets"`
+	SourceArchive *Asset         `json:"source_archive,omitempty"`
+	Deb           Deb            `json:"deb"`
+	BuildPlan     BuildPlan      `json:"build_plan"`
+	Extract       *ExtractLimits `json:"extract,omitempty"`
+	Result        string         `json:"result,omitempty"`
+	Error         *Error         `json:"error,omitempty"`
 }
 
 // ExtractLimits is the optional per-artifact override for cooper-build's

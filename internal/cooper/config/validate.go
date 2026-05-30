@@ -398,8 +398,12 @@ func validateArches(src *Source, arches map[string]Arch) error {
 				a.Assets = []string{a.Asset}
 				a.Asset = ""
 			}
-			if len(a.Assets) == 0 {
-				return fmt.Errorf("arches.%s.asset(s): required for source.github", arch)
+			// arches[].asset(s) is required for binary-only recipes
+			// but optional when source.github.source_archive is set
+			// (the archive itself is the artifact; named binary
+			// selectors are an optional extra).
+			if len(a.Assets) == 0 && !src.GitHub.SourceArchive {
+				return fmt.Errorf("arches.%s.asset(s): required for source.github (omit only when source.github.source_archive is true)", arch)
 			}
 			for i, asset := range a.Assets {
 				if asset == "" {

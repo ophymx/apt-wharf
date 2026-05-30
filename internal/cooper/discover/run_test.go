@@ -573,6 +573,152 @@ func TestRun_JSONURL_InvalidVersion(t *testing.T) {
 	}
 }
 
+const sourceArchiveOnlyBody = `---
+source:
+  github:
+    repo: netbox-community/netbox
+    release: latest
+    source_archive: true
+version_from: tag_strip_v
+arches:
+  all: {}
+---
+name: netbox
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: NetBox source-only package
+contents:
+  - src: ${SOURCE}/netbox-${VERSION}/netbox/...
+    dst: /opt/netbox/
+`
+
+func TestRun_GitHubSourceArchive_Only(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "packages/netbox.yaml"), sourceArchiveOnlyBody)
+	writeFile(t, filepath.Join(dir, "cooper.yaml"),
+		"packages:\n  - ./packages/netbox.yaml\n")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+		  "id": 555,
+		  "tag_name": "v4.6.1",
+		  "draft": false,
+		  "prerelease": false,
+		  "published_at": "2026-05-09T08:12:00Z",
+		  "assets": []
+		}`))
+	}))
+	defer srv.Close()
+
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := testClient(t, srv)
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 {
+		t.Fatalf("packages: %d", len(got.Packages))
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultOK {
+		t.Fatalf("result: %s err: %+v", pkg.Result, pkg.Error)
+	}
+	if len(pkg.Artifacts) != 1 {
+		t.Fatalf("artifacts: %d", len(pkg.Artifacts))
+	}
+	art := pkg.Artifacts[0]
+	if art.Arch != "all" {
+		t.Errorf("arch: %s, want all", art.Arch)
+	}
+	if len(art.Assets) != 0 {
+		t.Errorf("Assets should be empty for archive-only, got %d entries", len(art.Assets))
+	}
+	if art.SourceArchive == nil {
+		t.Fatal("SourceArchive nil — source_archive: true didn't propagate")
+	}
+	wantURL := "https://github.com/netbox-community/netbox/archive/refs/tags/v4.6.1.tar.gz"
+	if art.SourceArchive.URL != wantURL {
+		t.Errorf("SourceArchive.URL: %s, want %s", art.SourceArchive.URL, wantURL)
+	}
+	if art.SourceArchive.Name != "v4.6.1.tar.gz" {
+		t.Errorf("SourceArchive.Name: %s", art.SourceArchive.Name)
+	}
+	if art.SourceArchive.SHA256 != nil {
+		t.Errorf("SourceArchive.SHA256 should be nil at discover, got %v", *art.SourceArchive.SHA256)
+	}
+
+	// build_inputs_hash recomputes cleanly.
+	ok, recomputed, err := plan.VerifyBuildInputsHash(opts.Tool, art)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Errorf("hash recompute mismatch: stored=%s recomputed=%s",
+			art.Deb.BuildInputsHash, recomputed)
+	}
+}
+
+const sourceArchiveBothBody = `---
+source:
+  github:
+    repo: gohugoio/hugo
+    release: latest
+    source_archive: true
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "hugo_extended_${VERSION}_linux-amd64.tar.gz"
+---
+name: hugo
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: hugo with bundled bash completion from source
+contents:
+  - src: ${ASSETS}/hugo
+    dst: /usr/bin/hugo
+  - src: ${SOURCE}/hugo-${VERSION}/contrib/bash-completion
+    dst: /usr/share/bash-completion/completions/hugo
+`
+
+func TestRun_GitHubSourceArchive_Both(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "packages/hugo.yaml"), sourceArchiveBothBody)
+	writeFile(t, filepath.Join(dir, "cooper.yaml"),
+		"packages:\n  - ./packages/hugo.yaml\n")
+
+	srv := newTestServer(t, nil)
+	defer srv.Close()
+	top, err := config.LoadTop(filepath.Join(dir, "cooper.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := testClient(t, srv)
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultOK {
+		t.Fatalf("result: %s err: %+v", pkg.Result, pkg.Error)
+	}
+	art := pkg.Artifacts[0]
+	if len(art.Assets) != 1 {
+		t.Errorf("Assets: %d, want 1 (binary)", len(art.Assets))
+	}
+	if art.SourceArchive == nil {
+		t.Fatal("SourceArchive nil")
+	}
+	if art.SourceArchive.URL != "https://github.com/gohugoio/hugo/archive/refs/tags/v0.140.0.tar.gz" {
+		t.Errorf("SourceArchive.URL: %s", art.SourceArchive.URL)
+	}
+}
+
 const externalPackageBody = `---
 source:
   external:

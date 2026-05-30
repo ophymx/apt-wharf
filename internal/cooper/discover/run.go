@@ -388,7 +388,6 @@ func buildArtifact(
 
 	// Asset metadata — one plan.Asset per resolved release asset.
 	planAssets := make([]plan.Asset, len(assets))
-	assetSHAs := make([]*string, len(assets))
 	for i, a := range assets {
 		sha := assetSHAPtr(a)
 		planAssets[i] = plan.Asset{
@@ -398,7 +397,19 @@ func buildArtifact(
 			SHA256:       sha,
 			SHA256Source: planSourceFromAsset(a),
 		}
-		assetSHAs[i] = sha
+	}
+
+	// Source archive: composed URL when source.github.source_archive
+	// is true. SHA256 / Size are unknown at discover time — the GitHub
+	// API doesn't expose a digest for archive URLs — so build streams
+	// + hashes during download.
+	var sourceArchive *plan.Asset
+	if pkgFile.Sidecar.Source.GitHub.SourceArchive {
+		tag := release.GetTagName()
+		sourceArchive = &plan.Asset{
+			Name: tag + ".tar.gz",
+			URL:  fmt.Sprintf("https://github.com/%s/archive/refs/tags/%s.tar.gz", pkgFile.Sidecar.Source.GitHub.Repo, tag),
+		}
 	}
 
 	bp := plan.BuildPlan{
@@ -407,7 +418,10 @@ func buildArtifact(
 		AuxFiles:        auxFiles,
 	}
 
-	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, assetSHAs, bp)
+	// Hash inputs include the source archive's SHA (nil at discover)
+	// — see plan.ArtifactAssetSHAs for the ordering rule.
+	tempArt := plan.Artifact{Assets: planAssets, SourceArchive: sourceArchive}
+	hash, err := plan.ComputeBuildInputsHash(opts.Tool.FormatRevision, plan.ArtifactAssetSHAs(tempArt), bp)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("compute build_inputs_hash: %w", err)
 	}
@@ -418,11 +432,12 @@ func buildArtifact(
 	}
 
 	return plan.Artifact{
-		Arch:      arch,
-		Assets:    planAssets,
-		Deb:       deb,
-		BuildPlan: bp,
-		Extract:   extractLimitsFromSidecar(pkgFile.Sidecar.Extract),
+		Arch:          arch,
+		Assets:        planAssets,
+		SourceArchive: sourceArchive,
+		Deb:           deb,
+		BuildPlan:     bp,
+		Extract:       extractLimitsFromSidecar(pkgFile.Sidecar.Extract),
 	}, nil
 }
 

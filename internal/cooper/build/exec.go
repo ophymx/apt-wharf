@@ -35,8 +35,15 @@ func DefaultNfpmExec(ctx context.Context, stagingDir, outputPath string, env []s
 // inherited from the parent process is dropped — only this set survives.
 // PATH is fixed to a minimal set; the user's nfpm install must live
 // under one of these directories.
-func BuildEnv(version, arch, assetsDir string, sourceDateEpoch int64) []string {
-	return []string{
+//
+// sourceDir is the absolute path to the extracted source_archive (when
+// the artifact has one); pass "" to omit the SOURCE env var entirely
+// for recipes that don't opt into source_archive. Recipes that
+// reference ${SOURCE} without enabling source_archive will fail nfpm
+// expansion (intentional — the missing var surfaces the configuration
+// gap loudly instead of producing a .deb with an unexpanded literal).
+func BuildEnv(version, arch, assetsDir, sourceDir string, sourceDateEpoch int64) []string {
+	env := []string{
 		"VERSION=" + version,
 		"ARCH=" + arch,
 		"ASSETS=" + assetsDir,
@@ -44,4 +51,8 @@ func BuildEnv(version, arch, assetsDir string, sourceDateEpoch int64) []string {
 		"LC_ALL=C",
 		"PATH=/usr/local/bin:/usr/bin:/bin",
 	}
+	if sourceDir != "" {
+		env = append(env, "SOURCE="+sourceDir)
+	}
+	return env
 }

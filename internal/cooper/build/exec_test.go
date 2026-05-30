@@ -1,12 +1,11 @@
 package build
 
 import (
-	"strings"
 	"testing"
 )
 
 func TestBuildEnv(t *testing.T) {
-	env := BuildEnv("0.140.0", "amd64", "/work/assets", 1715240520)
+	env := BuildEnv("0.140.0", "amd64", "/work/assets", "", 1715240520)
 
 	wants := map[string]string{
 		"VERSION":           "0.140.0",
@@ -16,15 +15,7 @@ func TestBuildEnv(t *testing.T) {
 		"LC_ALL":            "C",
 		"PATH":              "/usr/local/bin:/usr/bin:/bin",
 	}
-	got := map[string]string{}
-	for _, e := range env {
-		k, v, ok := strings.Cut(e, "=")
-		if !ok {
-			t.Errorf("bad env entry %q", e)
-			continue
-		}
-		got[k] = v
-	}
+	got := envMap(env)
 	if len(got) != len(wants) {
 		t.Errorf("env has %d entries, want %d: %v", len(got), len(wants), got)
 	}
@@ -32,6 +23,9 @@ func TestBuildEnv(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("env[%s]: got %q want %q", k, got[k], v)
 		}
+	}
+	if _, ok := got["SOURCE"]; ok {
+		t.Errorf("SOURCE should be absent when sourceDir is empty")
 	}
 
 	// Defense-in-depth: nothing inherited from the test process should
@@ -42,3 +36,12 @@ func TestBuildEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildEnv_WithSource(t *testing.T) {
+	env := BuildEnv("0.140.0", "amd64", "/work/assets", "/work/source", 1715240520)
+	got := envMap(env)
+	if got["SOURCE"] != "/work/source" {
+		t.Errorf("SOURCE: %q, want /work/source", got["SOURCE"])
+	}
+}
+
