@@ -446,3 +446,82 @@ func TestRunReconcile_DiscoverFailedNoBuild(t *testing.T) {
 		t.Errorf("stdout missing skip row for broken: %q", stdout.String())
 	}
 }
+
+func TestRunReconcile_TrailerOK(t *testing.T) {
+	be := newStubBackend()
+	p := makePlan(t, stubPkg{name: "hugo", version: "0.140.0", arches: []string{"amd64"}})
+	script := &stubCooperBuildScript{}
+	var stdout, stderr bytes.Buffer
+
+	if err := runReconcile(context.Background(), runOpts(be, p, script.Fn(), &stdout, &stderr)); err != nil {
+		t.Fatalf("runReconcile: %v", err)
+	}
+	want := "[hugo] result: ok (artifacts=1 built=1 skipped=0 failed=0)"
+	if !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout missing trailer %q:\n%s", want, stdout.String())
+	}
+}
+
+func TestRunReconcile_TrailerAllSkipIsOK(t *testing.T) {
+	be := newStubBackend()
+	p := makePlan(t, stubPkg{name: "hugo", version: "0.140.0", arches: []string{"amd64"}})
+	be.hashes[p.Packages[0].Artifacts[0].Deb.BuildInputsHash] = true
+	script := &stubCooperBuildScript{}
+	var stdout, stderr bytes.Buffer
+
+	if err := runReconcile(context.Background(), runOpts(be, p, script.Fn(), &stdout, &stderr)); err != nil {
+		t.Fatalf("runReconcile: %v", err)
+	}
+	want := "[hugo] result: ok (artifacts=1 built=0 skipped=1 failed=0)"
+	if !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout missing trailer %q:\n%s", want, stdout.String())
+	}
+}
+
+func TestRunReconcile_TrailerMixedIsWarn(t *testing.T) {
+	be := newStubBackend()
+	p := makePlan(t,
+		stubPkg{name: "hugo", version: "0.140.0", arches: []string{"amd64", "arm64"}},
+	)
+	script := &stubCooperBuildScript{
+		failures: map[string]string{"hugo|arm64": "nfpm exploded"},
+	}
+	var stdout, stderr bytes.Buffer
+
+	_ = runReconcile(context.Background(), runOpts(be, p, script.Fn(), &stdout, &stderr))
+	want := "[hugo] result: warn (artifacts=2 built=1 skipped=0 failed=1)"
+	if !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout missing trailer %q:\n%s", want, stdout.String())
+	}
+}
+
+func TestRunReconcile_TrailerAllFailIsError(t *testing.T) {
+	be := newStubBackend()
+	p := makePlan(t, stubPkg{name: "hugo", version: "0.140.0", arches: []string{"amd64"}})
+	script := &stubCooperBuildScript{
+		failures: map[string]string{"hugo|amd64": "nfpm exploded"},
+	}
+	var stdout, stderr bytes.Buffer
+
+	_ = runReconcile(context.Background(), runOpts(be, p, script.Fn(), &stdout, &stderr))
+	want := "[hugo] result: error (artifacts=1 built=0 skipped=0 failed=1)"
+	if !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout missing trailer %q:\n%s", want, stdout.String())
+	}
+}
+
+func TestRunReconcile_TrailerNotPrintedInDryRun(t *testing.T) {
+	be := newStubBackend()
+	p := makePlan(t, stubPkg{name: "hugo", version: "0.140.0", arches: []string{"amd64"}})
+	script := &stubCooperBuildScript{}
+	var stdout, stderr bytes.Buffer
+
+	opts := runOpts(be, p, script.Fn(), &stdout, &stderr)
+	opts.DryRun = true
+	if err := runReconcile(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), "result:") {
+		t.Errorf("trailer leaked into dry-run output:\n%s", stdout.String())
+	}
+}

@@ -158,6 +158,13 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 		return nil
 	}
 
+	// Build the per-package summary skeleton from decisions; the loop
+	// below ticks Built/Failed as imports resolve. Trailers print right
+	// before publish so each `[PACKAGE] result:` line bookends that
+	// package's work, regardless of which revision-group its artifacts
+	// landed in.
+	summaries := initPackageSummaries(decisions)
+
 	// Group decisions by revision so one cooper build invocation can
 	// handle every artifact at the same N. The 0-bucket is bare; >0
 	// gets --revision N.
@@ -172,23 +179,31 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 		if err != nil {
 			return fmt.Errorf("cooper build (revision %d): %w", rev, err)
 		}
-		built, failed := collectArtifactsTo(opts.Stderr, annotated)
+		built, failed := collectArtifactsTo(opts.Stderr, annotated, summaries)
 		anyFailed = anyFailed || failed
-		for _, debPath := range built {
-			name := filepath.Base(debPath)
-			importErr := opts.Backend.Import(ctx, debPath)
+		for _, ba := range built {
+			name := filepath.Base(ba.Path)
+			importErr := opts.Backend.Import(ctx, ba.Path)
 			if opts.AuditLog != nil {
-				_ = opts.AuditLog.Import(debPath, name, importErr)
+				_ = opts.AuditLog.Import(ba.Path, name, importErr)
 			}
 			if importErr != nil {
 				fmt.Fprintf(opts.Stderr, "import failed: %s: %v\n", name, importErr)
+				if s := summaries[ba.PackageName]; s != nil {
+					s.Failed++
+				}
 				anyFailed = true
 				continue
 			}
 			fmt.Fprintf(opts.Stdout, "imported: %s\n", name)
+			if s := summaries[ba.PackageName]; s != nil {
+				s.Built++
+			}
 			anyImported = true
 		}
 	}
+
+	printPackageTrailers(opts.Stdout, summaries)
 
 	if anyImported {
 		publishErr := opts.Backend.Publish(ctx)
@@ -207,6 +222,70 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 		return errors.New("one or more artifacts failed to build or import")
 	}
 	return nil
+}
+
+// packageSummary accumulates per-package outcomes across the
+// revision-group loop. Used to emit the structured trailer that lets
+// CI parsers grep `result: error` reliably even when N packages
+// publish in one reconcile and one of them broke mid-stream.
+//
+// Total = every decision (build or skip) for this package.
+// Skipped = decisions whose Action was ActionSkip (already imported).
+// Built = artifacts that built AND imported cleanly.
+// Failed = artifacts that failed at either the build or import step.
+//
+// Skipped + Built + Failed is the count of "finished" artifacts;
+// equals Total at the end of a normal run.
+type packageSummary struct {
+	Total   int
+	Skipped int
+	Built   int
+	Failed  int
+}
+
+// initPackageSummaries seeds one entry per package named in
+// decisions, populating Total + Skipped. Build/Failed get ticked
+// later as artifacts move through the loop.
+func initPackageSummaries(decisions []policy.Decision) map[string]*packageSummary {
+	out := map[string]*packageSummary{}
+	for _, d := range decisions {
+		s, ok := out[d.PackageName]
+		if !ok {
+			s = &packageSummary{}
+			out[d.PackageName] = s
+		}
+		s.Total++
+		if d.Action == policy.ActionSkip {
+			s.Skipped++
+		}
+	}
+	return out
+}
+
+// printPackageTrailers emits one `[PACKAGE] result: ok|warn|error
+// (artifacts=N built=N skipped=N failed=N)` line per package, sorted
+// by package name. `warn` is reserved for partial success — at least
+// one artifact built AND at least one failed (or, equivalently,
+// either built+skipped > 0 alongside failed > 0). `error` is the
+// all-failed case; `ok` covers everything else.
+func printPackageTrailers(w io.Writer, summaries map[string]*packageSummary) {
+	names := make([]string, 0, len(summaries))
+	for k := range summaries {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		s := summaries[name]
+		result := "ok"
+		switch {
+		case s.Failed > 0 && (s.Built > 0 || s.Skipped > 0):
+			result = "warn"
+		case s.Failed > 0:
+			result = "error"
+		}
+		fmt.Fprintf(w, "[%s] result: %s (artifacts=%d built=%d skipped=%d failed=%d)\n",
+			name, result, s.Total, s.Built, s.Skipped, s.Failed)
+	}
 }
 
 // printDecisionsTo writes the same one-line-per-decision format peek
@@ -322,24 +401,44 @@ func execCooperBuild(ctx context.Context, cooperBin string, p *plan.Plan, outDir
 	return &annotated, nil
 }
 
+// builtArtifact bundles a .deb's path with the (package, arch) it
+// came from so the import loop can attribute success or failure to
+// the right packageSummary entry.
+type builtArtifact struct {
+	Path        string
+	PackageName string
+	Arch        string
+}
+
 // collectArtifactsTo pulls every successful artifact's path out of an
-// annotated cooper-build plan. The second return value is true when
-// any artifact failed (the caller propagates that to the exit code).
-// stderr is injected so tests can capture build-failed messages.
-func collectArtifactsTo(stderr io.Writer, annotated *plan.Plan) ([]string, bool) {
-	var built []string
+// annotated cooper-build plan, ticks Failed on the corresponding
+// packageSummary for any build error, and returns the surviving
+// artifacts in attribution-bearing form. The second return value is
+// true when any artifact failed (the caller propagates that to the
+// exit code). stderr is injected so tests can capture build-failed
+// messages. summaries may be nil — older test paths that don't care
+// about the per-package trailer pass nil.
+func collectArtifactsTo(stderr io.Writer, annotated *plan.Plan, summaries map[string]*packageSummary) ([]builtArtifact, bool) {
+	var built []builtArtifact
 	var failed bool
 	for _, pkg := range annotated.Packages {
 		for _, a := range pkg.Artifacts {
 			if a.Result == plan.ResultError {
 				fmt.Fprintf(stderr, "build failed: %s %s: %s\n", pkg.Name, a.Arch, a.Error.Message)
+				if s := summaries[pkg.Name]; s != nil {
+					s.Failed++
+				}
 				failed = true
 				continue
 			}
 			if a.Deb.Path == nil {
 				continue
 			}
-			built = append(built, *a.Deb.Path)
+			built = append(built, builtArtifact{
+				Path:        *a.Deb.Path,
+				PackageName: pkg.Name,
+				Arch:        a.Arch,
+			})
 		}
 	}
 	return built, failed
