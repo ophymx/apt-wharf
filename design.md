@@ -320,8 +320,9 @@ discovery:
   the probe fails (defense against `file://` from a hostile JSON).
 - Absorbs vendor download endpoints that publish JSON metadata
   (Discord, Slack, Zoom, Cypress, Postman, ...) without needing an
-  external shim binary. `cmd/discover-zoom` is now redundant for the
-  Zoom case — the same mapping fits in five lines of YAML.
+  external shim binary. `examples/external-producers/discover-zoom`
+  is now redundant for the Zoom case — the same mapping fits in five
+  lines of YAML.
 
 ### Built-in: `xml_url`
 
@@ -348,6 +349,19 @@ discovery:
   project release feeds, and RSS / Atom-shaped download indexes.
 
 ### Built-in: `external`
+
+**When to reach for this.** `external` is the last-resort discovery
+kind. Reach for it only when the vendor's metadata is structurally
+unrepresentable in `json_url` / `xml_url` — a multi-step auth
+handshake, cookie-based session state, paginated listings the
+built-ins can't follow, or a non-JSON/XML wire format. If the vendor
+publishes its release metadata as a single JSON or XML document you
+can `GET`, the declarative kinds win on transparency and don't
+require shipping a separate binary. The Zoom case used to be the
+poster child for this kind; it now lives in five lines of `json_url`
+config (see *Built-in: json_url* above) — the redundant
+`examples/external-producers/discover-zoom` binary remains only as a
+worked reference for the stdio contract.
 
 Escape hatch for vendors with bespoke discovery needs. Language-agnostic
 contract over stdio.
@@ -402,7 +416,8 @@ are still legitimate.
 Tools written in Go can import `github.com/ophymx/apt-wharf/external` for
 the wire-format types (`Input`, `Probe`, `Output`), `Output.Validate`, and a
 `Run(ProbeFunc) error` helper that wires `os.Stdin`/`os.Stdout` to a
-SIGINT/SIGTERM-cancellable context. `cmd/discover-zoom` ships as a working
+SIGINT/SIGTERM-cancellable context.
+`examples/external-producers/discover-zoom/` ships as a working
 example covering the full contract.
 
 ## GPG / signing
@@ -423,8 +438,10 @@ explicitly out of scope.
 
 ```
 cmd/signpost/         main, flag/config wiring
-cmd/discover-zoom/    sample external discoverer (Zoom Linux client)
 external/             public Go helper for tools implementing the external contract
+examples/external-producers/discover-zoom/
+                      reference external discoverer (Zoom Linux client; see
+                      §"Built-in: external" for when to reach for this pattern)
 internal/config/      YAML schema, validation, env interpolation
 internal/source/      Discoverer interface + built-in impls (github_release, latest_url, json_url, xml_url, external)
 internal/refresh/     poll loop, change detection, control extraction, snapshot composition

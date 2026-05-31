@@ -30,10 +30,14 @@ Five related command-line tools share one Go module
   dearmors in-process, renders deb822 `.sources` files, and emits a
   `plan.Plan` for `cooper build` to consume.
 
-A small helper, `cmd/discover-zoom`, is an example *external producer*
-for signpost's discovery contract (Zoom's vendor JSON endpoint). It demonstrates
-the `internal/source/external.go` pluggable-producer pattern; it is not part
-of any main tool's binary.
+A reference external producer for signpost's discovery contract lives
+at `examples/external-producers/discover-zoom/` (Zoom's vendor JSON
+endpoint). It demonstrates the `internal/source/external.go`
+pluggable-producer pattern; it is not part of any main tool's binary
+and is not shipped. The Zoom case is itself redundant now — five
+lines of `json_url` config in signpost handle it without exec'ing
+anything — but the binary stays as the canonical worked example of
+the external stdio contract.
 
 The tools intentionally DON'T overlap by scope: signpost serves apt repos,
 cooper builds packages from upstream binaries, staves packages local files,
@@ -183,8 +187,10 @@ deployment.
 `internal/source/` defines a `Discoverer` interface with built-in
 implementations for `github_release`, `latest_url`, `json_url`, plus an
 `external` source kind that exec's a separate program speaking the same
-JSON contract on stdin/stdout. `cmd/discover-zoom` is the canonical
-example external producer.
+JSON contract on stdin/stdout. `examples/external-producers/discover-zoom/`
+is the canonical worked example — reach for `external` only when the
+built-in source kinds genuinely can't represent the vendor's discovery
+shape (multi-step auth, cookies, non-JSON/XML wire format).
 
 ## Test patterns and gotchas
 

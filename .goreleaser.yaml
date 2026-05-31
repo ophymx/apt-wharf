@@ -7,8 +7,9 @@
 # Output lands in dist/. GitHub release publishing is disabled below; this
 # config is only the local build pipeline.
 #
-# cmd/discover-zoom is intentionally not built here — it's example code for
-# signpost's external-producer contract, not a shipped binary.
+# Example external-producer code lives under examples/external-producers/
+# (e.g. discover-zoom). Those are buildable reference programs, not
+# shipped binaries.
 
 version: 2
 

@@ -155,8 +155,7 @@ drayman uses against the target repo.
 
 ## Repo layout
 
-- [`cmd/`](./cmd) — one main package per binary (plus `cmd/discover-zoom`,
-  an example external producer for signpost's stdio contract).
+- [`cmd/`](./cmd) — one main package per shipped binary.
 - [`internal/`](./internal) — per-tool packages organized as
   `internal/<tool>/<name>/` for the four newer CLIs; signpost's older
   packages sit at `internal/{config,source,sign,refresh,…}/`.
@@ -166,7 +165,11 @@ drayman uses against the target repo.
 - [`external/`](./external) — small public types for signpost's external
   discovery contract.
 - [`examples/`](./examples) — copy-paste-ready configs for cooper,
-  chandler, and staves. See [`examples/README.md`](./examples/README.md).
+  chandler, and staves, plus
+  [`external-producers/`](./examples/external-producers) holding
+  buildable reference programs that implement signpost's stdio
+  external-discoverer contract. See
+  [`examples/README.md`](./examples/README.md).
 - [`packaging/`](./packaging) — systemd units and maintainer scripts
   shipped in the signpost `.deb`.
 - [`scripts/precommit-checks.sh`](./scripts/precommit-checks.sh) — runs

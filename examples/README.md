@@ -263,3 +263,23 @@ hard error.
   alternative. Use an external producer that scrapes the page and
   emits a `plan.Plan` JSON document; see cooper-design.md §"HTML-
   scraped sources" for the rationale and a ~30-line shell example.
+
+## `external-producers/`
+
+[`external-producers/`](./external-producers) holds buildable
+reference programs implementing signpost's stdio external-discoverer
+contract — not shipped binaries, just worked examples kept around to
+illustrate the full contract.
+
+| Example | What it shows |
+| --- | --- |
+| [`discover-zoom/`](./external-producers/discover-zoom) | the canonical stdin/stdout contract against Zoom's `result.downloadVO.zoom.version` JSON endpoint |
+
+Reach for the `external` source kind only when the built-in
+`json_url` / `xml_url` discoverers genuinely can't represent the
+vendor's discovery shape (multi-step auth, cookies, non-JSON/XML
+formats). The Zoom case shown here is itself now covered by a
+five-line `json_url` config (see signpost's `design.md` §"Built-in:
+json_url"); the binary remains as a worked reference for the stdio
+protocol, not a recommendation to use this pattern when a declarative
+alternative exists.
