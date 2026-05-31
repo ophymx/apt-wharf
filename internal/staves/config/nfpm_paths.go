@@ -12,6 +12,10 @@ import (
 // upstream-style references (${ASSETS}/${VAR} prefixes, absolute
 // paths) that would force a download/extract phase staves doesn't
 // have.
+//
+// Entries with type: symlink are skipped: nfpm interprets symlink
+// src: as the link's *target string*, not a file path on disk, so
+// the resolver must not try to read it.
 func CollectSrcPaths(nfpm *yaml.Node) []string {
 	root := nfpm
 	if root.Kind == yaml.DocumentNode {
@@ -36,6 +40,9 @@ func CollectSrcPaths(nfpm *yaml.Node) []string {
 		}
 		for _, entry := range v.Content {
 			if entry.Kind != yaml.MappingNode {
+				continue
+			}
+			if isSymlinkEntry(entry) {
 				continue
 			}
 			for j := 0; j < len(entry.Content); j += 2 {
@@ -67,6 +74,19 @@ func CollectSrcPaths(nfpm *yaml.Node) []string {
 		break
 	}
 	return srcs
+}
+
+// isSymlinkEntry reports whether a contents[] mapping has type: symlink.
+// nfpm interprets symlink src: as the link target string, not a file
+// path; the resolver must skip these.
+func isSymlinkEntry(entry *yaml.Node) bool {
+	for j := 0; j < len(entry.Content); j += 2 {
+		k, v := entry.Content[j], entry.Content[j+1]
+		if k.Value == "type" && v.Kind == yaml.ScalarNode && v.Value == "symlink" {
+			return true
+		}
+	}
+	return false
 }
 
 // RejectAssetishSrcs returns the first src in srcs that looks like a

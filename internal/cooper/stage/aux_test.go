@@ -47,6 +47,26 @@ func keysOf(refs []Ref) []string {
 	return out
 }
 
+func TestWalk_SkipsSymlinkEntries(t *testing.T) {
+	// `type: symlink` entries pass src as the link's target string, not
+	// a file path on disk. The aux-file collector must skip them so it
+	// doesn't try to resolve `/usr/bin/kubelogin` as a relative path
+	// inside the recipe directory.
+	dir := makePkg(t, map[string]string{
+		"hugo.service": "[Unit]\n",
+	})
+	doc := parseDoc(t, `contents:
+  - { src: ./hugo.service, dst: /lib/systemd/system/hugo.service }
+  - { src: /usr/bin/kubelogin, dst: /usr/local/bin/kubectl-oidc-login, type: symlink }`)
+	refs, err := Walk(dir, doc)
+	if err != nil {
+		t.Fatalf("symlink entry should not trigger aux resolution: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Errorf("expected one ref (real file), got %d", len(refs))
+	}
+}
+
 func TestWalk_LiteralFile(t *testing.T) {
 	dir := makePkg(t, map[string]string{
 		"hugo.service": "[Unit]\n",

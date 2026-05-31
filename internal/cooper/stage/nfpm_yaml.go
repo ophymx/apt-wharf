@@ -64,7 +64,10 @@ func lookupString(m *yaml.Node, key string) (string, bool) {
 
 // collectContentsSrc returns the src: scalars from contents[]. Entries
 // that don't have a scalar src: are skipped — nfpm itself will reject
-// malformed entries at build time.
+// malformed entries at build time. Entries with type: symlink are
+// skipped too: nfpm interprets symlink src: as the link's *target
+// string*, not a file path on disk, so the aux-file collector must
+// not try to resolve it.
 func collectContentsSrc(root *yaml.Node) []string {
 	contents := childNode(root, "contents")
 	if contents == nil || contents.Kind != yaml.SequenceNode {
@@ -73,6 +76,9 @@ func collectContentsSrc(root *yaml.Node) []string {
 	var out []string
 	for _, item := range contents.Content {
 		if item.Kind != yaml.MappingNode {
+			continue
+		}
+		if t, ok := lookupString(item, "type"); ok && t == "symlink" {
 			continue
 		}
 		s, ok := lookupString(item, "src")
