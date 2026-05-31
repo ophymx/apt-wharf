@@ -71,7 +71,7 @@ func Walk(pkgDir string, nfpm *yaml.Node) ([]Ref, error) {
 	for _, src := range collectContentsSrc(root) {
 		got, err := resolve(realPkgDir, src)
 		if err != nil {
-			return nil, fmt.Errorf("contents src %q: %w", src, err)
+			return nil, fmt.Errorf("contents src %q (resolving relative to %s): %w", src, pkgDir, err)
 		}
 		emit(got)
 	}
@@ -84,7 +84,7 @@ func Walk(pkgDir string, nfpm *yaml.Node) ([]Ref, error) {
 		}
 		got, err := resolve(realPkgDir, s)
 		if err != nil {
-			return nil, fmt.Errorf("scripts.%s %q: %w", name, s, err)
+			return nil, fmt.Errorf("scripts.%s %q (resolving relative to %s): %w", name, s, pkgDir, err)
 		}
 		emit(got)
 	}

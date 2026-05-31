@@ -47,6 +47,25 @@ func keysOf(refs []Ref) []string {
 	return out
 }
 
+func TestWalk_ErrorMentionsPackageDir(t *testing.T) {
+	// When aux resolution fails (here: missing file), the error must
+	// mention the directory the src was being resolved relative to —
+	// otherwise users hit a generic "file not found" without learning
+	// that the resolver works from the package YAML's dir, not the
+	// cooper invocation cwd.
+	dir := makePkg(t, map[string]string{}) // empty — ./missing.txt won't be found
+	doc := parseDoc(t, `contents:
+  - { src: ./missing.txt, dst: /etc/missing.txt }`)
+	_, err := Walk(dir, doc)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "resolving relative to") || !strings.Contains(msg, dir) {
+		t.Errorf("error should mention the package dir; got %q", msg)
+	}
+}
+
 func TestWalk_SkipsSymlinkEntries(t *testing.T) {
 	// `type: symlink` entries pass src as the link's target string, not
 	// a file path on disk. The aux-file collector must skip them so it
