@@ -1,4 +1,6 @@
-package main
+// Package cli holds tiny helpers shared across the apt-wharf binaries'
+// stdlib-flag-based subcommand dispatchers.
+package cli
 
 import (
 	"flag"
@@ -13,15 +15,15 @@ type boolFlag interface {
 	IsBoolFlag() bool
 }
 
-// reorderArgs moves positional arguments after flag arguments so that
+// ReorderArgs moves positional arguments after flag arguments so that
 // stdlib flag.Parse — which stops at the first non-flag token — sees
 // every flag the user passed, regardless of where they put the
-// positional. Lets `drayman peek <PLAN> --backend ...` work in
-// addition to the strict `drayman peek --backend ... <PLAN>`.
+// positional. Lets `cooper discover <CONFIG> -o plan.json` work in
+// addition to the strict `cooper discover -o plan.json <CONFIG>`.
 //
 // Args after a literal `--` are treated as positionals verbatim and
 // preserve their order, mirroring stdlib flag's behavior.
-func reorderArgs(fs *flag.FlagSet, args []string) []string {
+func ReorderArgs(fs *flag.FlagSet, args []string) []string {
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

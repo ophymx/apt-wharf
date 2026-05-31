@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-github/v86/github"
 
+	"github.com/ophymx/apt-wharf/internal/cli"
 	signconfig "github.com/ophymx/apt-wharf/internal/config"
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
 	"github.com/ophymx/apt-wharf/internal/cooper/discover"
@@ -41,7 +42,7 @@ func cmdDiscover(args []string) error {
 	fs.Var(&pkgFilter, "package", "narrow to a package by name (repeatable)")
 	output := fs.String("o", "-", "where to write the JSON plan (\"-\" for stdout)")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

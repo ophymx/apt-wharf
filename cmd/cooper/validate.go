@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
 	"github.com/ophymx/apt-wharf/internal/cooper/stage"
 )
@@ -22,7 +23,7 @@ func cmdValidate(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: cooper validate <CONFIG>")
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

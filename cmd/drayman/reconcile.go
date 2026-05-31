@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/drayman/audit"
 	"github.com/ophymx/apt-wharf/internal/drayman/backend"
 	"github.com/ophymx/apt-wharf/internal/drayman/policy"
@@ -60,7 +61,7 @@ func cmdReconcile(args []string) error {
 	outDir := fs.String("out-dir", "", "where cooper builds .debs (default: ephemeral; cleaned on exit)")
 	dryRun := fs.Bool("dry-run", false, "query and decide but don't build, import, or publish")
 	auditPath := fs.String("audit-log", "", "append JSONL audit events to this path (decisions, imports, publish)")
-	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

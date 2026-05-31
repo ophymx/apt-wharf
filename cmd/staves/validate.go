@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/cooper/stage"
 	"github.com/ophymx/apt-wharf/internal/staves/config"
 )
@@ -22,7 +23,7 @@ func cmdValidate(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: staves validate <CONFIG>")
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

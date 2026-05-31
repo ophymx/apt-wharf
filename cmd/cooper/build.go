@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/cooper/build"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
@@ -31,7 +32,7 @@ func cmdBuild(args []string) error {
 	stageOnly := fs.Bool("stage-only", false, "stage artifacts but skip nfpm exec; keep work dir")
 	keepWork := fs.Bool("keep-work", false, "build normally but skip work-dir cleanup")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

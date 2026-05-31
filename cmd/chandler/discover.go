@@ -11,6 +11,7 @@ import (
 
 	"github.com/ophymx/apt-wharf/internal/chandler/config"
 	"github.com/ophymx/apt-wharf/internal/chandler/discover"
+	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
@@ -29,7 +30,7 @@ func cmdDiscover(args []string) error {
 		fmt.Fprintln(fs.Output(), "usage: chandler discover <CONFIG> [-o OUTPUT]")
 	}
 	out := fs.String("o", "-", "output path (`-` for stdout)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

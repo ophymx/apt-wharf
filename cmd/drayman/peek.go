@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/drayman/policy"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
@@ -25,7 +26,7 @@ func cmdPeek(args []string) error {
 		fs.PrintDefaults()
 	}
 	bf := registerBackendFlags(fs)
-	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

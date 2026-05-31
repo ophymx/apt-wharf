@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/staves/config"
 	"github.com/ophymx/apt-wharf/internal/staves/discover"
 	"github.com/ophymx/apt-wharf/pkg/plan"
@@ -39,7 +40,7 @@ func cmdDiscover(args []string) error {
 	var packageFilter stringSlice
 	fs.Var(&packageFilter, "package", "restrict to package (repeatable)")
 	out := fs.String("o", "-", "output path (`-` for stdout)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

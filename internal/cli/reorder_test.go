@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"flag"
@@ -68,7 +68,7 @@ func TestReorderArgs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := reorderArgs(newFlagSet(), c.in)
+			got := ReorderArgs(newFlagSet(), c.in)
 			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %v, want %v", got, c.want)
 			}

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/ophymx/apt-wharf/internal/chandler/config"
+	"github.com/ophymx/apt-wharf/internal/cli"
 )
 
 // cmdValidate implements `chandler validate <CONFIG>`. Lints without
@@ -20,7 +21,7 @@ func cmdValidate(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: chandler validate <CONFIG>")
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
