@@ -769,6 +769,7 @@ contract*:
 | Symbol                              | Purpose                                                                                       |
 | ----------------------------------- | --------------------------------------------------------------------------------------------- |
 | `ComputeBuildInputsHash(BuildPlan)` | Per-artifact hash — JCS canonicalization (RFC 8785) + SHA256                                  |
+| `DeriveEpoch(input []byte) int64`   | Stable `source_date_epoch` derived from canonical input bytes; SHA-256 projected into a fixed 2020–2030 window. Used by every source kind without a canonical upstream `published_at` (json_url, xml_url, external, staves, chandler). |
 | `CompareVersions(a, b string) int`  | Debian Policy §5.6.12 version comparison; returns `-1`, `0`, `+1`                             |
 | `SplitDebianRevision(v string)`     | Split a Debian version: `"1.0.0-2"` → `("1.0.0", "2")`; bare `"1.0.0"` → `("1.0.0", "")`     |
 | `SchemaVersion`, `FormatRevision`   | The two version knobs (see *Discover JSON contract* field notes)                              |
@@ -1005,8 +1006,10 @@ block picks one (validation enforces exactly-one):
   shape as github_release). Templates support `${VERSION}` /
   `${ARCH}` plus signpost-style `{token}` / `{gjson.path}`
   placeholders. `source_date_epoch` is derived deterministically
-  from the URL + version since json_url has no canonical
-  "published_at" equivalent.
+  from `(url, version)` via `plan.DeriveEpoch` (cooper's shared
+  helper for sources without a canonical "published_at"
+  equivalent — projects a SHA-256 of canonical input bytes into a
+  fixed 2020–2030 window).
 - **`xml_url`**: XML counterpart to `json_url`. Targets vendors who
   publish version metadata as XML — JetBrains' `updates.xml`
   (`https://www.jetbrains.com/updates/updates.xml`) is the canonical
@@ -1018,9 +1021,9 @@ block picks one (validation enforces exactly-one):
   against the same body, mirroring json_url's `{gjson.path}` slot.
   The `xpath:` prefix is required — raw XPath grammar (`[`, `]`,
   `/`, `=`) inside braces would clash with the surrounding URL
-  grammar. `source_date_epoch` is derived from `(url, version)`
-  exactly the same way json_url does it. XML parsing uses
-  `github.com/antchfx/xmlquery`.
+  grammar. `source_date_epoch` is derived from `(url, version)` via
+  `plan.DeriveEpoch`, the same shared helper json_url uses. XML
+  parsing uses `github.com/antchfx/xmlquery`.
 - **`external`**: exec a user-supplied script and read `{version,
   assets[]}` JSON from its stdout. The script owns the upstream-
   specific scraping; cooper continues to own everything downstream
@@ -1125,10 +1128,11 @@ recipe's TCB — if you don't trust your own discovery script you
 have a different problem.
 
 **source_date_epoch.** Derived deterministically from
-`(version, command path)`, mirroring json_url's `(url, version)`
-derivation. The script does not supply an epoch; letting it would
-let two consecutive discover runs of the same upstream produce
-different epochs and thus different `build_inputs_hash` values.
+`(command path, version)` via `plan.DeriveEpoch`, the same shared
+helper json_url and xml_url use. The script does not supply an
+epoch; letting it would let two consecutive discover runs of the
+same upstream produce different epochs and thus different
+`build_inputs_hash` values.
 
 **Validate.** `cooper validate` checks that `command[0]` exists and
 is executable when its path starts with `./` or `/`; bare names are

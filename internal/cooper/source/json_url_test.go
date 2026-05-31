@@ -174,21 +174,3 @@ func TestRenderAssetURL_RejectsNonHTTPS(t *testing.T) {
 	}
 }
 
-func TestDeriveURLEpoch_Stable(t *testing.T) {
-	a := deriveURLEpoch("https://x/y", "1.2.3")
-	b := deriveURLEpoch("https://x/y", "1.2.3")
-	if a != b {
-		t.Errorf("not deterministic: %d vs %d", a, b)
-	}
-	// Different inputs → different epochs (with overwhelming probability).
-	c := deriveURLEpoch("https://x/y", "1.2.4")
-	if a == c {
-		t.Errorf("epoch collision on different version: %d == %d", a, c)
-	}
-	// Falls within the 2020-01-01 + ~10y window.
-	const base = int64(1577836800)
-	const span = int64(10 * 365 * 24 * 3600)
-	if a < base || a >= base+span {
-		t.Errorf("epoch %d outside [%d, %d)", a, base, base+span)
-	}
-}

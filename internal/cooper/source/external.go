@@ -13,6 +13,7 @@ import (
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
 	signsource "github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // defaultExternalTimeout applies when source.external.timeout is omitted.
@@ -154,7 +155,7 @@ func ResolveExternal(ctx context.Context, e *config.ExternalSource, workdir stri
 		Version:     reply.Version,
 		Command:     e.Command[0],
 		Assets:      assets,
-		SourceEpoch: deriveURLEpoch(e.Command[0], reply.Version),
+		SourceEpoch: plan.DeriveEpoch([]byte(e.Command[0] + ":" + reply.Version)),
 	}, nil
 }
 

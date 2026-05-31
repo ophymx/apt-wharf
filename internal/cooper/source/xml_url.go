@@ -12,6 +12,7 @@ import (
 	"github.com/antchfx/xmlquery"
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // xmlURLBodyCap bounds metadata-response size, matching json_url.
@@ -105,7 +106,7 @@ func ResolveXMLURL(ctx context.Context, client *http.Client, x *config.XMLURLSou
 		URL:         x.URL,
 		Version:     version,
 		RawBody:     body,
-		SourceEpoch: deriveURLEpoch(x.URL, version),
+		SourceEpoch: plan.DeriveEpoch([]byte(x.URL + ":" + version)),
 	}, nil
 }
 

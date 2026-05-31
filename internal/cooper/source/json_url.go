@@ -13,6 +13,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
+	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
 // jsonURLBodyCap bounds metadata-response size, matching signpost's
@@ -98,7 +99,7 @@ func ResolveJSONURL(ctx context.Context, client *http.Client, j *config.JSONURLS
 		URL:         j.URL,
 		Version:     version,
 		RawBody:     body,
-		SourceEpoch: deriveURLEpoch(j.URL, version),
+		SourceEpoch: plan.DeriveEpoch([]byte(j.URL + ":" + version)),
 	}, nil
 }
 
