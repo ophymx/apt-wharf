@@ -232,9 +232,10 @@ chandler discover ./examples/hashicorp/chandler.yaml | cooper build - --out-dir 
 ```
 
 chandler needs no GitHub token — it only fetches the vendor key URL
-named in `keys:`. The config file must be tracked in git so chandler
-can resolve `source_date_epoch` from the commit time; not-in-git is a
-hard error.
+named in `keys:`. Git is optional: chandler records `git_commit` /
+`git_date` on `plan.Source` as best-effort provenance when the config
+file lives in a git working tree, but neither field influences
+`source_date_epoch` (which is content-derived) or `build_inputs_hash`.
 
 ## What you'll need at runtime
 

@@ -22,7 +22,7 @@ at the upstream URLs without re-hosting them.
 | [`signpost`](./cmd/signpost) | Daemon. Serves a signed apt repo whose `.deb` requests HTTP-redirect to upstream vendors. Hosts only `Release` / `InRelease` / `Packages` metadata; never caches `.deb` bytes. |
 | [`cooper`](./cmd/cooper) | CLI. Turns GitHub-released binaries into reproducible `.deb` files via a two-phase JSON contract (`discover` → `plan.json` → `build`). Execs `nfpm pkg` for the actual Debian packaging. |
 | [`chandler`](./cmd/chandler) | CLI. Turns the `curl URL \| sudo tee ...` keyring + sources install ritual into a reproducible keyring + `.sources` `.deb`. Fetches keys over HTTPS, dearmors in-process, renders deb822. |
-| [`staves`](./cmd/staves) | CLI. Packs locally-checked-in files (configs, systemd units, scripts) into a `.deb` via cooper's build pipeline. `source_date_epoch` derives from `git log` of the package directory. |
+| [`staves`](./cmd/staves) | CLI. Packs locally-checked-in files (configs, systemd units, scripts) into a `.deb` via cooper's build pipeline. `source_date_epoch` is a content-hash of the resolved nfpm subtree + every aux file's source bytes (git-independent). |
 | [`drayman`](./cmd/drayman) | CLI. Consumes cooper / chandler / staves output, dedups against the target apt repo by `X-Cooper-Build-Inputs-Hash`, applies revision auto-bump policy, and pushes `.debs` into aptly or reprepro. |
 
 The names are a cooperage metaphor: a *cooper* assembles barrels from

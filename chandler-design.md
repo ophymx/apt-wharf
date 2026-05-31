@@ -349,9 +349,9 @@ referenced by `nfpm.scripts.postinstall`. Default off.
 ```
 load chandler.yaml.
 validate schema (no network).
-git-resolve source_date_epoch:
-    git log -1 --format=%ct -- <config-path>
-    not-in-git → hard error.
+best-effort git provenance (records git_commit / git_date on
+    plan.Source; not load-bearing — source_date_epoch is content-
+    derived per target below).
 expand targets:
     if targets[] absent: targets = [empty target] (simple mode)
     else: targets = targets[]
@@ -561,8 +561,10 @@ byte-identical `plan.Plan` JSON.
 
 What's pinned chandler-side:
 
-- `source_date_epoch` is the git commit time of the chandler YAML
-  file. Not-in-git is a hard error.
+- `source_date_epoch` is derived deterministically from the
+  resolved per-target content (canonical nfpm subtree, every aux
+  file's base64 bytes, and the matrix distro/codename) via
+  `plan.DeriveEpoch`. Git is not required.
 - Dearmor is deterministic given the armored input (the OpenPGP
   binary serialization is canonical).
 - deb822 stanza rendering writes fields in a fixed order:

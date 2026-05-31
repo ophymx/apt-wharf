@@ -22,8 +22,9 @@ Five related command-line tools share one Go module
   and pushes resulting `.debs` into aptly or reprepro.
 - **`staves`** (`cmd/staves`) — discover-only CLI that packs locally-checked-in
   files (configs, systemd units, scripts) into a `plan.Plan` for `cooper build`.
-  Source kind `local`; `source_date_epoch` derives from `git log` of the
-  package directory.
+  Source kind `local`; `source_date_epoch` is a content-hash of the resolved
+  nfpm subtree + every aux file's source bytes (git-independent; `git_commit` /
+  `git_date` on `plan.Source` are best-effort provenance when available).
 - **`chandler`** (`cmd/chandler`) — discover-only CLI that turns the vendor
   `curl URL | sudo tee /etc/apt/sources.list.d/foo.list` install ritual into
   a reproducible keyring + sources `.deb`. Fetches GPG keys over HTTPS,

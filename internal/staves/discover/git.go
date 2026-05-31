@@ -13,13 +13,16 @@ import (
 )
 
 // GitProvenance returns the commit hash and commit time of the most
-// recent commit that touched any file under dir. Used to derive
-// source_date_epoch for staves packages, since there's no upstream
-// "published_at" to lean on.
+// recent commit that touched any file under dir. The result is
+// surfaced as best-effort provenance (GitCommit / GitDate fields on
+// plan.Source) — source_date_epoch is now derived from recipe content
+// in run.go, so a missing-git or no-touching-commit error here is
+// swallowed by the caller and the resulting plan simply omits the
+// provenance fields.
 //
-// Errors when dir isn't inside a git working tree, or when no commits
-// touch the package directory yet (typical for a freshly-added
-// package — the operator must `git add` and commit before discover).
+// Returns a non-nil error when dir isn't inside a git working tree or
+// no commit touches the package directory yet. Callers ignore the
+// error and check for empty commit/when instead.
 func GitProvenance(ctx context.Context, dir string) (commit string, when time.Time, err error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "log", "-n", "1", "--format=%H%n%ct", "--", ".")
 	out, runErr := cmd.Output()
@@ -28,7 +31,7 @@ func GitProvenance(ctx context.Context, dir string) (commit string, when time.Ti
 	}
 	parts := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)
 	if len(parts) != 2 {
-		return "", time.Time{}, fmt.Errorf("git log in %s: no commits touch this package (run `git add %s && git commit` first)", dir, dir)
+		return "", time.Time{}, fmt.Errorf("git log in %s: no commits touch this package yet", dir)
 	}
 	commit = parts[0]
 	ts, err := strconv.ParseInt(parts[1], 10, 64)
