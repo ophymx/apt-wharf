@@ -1,5 +1,10 @@
-# Goreleaser config for the apt-signpost / apt-cooper / apt-drayman /
-# apt-staves / apt-chandler binaries.
+# Goreleaser config for the apt-wharf project, packaged as two .debs:
+#   apt-signpost — the repo-serving daemon (own package; runs as a
+#                  long-running systemd unit with its own user/dirs).
+#   apt-wharf    — the build/orchestrate toolchain: cooper, chandler,
+#                  staves, drayman bundled together. Stateless CLIs
+#                  meant to be installed and used as a set; splitting
+#                  them per-tool was over-fragmentation.
 #
 # Local snapshot build (no tag required):
 #   goreleaser release --snapshot --clean
@@ -101,21 +106,9 @@ archives:
     ids: [signpost]
     name_template: "apt-signpost_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
 
-  - id: cooper
-    ids: [cooper]
-    name_template: "apt-cooper_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
-
-  - id: chandler
-    ids: [chandler]
-    name_template: "apt-chandler_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
-
-  - id: drayman
-    ids: [drayman]
-    name_template: "apt-drayman_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
-
-  - id: staves
-    ids: [staves]
-    name_template: "apt-staves_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+  - id: wharf
+    ids: [cooper, chandler, drayman, staves]
+    name_template: "apt-wharf_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
 
 nfpms:
   - id: signpost
@@ -169,101 +162,55 @@ nfpms:
       fields:
         Bugs: https://github.com/ophymx/apt-wharf/issues
 
-  - id: cooper
-    package_name: apt-cooper
-    ids: [cooper]
+  - id: wharf
+    package_name: apt-wharf
+    ids: [cooper, chandler, drayman, staves]
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: Ophymx
     homepage: https://github.com/ophymx/apt-wharf
     maintainer: Ophymx <ops@ophymx.com>
     license: MIT
+    # Replaces the per-tool packages shipped through v0.1.4. apt installs
+    # apt-wharf cleanly over an existing apt-{cooper,chandler,drayman,staves}
+    # because Replaces+Conflicts gives apt permission to remove the old
+    # ones and overwrite the same /usr/bin/* paths.
+    replaces:
+      - apt-cooper
+      - apt-chandler
+      - apt-drayman
+      - apt-staves
+    conflicts:
+      - apt-cooper
+      - apt-chandler
+      - apt-drayman
+      - apt-staves
+    provides:
+      - apt-cooper
+      - apt-chandler
+      - apt-drayman
+      - apt-staves
     # Runtime dependency: cooper execs `nfpm` from PATH during `cooper build`.
     # nfpm is not in Debian's apt archive, so it is not declared as Depends
     # here; install it separately (e.g. from goreleaser's nfpm .deb release).
+    # drayman also shells out to the configured apt-repo manager (aptly or
+    # reprepro); not declared because either backend may be chosen.
     description: |
-      Turn GitHub release binaries into reproducible .deb files.
-      apt-cooper is a two-phase CLI (discover -> plan.json -> build) that
-      resolves a YAML recipe against a GitHub release, then exec's nfpm to
-      produce a byte-identical .deb for the same inputs. Pairs with
-      any apt-repo manager (aptly, reprepro, ...).
-    section: devel
-    priority: optional
-    formats: [deb]
-    mtime: "{{ .CommitDate }}"
-    deb:
-      fields:
-        Bugs: https://github.com/ophymx/apt-wharf/issues
+      The apt-wharf build/orchestrate/publish toolchain, bundled.
+      Includes:
 
-  - id: chandler
-    package_name: apt-chandler
-    ids: [chandler]
-    file_name_template: "{{ .ConventionalFileName }}"
-    vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-wharf
-    maintainer: Ophymx <ops@ophymx.com>
-    license: MIT
-    # chandler emits plan.Plan JSON for cooper-build to consume; the actual
-    # .deb production runs through cooper, which execs nfpm. Declared
-    # alongside cooper so the two ship as a pair.
-    description: |
-      Turn vendor curl|sudo-tee install rituals into reproducible
-      keyring + sources .debs. apt-chandler is a discover-only CLI that
-      reads a YAML config, fetches and dearmors GPG keys over HTTPS,
-      renders deb822 .sources files, and emits a plan.Plan JSON
-      document for `cooper build -` to turn into a .deb. Replaces the
-      typical README install ritual with a reproducible, version-tracked
-      package.
-    section: devel
-    priority: optional
-    formats: [deb]
-    mtime: "{{ .CommitDate }}"
-    deb:
-      fields:
-        Bugs: https://github.com/ophymx/apt-wharf/issues
+        - cooper:   turn GitHub-released binaries into reproducible
+                    .debs via a two-phase JSON contract
+                    (discover -> plan.json -> build), exec'ing nfpm.
+        - chandler: turn vendor "curl URL | sudo tee" install rituals
+                    into reproducible keyring + sources .debs.
+        - staves:   package locally-checked-in files (configs,
+                    systemd units, scripts) as reproducible .debs.
+        - drayman:  orchestrate cooper / chandler / staves output
+                    into an aptly or reprepro apt repo, dedup'd by
+                    X-Cooper-Build-Inputs-Hash with auto-bump policy.
 
-  - id: drayman
-    package_name: apt-drayman
-    ids: [drayman]
-    file_name_template: "{{ .ConventionalFileName }}"
-    vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-wharf
-    maintainer: Ophymx <ops@ophymx.com>
-    license: MIT
-    # Runtime dependencies: drayman shells out to the configured apt-repo
-    # manager (aptly or reprepro). Not declared as Depends since either
-    # backend may be chosen.
-    description: |
-      Orchestrate cooper / chandler / staves output into an apt repo.
-      apt-drayman consumes plan.Plan JSON from any compatible producer,
-      dedups against the target apt repo by X-Cooper-Build-Inputs-Hash,
-      applies revision auto-bump policy, and pushes .debs into aptly or
-      reprepro.
-    section: devel
-    priority: optional
-    formats: [deb]
-    mtime: "{{ .CommitDate }}"
-    deb:
-      fields:
-        Bugs: https://github.com/ophymx/apt-wharf/issues
-
-  - id: staves
-    package_name: apt-staves
-    ids: [staves]
-    file_name_template: "{{ .ConventionalFileName }}"
-    vendor: Ophymx
-    homepage: https://github.com/ophymx/apt-wharf
-    maintainer: Ophymx <ops@ophymx.com>
-    license: MIT
-    # Pairs with cooper the same way chandler does — staves emits a
-    # plan.Plan for `cooper build -` to consume.
-    description: |
-      Package locally-checked-in files (configs, systemd units, scripts)
-      as reproducible .debs. apt-staves is a discover-only CLI that
-      walks a directory of nfpm.yaml + payload files, derives
-      source_date_epoch from git commit time, and emits a plan.Plan
-      JSON document for `cooper build -` to turn into a .deb. Fills the
-      "in-house config package" niche that cooper (upstream binaries)
-      and chandler (vendor keyrings) don't cover.
+      Pairs with apt-signpost (separate package) for the metadata-
+      serving side of the stack.
     section: devel
     priority: optional
     formats: [deb]
