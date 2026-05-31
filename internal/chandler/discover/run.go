@@ -2,10 +2,10 @@
 //
 // One Run call:
 //   - reads the parsed chandler.yaml,
-//   - resolves source_date_epoch from the config file's git history,
 //   - expands the matrix targets (or runs once in simple mode),
 //   - fetches every referenced key over HTTPS and dearmors it,
 //   - renders one deb822 .sources file per source[] entry,
+//   - derives a content-hash source_date_epoch (per target),
 //   - assembles a plan.Plan with one Package per matrix target,
 //   - returns the plan for `cooper build -` to consume.
 //
@@ -14,6 +14,7 @@ package discover
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -49,20 +50,6 @@ type Options struct {
 	// Stderr receives the per-fetch UID/fingerprint/expiry log
 	// lines. Nil means os.Stderr; tests inject bytes.Buffer.
 	Stderr io.Writer
-
-	// SkipGit makes Run synthesize a fixed source_date_epoch
-	// rather than reading the config file's commit history.
-	// Tests set this when running against config files that
-	// aren't tracked in git. Production callers leave it false.
-	SkipGit bool
-
-	// AllowShallow bypasses the shallow-clone safety gate. Default
-	// (false) causes Run to error out when the working tree is a
-	// shallow git clone, because source_date_epoch derived from
-	// `git log -- <configPath>` is unstable in that case. Set true
-	// only when you genuinely intend to build from a shallow
-	// checkout; SkipGit also implies the gate is skipped (tests).
-	AllowShallow bool
 }
 
 // Run is the chandler discover orchestrator. Walks the matrix (or the
@@ -87,33 +74,13 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (*plan.Plan, err
 		opts.Client = &keys.Client{}
 	}
 
-	var (
-		commitHash string
-		commitTime time.Time
-	)
-	if opts.SkipGit {
-		commitTime = time.Unix(0, 0).UTC()
-	} else {
-		// Shallow-clone guard. Fires before gitProvenance because the
-		// error there is mechanically valid (git log returns SOMETHING)
-		// but the resulting source_date_epoch silently destabilizes
-		// build_inputs_hash.
-		if !opts.AllowShallow {
-			dir := configDirOrDot(cfg.Path)
-			shallow, err := isShallowRepo(ctx, dir)
-			if err != nil {
-				return nil, fmt.Errorf("chandler: check shallow-clone status: %w", err)
-			}
-			if shallow {
-				return nil, fmt.Errorf("chandler: shallow git clone detected; source_date_epoch derived from `git log -- %s` is unstable in shallow checkouts (HEAD's timestamp shadows the actual last-touch and forces drayman to bump the debian revision on every push). Fetch full history (e.g. fetch-depth: 0 in actions/checkout) or pass --allow-shallow to bypass", cfg.Path)
-			}
-		}
-		c, t, err := gitProvenance(ctx, cfg.Path)
-		if err != nil {
-			return nil, fmt.Errorf("source_date_epoch unresolvable: %w", err)
-		}
-		commitHash, commitTime = c, t
-	}
+	// Best-effort git provenance. Populated when cfg.Path lives in a
+	// git working tree with a commit touching it; left empty
+	// otherwise. source_date_epoch no longer depends on this —
+	// processTarget derives it from the resolved content per target —
+	// so a missing git repo, shallow clone, or just-added config file
+	// is no longer a discovery error.
+	commitHash, commitTime, _ := gitProvenance(ctx, cfg.Path)
 
 	out := &plan.Plan{
 		SchemaVersion: plan.SchemaVersion,
@@ -256,9 +223,14 @@ func processTarget(ctx context.Context, cfg *config.Config, t config.Target,
 		return errPkg(resolvedName, plan.ErrorKindDiscoveryFailed, err)
 	}
 
-	// Step 7: compute build_inputs_hash.
+	// Step 7: compute source_date_epoch (content-hash; independent of
+	// git) and then build_inputs_hash. SDE folds in the resolved nfpm
+	// subtree + every aux file (rendered .sources, fetched keys,
+	// optional postinst) so a vendor key rotation or recipe edit
+	// produces a distinct epoch + hash.
+	sourceDateEpoch := computeContentEpoch(nfpmJSON, auxFiles, t)
 	bp := plan.BuildPlan{
-		SourceDateEpoch: commitTime.Unix(),
+		SourceDateEpoch: sourceDateEpoch,
 		Nfpm:            nfpmJSON,
 		AuxFiles:        auxFiles,
 	}
@@ -268,14 +240,18 @@ func processTarget(ctx context.Context, cfg *config.Config, t config.Target,
 			fmt.Errorf("compute build_inputs_hash: %w", err))
 	}
 
-	// Step 8: assemble the plan.Package.
+	// Step 8: assemble the plan.Package. git_commit / git_date are
+	// best-effort provenance — populated when chandler is run inside a
+	// git working tree, omitted otherwise.
 	source := &plan.Source{
 		Kind:        plan.SourceKindChandler,
 		ConfigPath:  cfg.Path,
-		GitCommit:   commitHash,
-		GitDate:     commitTime.UTC().Format(time.RFC3339),
 		Target:      &plan.Target{Distro: t.Distro, Codename: t.Codename},
 		FetchedKeys: fetchedKeys,
+	}
+	if commitHash != "" {
+		source.GitCommit = commitHash
+		source.GitDate = commitTime.UTC().Format(time.RFC3339)
 	}
 	artifact := plan.Artifact{
 		Arch:   "all",
@@ -332,6 +308,40 @@ func sortedSourceIDs(cfg *config.Config) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// computeContentEpoch derives source_date_epoch deterministically
+// from the resolved content of one chandler target: the canonical
+// nfpm subtree, every aux file (rendered .sources, fetched key
+// bytes, optional postinst — all already base64-encoded), and the
+// target distro/codename. Same content → same epoch on every host.
+// Vendor key rotation, recipe edits, and matrix-target differences
+// all surface as distinct epochs (and therefore distinct
+// build_inputs_hash values).
+func computeContentEpoch(nfpmJSON []byte, auxFiles map[string]plan.AuxFile, t config.Target) int64 {
+	h := sha256.New()
+	h.Write([]byte("target:"))
+	h.Write([]byte(t.Distro))
+	h.Write([]byte{0})
+	h.Write([]byte(t.Codename))
+	h.Write([]byte{0})
+	h.Write([]byte("nfpm:"))
+	h.Write(nfpmJSON)
+	h.Write([]byte{0})
+
+	keys := make([]string, 0, len(auxFiles))
+	for k := range auxFiles {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		h.Write([]byte("aux:"))
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write([]byte(auxFiles[k].ContentB64))
+		h.Write([]byte{0})
+	}
+	return plan.DeriveEpoch(h.Sum(nil))
 }
 
 func errPkg(name, kind string, err error) plan.Package {

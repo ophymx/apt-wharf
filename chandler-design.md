@@ -81,9 +81,12 @@ honors with cooper-build:
 - All file bytes shipped inline as `build_plan.aux_files` entries,
   base64-encoded — including the dearmored keyring and the rendered
   `.sources` files.
-- `source_date_epoch` derived from the git commit time of the
-  chandler YAML config file. Not-in-git is a hard error (mirrors
-  staves).
+- `source_date_epoch` derived deterministically from the resolved
+  per-target content (canonical nfpm subtree, every aux file, and
+  the matrix distro/codename) via `plan.DeriveEpoch`. Same recipe
+  + same fetched keys + same target → same epoch on every host.
+  Git is not required; `git_commit` / `git_date` on `plan.Source`
+  are best-effort provenance only.
 - Per-artifact `build_inputs_hash` computed by `pkg/plan`'s
   `ComputeBuildInputsHash` exactly as cooper would.
 

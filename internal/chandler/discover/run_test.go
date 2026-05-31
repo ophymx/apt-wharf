@@ -48,8 +48,10 @@ func keyServer(t *testing.T) *httptest.Server {
 }
 
 // writeConfig drops a chandler.yaml in a temp dir and returns the
-// loaded Config. SkipGit avoids the git-touched-file constraint;
-// every test using this lives outside the project's git tree.
+// loaded Config. The temp dir is outside any git working tree, so
+// chandler's best-effort gitProvenance returns empty commit/date;
+// source_date_epoch is content-hash-derived and doesn't depend on
+// git, so the tests still produce deterministic plans.
 func writeConfig(t *testing.T, yaml string) *config.Config {
 	t.Helper()
 	dir := t.TempDir()
@@ -116,7 +118,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &stderr,
-		SkipGit: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -206,7 +207,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -274,7 +274,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -329,7 +328,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: dead.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	})
 	if err != nil {
 		t.Fatalf("Run itself should not fail on per-target fetch errors: %v", err)
@@ -371,7 +369,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	}
 	p1, err := Run(context.Background(), cfg, opts)
 	if err != nil {
@@ -422,7 +419,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	})
 	if err != nil {
 		t.Fatal(err)

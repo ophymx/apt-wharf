@@ -155,44 +155,29 @@ drayman uses against the target repo.
 
 ## Running in CI
 
-`staves` and `chandler` derive `source_date_epoch` from
-`git log -- <package-or-config-path>`. **Your CI checkout must
-include enough history that this returns the actual last-touch
-commit, not just HEAD.** In a shallow clone (the default for
-`actions/checkout@v4` with no `fetch-depth` set is depth=1) git
-log returns HEAD's timestamp regardless of whether HEAD actually
-touched the file, which:
+All four tools derive `source_date_epoch` from their inputs, not
+from the operator's environment:
 
-- Changes `source_date_epoch` on every push (workflow trigger
-  time becomes the commit time the recipe sees).
-- Destabilizes `build_inputs_hash` for every staves/chandler
-  package across runs.
-- Forces drayman's auto-bump policy to ratchet the debian
-  revision on every push, eventually producing artifact names
-  like `your-package_1.2.3-27_amd64.deb` for a package that
-  never changed.
+- **cooper**: from `release.published_at` (github_release) or a
+  content-hash of `(url, version)` / `(command, version)` for
+  json_url, xml_url, and external sources.
+- **staves**: from a content-hash of the resolved nfpm subtree +
+  every aux file's source bytes.
+- **chandler**: from a content-hash of the resolved nfpm subtree
+  + every aux file's content (rendered .sources files, fetched
+  key bytes, optional postinst) + the matrix target.
 
-Both `staves discover` and `chandler discover` hard-error when
-they detect a shallow clone. The fix is to fetch the real
-history:
+That means CI has no checkout-depth requirement — `actions/checkout@v4`
+with its default `fetch-depth: 1` is fine. A `git_commit` /
+`git_date` pair is recorded on `plan.Source` as best-effort
+provenance when staves or chandler runs inside a git working tree,
+and is omitted otherwise; neither field influences
+`build_inputs_hash`.
 
-```yaml
-# actions/checkout@v4
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
-```
-
-Or in plain git:
-
-```sh
-git fetch --unshallow
-```
-
-If you're certain HEAD is the relevant commit (a one-off local
-build at a pinned ref, for example), pass `--allow-shallow` to
-bypass the gate. Don't use this in CI — it papers over the
-problem rather than fixing it.
+If you do want the human-readable `git_commit` field populated
+for audit purposes, `fetch-depth: 0` (or `git fetch --unshallow`)
+gives you full history — but it's an audit nicety, not a
+correctness requirement.
 
 ## Repo layout
 

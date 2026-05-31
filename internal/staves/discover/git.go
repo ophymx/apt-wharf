@@ -12,29 +12,6 @@ import (
 	"time"
 )
 
-// IsShallowRepo reports whether the working tree at dir is a shallow
-// git checkout (typical CI pattern: `git fetch --depth=1`). In a
-// shallow clone `git log -- <path>` returns HEAD's timestamp
-// regardless of whether HEAD actually touched <path>, which breaks
-// source_date_epoch stability and forces drayman to bump the debian
-// revision on every push. Discover callers gate the rest of the
-// pipeline on this so the failure surfaces loudly instead of
-// poisoning the fleet's build_inputs_hash values silently.
-func IsShallowRepo(ctx context.Context, dir string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--is-shallow-repository")
-	out, err := cmd.Output()
-	if err != nil {
-		// Treat any failure (not a repo, git missing, etc.) as
-		// "shallow status unknown" rather than gating. The
-		// GitProvenance call that follows will surface the real
-		// problem with its own actionable message ("not in git
-		// working tree" / "no commits touch this path"); blocking
-		// here would replace those with a vaguer rev-parse error.
-		return false, nil
-	}
-	return strings.TrimSpace(string(out)) == "true", nil
-}
-
 // GitProvenance returns the commit hash and commit time of the most
 // recent commit that touched any file under dir. Used to derive
 // source_date_epoch for staves packages, since there's no upstream

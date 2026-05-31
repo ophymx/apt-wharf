@@ -2,7 +2,9 @@ package discover
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -19,21 +21,12 @@ type Options struct {
 	// PackageFilter restricts processing to packages whose nfpm
 	// name is in the set. nil means "all packages."
 	PackageFilter map[string]bool
-
-	// AllowShallow bypasses the shallow-clone safety gate. Default
-	// (false) causes Run to error out when the working tree is a
-	// shallow git clone, because source_date_epoch derived from
-	// `git log -- <path>` is unstable in that case and silently
-	// destabilizes build_inputs_hash. Set true only when you
-	// genuinely intend to build from a shallow checkout (one-off
-	// local runs against a fixed HEAD, etc.).
-	AllowShallow bool
 }
 
 // Run is the staves discover orchestrator. Walks every package in
-// top, packs every local file into aux_files, derives source
-// provenance from git, and emits a plan.Plan compatible with
-// `cooper build -`.
+// top, packs every local file into aux_files, derives a content-hash
+// source_date_epoch (git-independent), and emits a plan.Plan
+// compatible with `cooper build -`.
 func Run(ctx context.Context, top *config.Top, opts Options) (*plan.Plan, error) {
 	now := opts.Now
 	if now == nil {
@@ -46,20 +39,6 @@ func Run(ctx context.Context, top *config.Top, opts Options) (*plan.Plan, error)
 	}
 	paths := append([]string(nil), top.Packages...)
 	sort.Strings(paths)
-
-	// Shallow-clone guard. Runs once per discover invocation against
-	// the first package's directory (the shallow-or-not status is a
-	// property of the git repository, not of any individual package).
-	// Skip when there are no packages — nothing to discover anyway.
-	if !opts.AllowShallow && len(paths) > 0 {
-		shallow, err := IsShallowRepo(ctx, paths[0])
-		if err != nil {
-			return nil, fmt.Errorf("staves: check shallow-clone status: %w", err)
-		}
-		if shallow {
-			return nil, fmt.Errorf("staves: shallow git clone detected; source_date_epoch derived from `git log -- <path>` is unstable in shallow checkouts (HEAD's timestamp shadows the actual last-touch and forces drayman to bump the debian revision on every push). Fetch full history (e.g. fetch-depth: 0 in actions/checkout) or pass --allow-shallow to bypass")
-		}
-	}
 
 	for _, dir := range paths {
 		pkg := processPackage(ctx, opts, dir)
@@ -85,13 +64,6 @@ func processPackage(ctx context.Context, opts Options, dir string) plan.Package 
 		return errPkg(pkg.NfpmName, plan.ErrorKindAuxResolutionFailed, err)
 	}
 
-	commit, when, err := GitProvenance(ctx, pkg.Dir)
-	if err != nil {
-		return errPkg(pkg.NfpmName, plan.ErrorKindDiscoveryFailed,
-			fmt.Errorf("staves needs a stable source_date_epoch — package must be in a git working tree with a commit touching it: %w", err))
-	}
-	sourceDateEpoch := when.Unix()
-
 	nfpmClone, err := stage.CloneNfpm(&pkg.Nfpm)
 	if err != nil {
 		return errPkg(pkg.NfpmName, plan.ErrorKindDiscoveryFailed, fmt.Errorf("clone nfpm: %w", err))
@@ -106,12 +78,30 @@ func processPackage(ctx context.Context, opts Options, dir string) plan.Package 
 		return errPkg(pkg.NfpmName, plan.ErrorKindDiscoveryFailed, fmt.Errorf("encode nfpm: %w", err))
 	}
 
+	// Content-hash source_date_epoch. Hashes the nfpm subtree + raw
+	// source bytes of every aux file (pre-template-render) into the
+	// 2020–2030 epoch window via plan.DeriveEpoch. Same recipe → same
+	// epoch on every host, no git dependency. Template-rendered bytes
+	// are excluded from the hash here because they depend on
+	// PublishedAt, which depends on this epoch (cycle); only the
+	// .tmpl source content goes in.
+	sourceDateEpoch, err := computeContentEpoch(nfpmJSON, refs)
+	if err != nil {
+		return errPkg(pkg.NfpmName, plan.ErrorKindDiscoveryFailed, err)
+	}
+
+	// Best-effort git provenance. Populated when the package lives in
+	// a git working tree with a commit touching it; left empty
+	// otherwise (no-git operators and shallow CI checkouts both
+	// fall through cleanly because SDE no longer depends on this).
+	commit, gitWhen, _ := GitProvenance(ctx, pkg.Dir)
+
 	vars := stage.Vars{
 		Name:        pkg.NfpmName,
 		Version:     pkg.Version,
 		Arch:        pkg.Arch,
 		Epoch:       0,
-		PublishedAt: when.Format(time.RFC3339),
+		PublishedAt: time.Unix(sourceDateEpoch, 0).UTC().Format(time.RFC3339),
 	}
 	auxFiles, err := stage.MaterializeAuxFiles(refs, vars)
 	if err != nil {
@@ -137,16 +127,46 @@ func processPackage(ctx context.Context, opts Options, dir string) plan.Package 
 		Deb:       plan.Deb{Filename: fmt.Sprintf("%s_%s_%s.deb", pkg.NfpmName, pkg.Version, pkg.Arch), BuildInputsHash: hash},
 		BuildPlan: bp,
 	}
+	src := &plan.Source{Kind: plan.SourceKindLocal}
+	if commit != "" {
+		src.GitCommit = commit
+		src.GitDate = gitWhen.Format(time.RFC3339)
+	}
 	return plan.Package{
-		Name:   pkg.NfpmName,
-		Result: plan.ResultOK,
-		Source: &plan.Source{
-			Kind:      plan.SourceKindLocal,
-			GitCommit: commit,
-			GitDate:   when.Format(time.RFC3339),
-		},
+		Name:      pkg.NfpmName,
+		Result:    plan.ResultOK,
+		Source:    src,
 		Artifacts: []plan.Artifact{artifact},
 	}
+}
+
+// computeContentEpoch derives source_date_epoch deterministically
+// from the recipe's source bytes. The input is the canonical nfpm
+// JSON plus, for each aux ref (sorted by Key), the raw on-disk
+// source bytes. Template renders are NOT folded in here because the
+// renderer needs PublishedAt = time.Unix(SDE), which would create a
+// cycle; the source .tmpl content covers the same change-detection
+// surface anyway.
+func computeContentEpoch(nfpmJSON []byte, refs []stage.Ref) (int64, error) {
+	h := sha256.New()
+	h.Write([]byte("nfpm:"))
+	h.Write(nfpmJSON)
+	h.Write([]byte{0})
+
+	sorted := append([]stage.Ref(nil), refs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
+	for _, r := range sorted {
+		body, err := os.ReadFile(r.AbsPath)
+		if err != nil {
+			return 0, fmt.Errorf("read %s for content-epoch: %w", r.AbsPath, err)
+		}
+		h.Write([]byte("aux:"))
+		h.Write([]byte(r.Key))
+		h.Write([]byte{0})
+		h.Write(body)
+		h.Write([]byte{0})
+	}
+	return plan.DeriveEpoch(h.Sum(nil)), nil
 }
 
 func errPkg(name, kind string, err error) plan.Package {

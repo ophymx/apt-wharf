@@ -4,40 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// configDirOrDot returns the directory of configPath, or "." when
-// configPath has no directory component (a relative bare filename).
-// Used as the cwd for `git -C <dir>` invocations so the same git
-// repository discovery git itself does works against the right tree.
-func configDirOrDot(configPath string) string {
-	d := filepath.Dir(configPath)
-	if d == "" {
-		return "."
-	}
-	return d
-}
-
-// isShallowRepo reports whether the working tree at dir is a shallow
-// git checkout. See staves' identical helper for the why; chandler
-// keeps its own copy because the two discover packages already
-// duplicate gitProvenance and the shared-helper threshold isn't met
-// yet.
-func isShallowRepo(ctx context.Context, dir string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--is-shallow-repository")
-	out, err := cmd.Output()
-	if err != nil {
-		// See staves IsShallowRepo for the rationale — treat any
-		// failure as "shallow status unknown" so gitProvenance can
-		// surface the real not-in-repo / no-commits error message.
-		return false, nil
-	}
-	return strings.TrimSpace(string(out)) == "true", nil
-}
 
 // gitProvenance returns the commit hash and commit time of the most
 // recent commit that touched the chandler config file. Used to derive

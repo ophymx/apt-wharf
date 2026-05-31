@@ -56,7 +56,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +169,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	}
 	p1, err := Run(context.Background(), cfg, opts)
 	if err != nil {
@@ -242,7 +240,6 @@ sources:
 		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
 		Client:  &keys.Client{HTTP: srv.Client()},
 		Stderr:  &bytes.Buffer{},
-		SkipGit: true,
 	})
 	if err != nil {
 		t.Fatal(err)

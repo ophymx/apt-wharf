@@ -128,13 +128,18 @@ func TestRun_HappyPath(t *testing.T) {
 		t.Errorf("build_inputs_hash mismatch: stored=%s recomputed=%s", a.Deb.BuildInputsHash, recomputed)
 	}
 
-	// SourceDateEpoch matches the git commit time (parsed back from the source).
-	when, err := time.Parse(time.RFC3339, pkg.Source.GitDate)
-	if err != nil {
-		t.Fatal(err)
+	// SourceDateEpoch is now content-hash-derived (independent of git).
+	// Sanity-check it landed in the 2020–2030 plan.DeriveEpoch window,
+	// and that git_date is separately populated as best-effort
+	// provenance from the real test repo.
+	const base = int64(1577836800)
+	const span = int64(10 * 365 * 24 * 3600)
+	if a.BuildPlan.SourceDateEpoch < base || a.BuildPlan.SourceDateEpoch >= base+span {
+		t.Errorf("source_date_epoch %d outside expected window", a.BuildPlan.SourceDateEpoch)
 	}
-	if a.BuildPlan.SourceDateEpoch != when.Unix() {
-		t.Errorf("source_date_epoch %d != git_date %d", a.BuildPlan.SourceDateEpoch, when.Unix())
+	if pkg.Source.GitCommit == "" || pkg.Source.GitDate == "" {
+		t.Errorf("git provenance should be populated when git is available: commit=%q date=%q",
+			pkg.Source.GitCommit, pkg.Source.GitDate)
 	}
 
 	// aux_files: hello.txt inlined verbatim.
@@ -201,7 +206,10 @@ func TestRun_RejectsAssetSubstitution(t *testing.T) {
 	}
 }
 
-func TestRun_RejectsNotInGitRepo(t *testing.T) {
+func TestRun_NotInGitRepoSucceedsWithEmptyProvenance(t *testing.T) {
+	// staves no longer requires git — source_date_epoch is derived
+	// from recipe content. A package outside a git working tree still
+	// discovers cleanly; git_commit / git_date are simply absent.
 	dir := t.TempDir() // no git init
 	writeFile(t, filepath.Join(dir, "staves.yaml"), "packages:\n  - ./packages/demo\n")
 	writeFile(t, filepath.Join(dir, "packages/demo/nfpm.yaml"), sampleNfpm)
@@ -218,21 +226,27 @@ func TestRun_RejectsNotInGitRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	pkg := p.Packages[0]
-	if pkg.Result != plan.ResultError {
-		t.Fatalf("expected error result, got %+v", pkg)
+	if pkg.Result != plan.ResultOK {
+		t.Fatalf("expected ok result without git, got %+v", pkg)
 	}
-	if !strings.Contains(pkg.Error.Message, "git working tree") {
-		t.Errorf("error message: %s", pkg.Error.Message)
+	if pkg.Source.GitCommit != "" {
+		t.Errorf("GitCommit should be empty outside git, got %q", pkg.Source.GitCommit)
+	}
+	if pkg.Source.GitDate != "" {
+		t.Errorf("GitDate should be empty outside git, got %q", pkg.Source.GitDate)
+	}
+	if pkg.Artifacts[0].BuildPlan.SourceDateEpoch == 0 {
+		t.Error("SourceDateEpoch should still be derived (content-hash); got 0")
 	}
 }
 
-// markShallow makes a real git repo look shallow by writing a fake
-// `.git/shallow` file — the same mechanism git uses to track partial-
-// history clones. `git rev-parse --is-shallow-repository` reads this
-// file directly, so the helpers see a true result without us actually
-// having to clone with --depth=1.
-func markShallow(t *testing.T, repoDir string) {
-	t.Helper()
+func TestRun_ShallowCloneSucceedsWithBestEffortProvenance(t *testing.T) {
+	// Regression check: a shallow clone used to error out hard (when
+	// the git-derived SDE was load-bearing). Now SDE comes from recipe
+	// content; shallow clones discover cleanly with whatever
+	// best-effort git provenance the local repo can offer.
+	stavesYaml := setupRepo(t)
+	repoDir := filepath.Dir(stavesYaml)
 	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("rev-parse HEAD: %v", err)
@@ -241,45 +255,19 @@ func markShallow(t *testing.T, repoDir string) {
 	if err := os.WriteFile(filepath.Join(repoDir, ".git", "shallow"), []byte(sha+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
 
-func TestRun_RejectsShallowClone(t *testing.T) {
-	stavesYaml := setupRepo(t)
-	markShallow(t, filepath.Dir(stavesYaml))
-	top, err := config.LoadTop(stavesYaml)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = Run(context.Background(), top, Options{
-		Tool: plan.Tool{Name: "staves", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
-	})
-	if err == nil {
-		t.Fatal("expected shallow-clone error")
-	}
-	if !strings.Contains(err.Error(), "shallow git clone detected") {
-		t.Errorf("error should mention shallow clone, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--allow-shallow") {
-		t.Errorf("error should name the --allow-shallow opt-out, got: %v", err)
-	}
-}
-
-func TestRun_AllowShallowBypassesGate(t *testing.T) {
-	stavesYaml := setupRepo(t)
-	markShallow(t, filepath.Dir(stavesYaml))
 	top, err := config.LoadTop(stavesYaml)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p, err := Run(context.Background(), top, Options{
-		Tool:         plan.Tool{Name: "staves", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
-		AllowShallow: true,
+		Tool: plan.Tool{Name: "staves", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
 	})
 	if err != nil {
-		t.Fatalf("AllowShallow=true should bypass the gate: %v", err)
+		t.Fatalf("shallow clone should discover cleanly now: %v", err)
 	}
-	if len(p.Packages) == 0 || p.Packages[0].Result != plan.ResultOK {
-		t.Errorf("expected package to discover cleanly with AllowShallow=true: %+v", p.Packages)
+	if p.Packages[0].Result != plan.ResultOK {
+		t.Errorf("expected ok, got %+v", p.Packages[0])
 	}
 }
 
