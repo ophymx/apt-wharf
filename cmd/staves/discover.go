@@ -40,6 +40,7 @@ func cmdDiscover(args []string) error {
 	var packageFilter stringSlice
 	fs.Var(&packageFilter, "package", "restrict to package (repeatable)")
 	out := fs.String("o", "-", "output path (`-` for stdout)")
+	allowShallow := fs.Bool("allow-shallow", false, "bypass the shallow-clone safety gate (source_date_epoch derived from `git log` is unreliable in shallow checkouts; pass this only for one-off local builds where you know HEAD is the relevant commit)")
 	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
@@ -68,6 +69,7 @@ func cmdDiscover(args []string) error {
 			FormatRevision: plan.FormatRevision,
 		},
 		PackageFilter: filter,
+		AllowShallow:  *allowShallow,
 	})
 	if err != nil {
 		return err

@@ -55,6 +55,14 @@ type Options struct {
 	// Tests set this when running against config files that
 	// aren't tracked in git. Production callers leave it false.
 	SkipGit bool
+
+	// AllowShallow bypasses the shallow-clone safety gate. Default
+	// (false) causes Run to error out when the working tree is a
+	// shallow git clone, because source_date_epoch derived from
+	// `git log -- <configPath>` is unstable in that case. Set true
+	// only when you genuinely intend to build from a shallow
+	// checkout; SkipGit also implies the gate is skipped (tests).
+	AllowShallow bool
 }
 
 // Run is the chandler discover orchestrator. Walks the matrix (or the
@@ -86,6 +94,20 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (*plan.Plan, err
 	if opts.SkipGit {
 		commitTime = time.Unix(0, 0).UTC()
 	} else {
+		// Shallow-clone guard. Fires before gitProvenance because the
+		// error there is mechanically valid (git log returns SOMETHING)
+		// but the resulting source_date_epoch silently destabilizes
+		// build_inputs_hash.
+		if !opts.AllowShallow {
+			dir := configDirOrDot(cfg.Path)
+			shallow, err := isShallowRepo(ctx, dir)
+			if err != nil {
+				return nil, fmt.Errorf("chandler: check shallow-clone status: %w", err)
+			}
+			if shallow {
+				return nil, fmt.Errorf("chandler: shallow git clone detected; source_date_epoch derived from `git log -- %s` is unstable in shallow checkouts (HEAD's timestamp shadows the actual last-touch and forces drayman to bump the debian revision on every push). Fetch full history (e.g. fetch-depth: 0 in actions/checkout) or pass --allow-shallow to bypass", cfg.Path)
+			}
+		}
 		c, t, err := gitProvenance(ctx, cfg.Path)
 		if err != nil {
 			return nil, fmt.Errorf("source_date_epoch unresolvable: %w", err)

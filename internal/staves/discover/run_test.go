@@ -226,6 +226,63 @@ func TestRun_RejectsNotInGitRepo(t *testing.T) {
 	}
 }
 
+// markShallow makes a real git repo look shallow by writing a fake
+// `.git/shallow` file — the same mechanism git uses to track partial-
+// history clones. `git rev-parse --is-shallow-repository` reads this
+// file directly, so the helpers see a true result without us actually
+// having to clone with --depth=1.
+func markShallow(t *testing.T, repoDir string) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "shallow"), []byte(sha+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRun_RejectsShallowClone(t *testing.T) {
+	stavesYaml := setupRepo(t)
+	markShallow(t, filepath.Dir(stavesYaml))
+	top, err := config.LoadTop(stavesYaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Run(context.Background(), top, Options{
+		Tool: plan.Tool{Name: "staves", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
+	})
+	if err == nil {
+		t.Fatal("expected shallow-clone error")
+	}
+	if !strings.Contains(err.Error(), "shallow git clone detected") {
+		t.Errorf("error should mention shallow clone, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--allow-shallow") {
+		t.Errorf("error should name the --allow-shallow opt-out, got: %v", err)
+	}
+}
+
+func TestRun_AllowShallowBypassesGate(t *testing.T) {
+	stavesYaml := setupRepo(t)
+	markShallow(t, filepath.Dir(stavesYaml))
+	top, err := config.LoadTop(stavesYaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Run(context.Background(), top, Options{
+		Tool:         plan.Tool{Name: "staves", Version: "0.0.0-test", FormatRevision: plan.FormatRevision},
+		AllowShallow: true,
+	})
+	if err != nil {
+		t.Fatalf("AllowShallow=true should bypass the gate: %v", err)
+	}
+	if len(p.Packages) == 0 || p.Packages[0].Result != plan.ResultOK {
+		t.Errorf("expected package to discover cleanly with AllowShallow=true: %+v", p.Packages)
+	}
+}
+
 // TestRun_GoldenJSONShape sanity-checks the wire format mentions the
 // local-source provenance fields.
 func TestRun_GoldenJSONShape(t *testing.T) {

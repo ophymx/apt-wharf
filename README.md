@@ -153,6 +153,47 @@ The `Plan` JSON contract (`pkg/plan/`) carries a stable
 the conformance seed for cross-language producers and the dedup key
 drayman uses against the target repo.
 
+## Running in CI
+
+`staves` and `chandler` derive `source_date_epoch` from
+`git log -- <package-or-config-path>`. **Your CI checkout must
+include enough history that this returns the actual last-touch
+commit, not just HEAD.** In a shallow clone (the default for
+`actions/checkout@v4` with no `fetch-depth` set is depth=1) git
+log returns HEAD's timestamp regardless of whether HEAD actually
+touched the file, which:
+
+- Changes `source_date_epoch` on every push (workflow trigger
+  time becomes the commit time the recipe sees).
+- Destabilizes `build_inputs_hash` for every staves/chandler
+  package across runs.
+- Forces drayman's auto-bump policy to ratchet the debian
+  revision on every push, eventually producing artifact names
+  like `your-package_1.2.3-27_amd64.deb` for a package that
+  never changed.
+
+Both `staves discover` and `chandler discover` hard-error when
+they detect a shallow clone. The fix is to fetch the real
+history:
+
+```yaml
+# actions/checkout@v4
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+```
+
+Or in plain git:
+
+```sh
+git fetch --unshallow
+```
+
+If you're certain HEAD is the relevant commit (a one-off local
+build at a pinned ref, for example), pass `--allow-shallow` to
+bypass the gate. Don't use this in CI — it papers over the
+problem rather than fixing it.
+
 ## Repo layout
 
 - [`cmd/`](./cmd) — one main package per shipped binary.

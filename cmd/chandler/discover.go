@@ -30,6 +30,7 @@ func cmdDiscover(args []string) error {
 		fmt.Fprintln(fs.Output(), "usage: chandler discover <CONFIG> [-o OUTPUT]")
 	}
 	out := fs.String("o", "-", "output path (`-` for stdout)")
+	allowShallow := fs.Bool("allow-shallow", false, "bypass the shallow-clone safety gate (source_date_epoch derived from `git log` is unreliable in shallow checkouts; pass this only for one-off local builds where you know HEAD is the relevant commit)")
 	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err
 	}
@@ -49,6 +50,7 @@ func cmdDiscover(args []string) error {
 			Version:        chandlerVersion,
 			FormatRevision: plan.FormatRevision,
 		},
+		AllowShallow: *allowShallow,
 	})
 	if err != nil {
 		return err

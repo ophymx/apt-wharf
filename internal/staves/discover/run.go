@@ -19,6 +19,15 @@ type Options struct {
 	// PackageFilter restricts processing to packages whose nfpm
 	// name is in the set. nil means "all packages."
 	PackageFilter map[string]bool
+
+	// AllowShallow bypasses the shallow-clone safety gate. Default
+	// (false) causes Run to error out when the working tree is a
+	// shallow git clone, because source_date_epoch derived from
+	// `git log -- <path>` is unstable in that case and silently
+	// destabilizes build_inputs_hash. Set true only when you
+	// genuinely intend to build from a shallow checkout (one-off
+	// local runs against a fixed HEAD, etc.).
+	AllowShallow bool
 }
 
 // Run is the staves discover orchestrator. Walks every package in
@@ -37,6 +46,21 @@ func Run(ctx context.Context, top *config.Top, opts Options) (*plan.Plan, error)
 	}
 	paths := append([]string(nil), top.Packages...)
 	sort.Strings(paths)
+
+	// Shallow-clone guard. Runs once per discover invocation against
+	// the first package's directory (the shallow-or-not status is a
+	// property of the git repository, not of any individual package).
+	// Skip when there are no packages — nothing to discover anyway.
+	if !opts.AllowShallow && len(paths) > 0 {
+		shallow, err := IsShallowRepo(ctx, paths[0])
+		if err != nil {
+			return nil, fmt.Errorf("staves: check shallow-clone status: %w", err)
+		}
+		if shallow {
+			return nil, fmt.Errorf("staves: shallow git clone detected; source_date_epoch derived from `git log -- <path>` is unstable in shallow checkouts (HEAD's timestamp shadows the actual last-touch and forces drayman to bump the debian revision on every push). Fetch full history (e.g. fetch-depth: 0 in actions/checkout) or pass --allow-shallow to bypass")
+		}
+	}
+
 	for _, dir := range paths {
 		pkg := processPackage(ctx, opts, dir)
 		if opts.PackageFilter != nil && !opts.PackageFilter[pkg.Name] {
