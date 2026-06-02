@@ -9,6 +9,7 @@ import (
 
 	"github.com/ophymx/apt-wharf/internal/config"
 	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/secret"
 	"github.com/ophymx/apt-wharf/internal/sign"
 	"github.com/ophymx/apt-wharf/internal/source"
 	"github.com/ophymx/apt-wharf/internal/store"
@@ -23,8 +24,8 @@ type Wired struct {
 	Fetcher         *fetch.Fetcher
 	Discoverers     map[string]source.Discoverer
 	HTTPClient      *http.Client
-	GlobalToken     *config.Secret            // may be nil
-	PerSourceTokens map[string]*config.Secret // may be empty
+	GlobalToken     *secret.Secret            // may be nil
+	PerSourceTokens map[string]*secret.Secret // may be empty
 	BucketRegistry  *source.Registry
 }
 
@@ -48,7 +49,7 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 	}
 	fetcher := fetch.New(httpClient)
 
-	globalTok, err := config.LoadSecret(cfg.GitHub.TokenEnv, cfg.GitHub.TokenFile,
+	globalTok, err := secret.LoadSecret(cfg.GitHub.TokenEnv, cfg.GitHub.TokenFile,
 		"github.token_env", "github.token_file")
 	if err != nil {
 		return nil, err
@@ -56,7 +57,7 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 
 	registry := source.NewRegistry(cfg.GitHub.RateLimit.UnauthenticatedPerHour, cfg.GitHub.RateLimit.AuthenticatedPerHour)
 	discoverers := map[string]source.Discoverer{}
-	perSrcTokens := map[string]*config.Secret{}
+	perSrcTokens := map[string]*secret.Secret{}
 
 	for name, src := range cfg.Sources {
 		if !src.IsEnabled() {
@@ -151,11 +152,11 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 
 // loadDiscoveryToken resolves the per-source token, falling back to the global
 // one when the source declares neither token_env nor token_file.
-func loadDiscoveryToken(name string, src *config.Source, global *config.Secret) (*config.Secret, error) {
+func loadDiscoveryToken(name string, src *config.Source, global *secret.Secret) (*secret.Secret, error) {
 	if src.Discovery.TokenEnv == "" && src.Discovery.TokenFile == "" {
 		return global, nil
 	}
-	return config.LoadSecret(src.Discovery.TokenEnv, src.Discovery.TokenFile,
+	return secret.LoadSecret(src.Discovery.TokenEnv, src.Discovery.TokenFile,
 		fmt.Sprintf("source %s discovery.token_env", name),
 		fmt.Sprintf("source %s discovery.token_file", name))
 }
@@ -177,7 +178,7 @@ func buildSigner(cfg *config.Config, log *slog.Logger) (sign.Signer, error) {
 		})
 	}
 
-	pass, err := config.LoadSecret(cfg.Signing.PassphraseEnv, cfg.Signing.PassphraseFile,
+	pass, err := secret.LoadSecret(cfg.Signing.PassphraseEnv, cfg.Signing.PassphraseFile,
 		"signing.passphrase_env", "signing.passphrase_file")
 	if err != nil {
 		return nil, err
@@ -197,7 +198,7 @@ func buildSigner(cfg *config.Config, log *slog.Logger) (sign.Signer, error) {
 		}
 		// Re-run the secure-file check now that the file definitely exists,
 		// so a hand-generated file with bad perms still fails loud.
-		if err := config.CheckSecureFile(cfg.Signing.KeyFile, "signing.key_file"); err != nil {
+		if err := secret.CheckSecureFile(cfg.Signing.KeyFile, "signing.key_file"); err != nil {
 			return nil, err
 		}
 	}

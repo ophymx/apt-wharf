@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/ophymx/apt-wharf/internal/secret"
 )
 
 var (
@@ -125,7 +127,7 @@ func validateSigning(s *Signing) error {
 	// secure-file check until after sign.EnsureKey has had a chance to
 	// materialize it.
 	if !s.AutoGenerate {
-		if err := CheckSecureFile(s.KeyFile, "signing.key_file"); err != nil {
+		if err := secret.CheckSecureFile(s.KeyFile, "signing.key_file"); err != nil {
 			return err
 		}
 	}
@@ -143,7 +145,7 @@ func validateSigning(s *Signing) error {
 		if !filepath.IsAbs(s.PassphraseFile) {
 			return fmt.Errorf("signing.passphrase_file %q must be absolute", s.PassphraseFile)
 		}
-		if err := CheckSecureFile(s.PassphraseFile, "signing.passphrase_file"); err != nil {
+		if err := secret.CheckSecureFile(s.PassphraseFile, "signing.passphrase_file"); err != nil {
 			return err
 		}
 	}
@@ -241,7 +243,7 @@ func validateGitHub(g *GitHub) error {
 		if !filepath.IsAbs(g.TokenFile) {
 			return fmt.Errorf("github.token_file %q must be absolute", g.TokenFile)
 		}
-		if err := CheckSecureFile(g.TokenFile, "github.token_file"); err != nil {
+		if err := secret.CheckSecureFile(g.TokenFile, "github.token_file"); err != nil {
 			return err
 		}
 	}
@@ -327,7 +329,7 @@ func validateGitHubRelease(sourceName string, d *Discovery) error {
 			return fmt.Errorf("source %s: discovery.token_file %q must be absolute",
 				sourceName, d.TokenFile)
 		}
-		if err := CheckSecureFile(d.TokenFile,
+		if err := secret.CheckSecureFile(d.TokenFile,
 			fmt.Sprintf("source %s: discovery.token_file", sourceName)); err != nil {
 			return err
 		}

@@ -1,4 +1,9 @@
-package config
+// Package secret loads env-or-file-backed secret values shared by every
+// apt-wharf tool — signpost's GitHub token, cooper's GitHub token, etc.
+// The "secret" name reflects intent: the values must not be logged or
+// committed, and []byte storage exists so callers can best-effort wipe
+// after use.
+package secret
 
 import (
 	"bytes"
