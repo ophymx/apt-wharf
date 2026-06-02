@@ -182,9 +182,13 @@ correctness requirement.
 ## Repo layout
 
 - [`cmd/`](./cmd) — one main package per shipped binary.
-- [`internal/`](./internal) — per-tool packages organized as
-  `internal/<tool>/<name>/` for the four newer CLIs; signpost's older
-  packages sit at `internal/{config,source,sign,refresh,…}/`.
+- [`internal/`](./internal) — per-tool packages live under
+  `internal/<tool>/<name>/` (one of `signpost`, `cooper`, `drayman`,
+  `staves`, `chandler`). Cross-cutting helpers shared by multiple
+  tools sit flat under `internal/<name>/` — today `secret` (env-or-file
+  secret loader + 0400 check), `procgroup` (POSIX process-group
+  SIGKILL), `ghclient` (go-github wrapper with ETag transport),
+  plus `cli` and `version`.
 - [`pkg/plan/`](./pkg/plan) — the only externally-importable cooper
   package: the `Plan` / `Package` / `Artifact` / `BuildPlan` types, JCS
   canonicalization, and `ComputeBuildInputsHash`.

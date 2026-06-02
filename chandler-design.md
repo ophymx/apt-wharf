@@ -602,9 +602,10 @@ back clean.
 
 ## Implementation status
 
-Not yet implemented as of 2026-05-25. No `cmd/chandler/`,
-`internal/chandler/`, or `examples/chandler/` exists in the tree.
-This document is the spec.
+Shipped. `cmd/chandler/` and `internal/chandler/{config,discover,keys,render}`
+implement this design; `examples/{docker-ce,hashicorp,postgresql,tailscale,nvidia-cuda}/chandler.yaml`
+cover the feature surface. Code is the source of truth where it
+diverges from the doc.
 
 ## Deferred (post-v0)
 

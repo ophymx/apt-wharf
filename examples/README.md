@@ -8,7 +8,7 @@ directory, so the two example sets coexist without colliding.
 
 ## cooper examples
 
-Eight end-to-end example packages, each scoped to one cooper feature
+Nine end-to-end example packages, each scoped to one cooper feature
 surface. Every example validates with:
 
 ```sh
@@ -30,6 +30,7 @@ like.
 | [`jetbrains-toolbox/`](./jetbrains-toolbox) | `json_url` source kind; gjson placeholders in `asset_url` (per-arch download links from the same JSON body) |
 | [`intellij-idea-community/`](./intellij-idea-community) | `xml_url` source kind; XPath against JetBrains' `updates.xml` feed |
 | [`cfssl/`](./cfssl) | **multi-asset per arch** — eight independent binaries from one release staged side-by-side under `${ASSETS}/` |
+| [`golang/`](./golang) | `json_url` source kind against `go.dev/dl/?mode=json`; `version_strip_prefix` to turn `go1.26.3` into `1.26.3` |
 
 ## How to run
 
@@ -237,13 +238,38 @@ named in `keys:`. Git is optional: chandler records `git_commit` /
 file lives in a git working tree, but neither field influences
 `source_date_epoch` (which is content-derived) or `build_inputs_hash`.
 
+## staves examples
+
+One demo recipe wrapping locally-checked-in files (configs, systemd
+units, helper scripts) into a `plan.Plan` that `cooper build` can
+consume. Staves is the in-house counterpart to cooper: same JSON
+contract, no upstream release.
+
+| Example | What it shows |
+| --- | --- |
+| [`staves-demo/`](./staves-demo) | source kind `local`; nfpm subtree under `packages/demo-config/` with `files/` + `scripts/` |
+
+```sh
+# Network-free dry run.
+staves validate ./examples/staves-demo/staves.yaml
+
+# Pack the local tree, pipe into cooper build.
+staves discover ./examples/staves-demo/staves.yaml | cooper build - --out-dir /tmp/staves-out
+```
+
+Staves needs no GitHub token. `source_date_epoch` is content-hashed
+from the resolved nfpm subtree, so two runs against the same tree
+produce byte-identical `.deb`s.
+
 ## What you'll need at runtime
 
 - `cooper` itself: `go build -o cooper ./cmd/cooper`.
 - `chandler` for chandler examples: `go build -o chandler ./cmd/chandler`.
+- `staves` for staves examples: `go build -o staves ./cmd/staves`.
 - `nfpm` on `$PATH` for `cooper build` to work.
-  (`cooper validate`, `cooper discover`, `chandler validate`, and
-  `chandler discover` don't need it.)
+  (`cooper validate`, `cooper discover`, `chandler validate`,
+  `chandler discover`, `staves validate`, and `staves discover`
+  don't need it.)
 - A GitHub token in `GITHUB_TOKEN` for cooper examples — unauthenticated
   rate-limit headroom. Anonymous works for one-off runs but quickly hits
   the 60-requests-per-hour anonymous limit. chandler doesn't need it

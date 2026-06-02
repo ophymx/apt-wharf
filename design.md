@@ -611,11 +611,17 @@ embedding them in command arguments.
 - `sources` has at least one entry.
 - Each source map key matches `^[a-z0-9][a-z0-9._-]*$`. Uniqueness is
   enforced by the YAML parser (strict mode rejects duplicate keys).
-- `discovery.type` is one of `github_release`, `latest_url`, `external`.
-  Type-specific fields belonging to other variants are rejected.
+- `discovery.type` is one of `github_release`, `latest_url`, `json_url`,
+  `xml_url`, `external`. Type-specific fields belonging to other variants
+  are rejected.
 - For `latest_url`: `url` is a valid http(s) URL with a host.
 - For `github_release`: `repo` matches `^[^/]+/[^/]+$`; `asset` compiles
   as a Go regex; `token_env`/`token_file` are mutually exclusive.
+- For `json_url`: `url` is a valid http(s) URL with a host; `token_path`
+  is a non-empty gjson path; `asset_url` is a non-empty URL template.
+- For `xml_url`: `url` is a valid http(s) URL with a host; `token_xpath`
+  is a non-empty XPath expression; `asset_url` is a non-empty URL
+  template.
 - For `external`: `command` is non-empty; `command[0]` is absolute, exists,
   is not a directory, and has at least one executable bit. `timeout >= 0`.
   `env` keys do not contain `=` or `\0`.
