@@ -52,14 +52,12 @@ outputs.
 The design docs are the source of truth — read them before changing
 behavior in either tool.
 
-- **`design.md`** — apt-signpost. Trust model, refresh cycle, source kinds.
-- **`cooper-design.md`** — apt-cooper. JSON contract, version selection,
+- **`docs/signpost-design.md`** — apt-signpost. Trust model, refresh cycle, source kinds.
+- **`docs/cooper-design.md`** — apt-cooper. JSON contract, version selection,
   aux-file resolution, security/sandboxing, reproducibility guarantee.
-- **`chandler-design.md`** — apt-chandler. Schema, templating (matrix
+- **`docs/chandler-design.md`** — apt-chandler. Schema, templating (matrix
   mode), trust model (HTTPS-only, no fingerprint pinning), deb822
   rendering, conffile policy, version model.
-- **`design-mvp.md`** — earlier signpost MVP iteration; useful context
-  but `design.md` overrides where they disagree.
 
 drayman and staves are designed in-conversation only as of this writing;
 their source-of-truth is the code under `internal/drayman/` and

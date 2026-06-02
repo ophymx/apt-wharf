@@ -66,10 +66,10 @@ Pre-v0.1.0. No tagged release yet; install from source.
 
 The design docs are the source of truth for each tool's behavior:
 
-- [`design.md`](./design.md) — signpost. Trust model, refresh cycle, source kinds.
-- [`cooper-design.md`](./cooper-design.md) — cooper. JSON contract, version
+- [`docs/signpost-design.md`](./docs/signpost-design.md) — signpost. Trust model, refresh cycle, source kinds.
+- [`docs/cooper-design.md`](./docs/cooper-design.md) — cooper. JSON contract, version
   selection, aux-file resolution, reproducibility guarantee.
-- [`chandler-design.md`](./chandler-design.md) — chandler. Schema, templating
+- [`docs/chandler-design.md`](./docs/chandler-design.md) — chandler. Schema, templating
   (matrix mode), trust model (HTTPS-only), deb822 rendering, conffile policy.
 
 [`CLAUDE.md`](./CLAUDE.md) is the per-repo orientation doc for working in
