@@ -112,6 +112,9 @@ func validateBootstrap(b *Bootstrap) error {
 }
 
 func validateSigning(s *Signing) error {
+	if s.External != nil {
+		return validateSigningExternal(s)
+	}
 	if s.KeyFile == "" {
 		return fmt.Errorf("signing.key_file is required")
 	}
@@ -147,6 +150,66 @@ func validateSigning(s *Signing) error {
 	// Empty-resolves-to-failure is enforced at LoadSecret time (called by
 	// internal/sign); we can't read the env here without forcing every
 	// `signpost check` invocation to have the env set.
+	return nil
+}
+
+// validateSigningExternal applies when signing.external is set. The
+// internal-mode fields (key_file, passphrase_*, auto_generate) are
+// rejected here so the operator gets a clean "pick one mode" diagnostic
+// rather than a runtime surprise after startup.
+func validateSigningExternal(s *Signing) error {
+	if s.KeyFile != "" || s.PassphraseEnv != "" || s.PassphraseFile != "" || s.AutoGenerate {
+		return fmt.Errorf(
+			"signing.external is set; signing.key_file/passphrase_env/passphrase_file/auto_generate are not valid in external mode")
+	}
+	ext := s.External
+	if len(ext.Command) == 0 {
+		return fmt.Errorf("signing.external.command must list at least one entry")
+	}
+	if strings.TrimSpace(ext.Command[0]) == "" {
+		return fmt.Errorf("signing.external.command[0] must not be empty")
+	}
+	if !filepath.IsAbs(ext.Command[0]) {
+		return fmt.Errorf(
+			"signing.external.command[0] %q must be an absolute path (PATH is unset for external commands)",
+			ext.Command[0])
+	}
+	info, err := os.Stat(ext.Command[0])
+	if err != nil {
+		return fmt.Errorf("signing.external.command[0] %q: %w", ext.Command[0], err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("signing.external.command[0] %q is a directory", ext.Command[0])
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("signing.external.command[0] %q is not executable", ext.Command[0])
+	}
+	if ext.Timeout.AsDuration() < 0 {
+		return fmt.Errorf("signing.external.timeout must be >= 0 (default 30s when omitted)")
+	}
+	if ext.PubkeyFile != "" {
+		if !filepath.IsAbs(ext.PubkeyFile) {
+			return fmt.Errorf("signing.external.pubkey_file %q must be absolute", ext.PubkeyFile)
+		}
+		// Pubkey is public material — existence check only, no 0400.
+		fi, err := os.Stat(ext.PubkeyFile)
+		if err != nil {
+			return fmt.Errorf("signing.external.pubkey_file %q: %w", ext.PubkeyFile, err)
+		}
+		if fi.IsDir() {
+			return fmt.Errorf("signing.external.pubkey_file %q is a directory", ext.PubkeyFile)
+		}
+	}
+	if s.NextPubkeyFile != "" {
+		if !filepath.IsAbs(s.NextPubkeyFile) {
+			return fmt.Errorf("signing.next_pubkey_file %q must be absolute", s.NextPubkeyFile)
+		}
+	}
+	for k := range ext.Env {
+		if strings.ContainsAny(k, "=\x00") {
+			return fmt.Errorf("signing.external.env key %q contains '=' or NUL", k)
+		}
+	}
 	return nil
 }
 

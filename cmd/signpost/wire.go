@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,7 +18,7 @@ import (
 // check. No goroutines are started here; that's the caller's job.
 type Wired struct {
 	Cfg             *config.Config
-	Signer          *sign.Signer
+	Signer          sign.Signer
 	Store           *store.Store
 	Fetcher         *fetch.Fetcher
 	Discoverers     map[string]source.Discoverer
@@ -36,32 +37,7 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	pass, err := config.LoadSecret(cfg.Signing.PassphraseEnv, cfg.Signing.PassphraseFile,
-		"signing.passphrase_env", "signing.passphrase_file")
-	if err != nil {
-		return nil, err
-	}
-	var passBytes []byte
-	if pass != nil {
-		passBytes = pass.Value
-	}
-
-	if cfg.Signing.AutoGenerate {
-		uid := cfg.Bootstrap.Maintainer
-		if uid == "" {
-			uid = cfg.Repository.Origin + " APT signing key"
-		}
-		if err := sign.EnsureKey(cfg.Signing.KeyFile, uid); err != nil {
-			return nil, fmt.Errorf("auto-generate signing key: %w", err)
-		}
-		// Re-run the secure-file check now that the file definitely exists,
-		// so a hand-generated file with bad perms still fails loud.
-		if err := config.CheckSecureFile(cfg.Signing.KeyFile, "signing.key_file"); err != nil {
-			return nil, err
-		}
-	}
-
-	signer, err := sign.Load(cfg.Signing.KeyFile, passBytes, cfg.Signing.NextPubkeyFile)
+	signer, err := buildSigner(cfg, log)
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +158,51 @@ func loadDiscoveryToken(name string, src *config.Source, global *config.Secret) 
 	return config.LoadSecret(src.Discovery.TokenEnv, src.Discovery.TokenFile,
 		fmt.Sprintf("source %s discovery.token_env", name),
 		fmt.Sprintf("source %s discovery.token_file", name))
+}
+
+// buildSigner constructs either the in-process signer or the external
+// exec-based signer, based on which config block is set. validateSigning
+// has already enforced "exactly one mode."
+func buildSigner(cfg *config.Config, log *slog.Logger) (sign.Signer, error) {
+	if cfg.Signing.External != nil {
+		ext := cfg.Signing.External
+		return sign.LoadExternal(context.Background(), sign.ExternalConfig{
+			Command:        ext.Command,
+			Key:            ext.Key,
+			PubkeyFile:     ext.PubkeyFile,
+			NextPubkeyFile: cfg.Signing.NextPubkeyFile,
+			Timeout:        ext.Timeout.AsDuration(),
+			Env:            ext.Env,
+			Logger:         log,
+		})
+	}
+
+	pass, err := config.LoadSecret(cfg.Signing.PassphraseEnv, cfg.Signing.PassphraseFile,
+		"signing.passphrase_env", "signing.passphrase_file")
+	if err != nil {
+		return nil, err
+	}
+	var passBytes []byte
+	if pass != nil {
+		passBytes = pass.Value
+	}
+
+	if cfg.Signing.AutoGenerate {
+		uid := cfg.Bootstrap.Maintainer
+		if uid == "" {
+			uid = cfg.Repository.Origin + " APT signing key"
+		}
+		if err := sign.EnsureKey(cfg.Signing.KeyFile, uid); err != nil {
+			return nil, fmt.Errorf("auto-generate signing key: %w", err)
+		}
+		// Re-run the secure-file check now that the file definitely exists,
+		// so a hand-generated file with bad perms still fails loud.
+		if err := config.CheckSecureFile(cfg.Signing.KeyFile, "signing.key_file"); err != nil {
+			return nil, err
+		}
+	}
+
+	return sign.Load(cfg.Signing.KeyFile, passBytes, cfg.Signing.NextPubkeyFile)
 }
 
 // Zero best-effort wipes secret material owned by w.

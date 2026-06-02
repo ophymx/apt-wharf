@@ -422,7 +422,11 @@ example covering the full contract.
 
 ## GPG / signing
 
-Configurable, but always non-interactive at runtime. Two supported modes:
+Configurable, but always non-interactive at runtime. Two top-level modes,
+selected by which `signing.*` block is set in config (mutually exclusive
+at validation):
+
+### Internal — in-process via go-crypto
 
 - **Unencrypted key file** — config points at the secret key file; tool
   loads it on startup. Startup checks file mode `0400` and ownership.
@@ -431,8 +435,45 @@ Configurable, but always non-interactive at runtime. Two supported modes:
   lifetime of the process.
 
 Signing is in-process via `github.com/ProtonMail/go-crypto/openpgp`. No
-external `gpg` binary, no `gpg-agent`. Smartcard / hardware-key support is
-explicitly out of scope.
+external `gpg` binary, no `gpg-agent`.
+
+### External — exec a CLI per signing op
+
+For Vault-backed or HSM-backed signing the daemon delegates to a
+configurable command instead of holding secret material itself. The
+contract is a fixed subset of `vault-pgp-sign(1)` so that binary wires in
+directly; everything else fits behind a thin shell shim (see
+`packaging/contrib/vault-pgp-sign-shim.sh` for the worked example).
+
+Per signing op, signpost runs:
+
+```
+<command...> {detach-sign|clear-sign} [--key <name>]
+    --in <staged-input> --out <staged-output>
+    [--source-date-epoch <unix>] [--digest-algo SHA256]
+```
+
+stdin is unused; stderr is captured into signpost logs (DEBUG on
+success, INFO on error) and the trailing 1 KiB rides any error. The
+child runs in its own process group with a hard SIGKILL on timeout
+(same discipline as the external discovery contract).
+
+The bootstrap keyring + `/pubkey.gpg` content come from one of:
+
+1. `signing.external.pubkey_file` — operator-supplied armored or binary
+   pubkey, read at startup.
+2. `<command> export --key <name>` — run once at startup when
+   `pubkey_file` is unset; stdout is parsed as an OpenPGP cert.
+
+One of the two must succeed for the daemon to come up. Both forms are
+canonically re-serialized so the bootstrap input hash stays stable
+across reload — apt must not see a phantom upgrade when signpost
+restarts.
+
+`signing.next_pubkey_file` is honored in both modes (rotation soak
+period). Smartcard / hardware-key support is achieved in this mode via
+the external command — signpost itself has no opinion on how the child
+acquires its signing material.
 
 ## Package layout
 
@@ -446,13 +487,15 @@ internal/config/      YAML schema, validation, env interpolation
 internal/source/      Discoverer interface + built-in impls (github_release, latest_url, json_url, xml_url, external)
 internal/refresh/     poll loop, change detection, control extraction, snapshot composition
 internal/index/       Packages, Release, InRelease writers
-internal/sign/        openpgp wrapper (key load, optional auto-generate, clearsign, detach)
+internal/sign/        Signer interface + internal (go-crypto) and external (exec) backends
 internal/bootstrap/   nfpm-driven keyring/.sources package builder
 internal/store/       per-source JSON state read/write
 internal/fetch/       range-fetch + control extraction from upstream .debs
 internal/server/      http: static metadata, redirector, /release/... endpoints
 packaging/            systemd unit and signpost's maintainer scripts
                       (referenced by .goreleaser.yaml at the repo root)
+packaging/contrib/    optional adapters for the external signing contract
+                      (vault-pgp-sign-shim.sh today)
 ```
 
 ## Configuration
@@ -551,6 +594,12 @@ embedding them in command arguments.
   exclusive; the file (when used) passes the secure-file check.
 - `signing.next_pubkey_file` (when set) is absolute; fingerprint distinctness
   vs. the active key is enforced at key-load time.
+- `signing.external` and the internal-mode fields (`signing.key_file`,
+  `signing.passphrase_env`, `signing.passphrase_file`, `signing.auto_generate`)
+  are mutually exclusive. When `signing.external` is set: `command` is
+  non-empty; `command[0]` is absolute, exists, is not a directory, and is
+  executable; `timeout >= 0`; `pubkey_file` (when set) is absolute and
+  exists; `env` keys do not contain `=` or `\0`.
 - `server.listen` is non-empty.
 - `refresh.interval > 0`, `refresh.jitter >= 0`, `refresh.http_timeout > 0`.
 - `github.token_env` and `github.token_file` are mutually exclusive; the

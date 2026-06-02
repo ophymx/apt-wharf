@@ -46,7 +46,9 @@ func applyDefaults(c *Config) {
 		c.GitHub.RateLimit.AuthenticatedPerHour = 4500
 	}
 	// XDG fallbacks for paths whose typical /var/lib locations require root.
-	if c.Signing.KeyFile == "" {
+	// External-signing mode owns no local secret material, so the internal
+	// key_file default would mis-route operators.
+	if c.Signing.KeyFile == "" && c.Signing.External == nil {
 		c.Signing.KeyFile = DefaultKeyFile()
 	}
 	if c.Paths.StateDir == "" {

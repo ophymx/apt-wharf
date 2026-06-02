@@ -24,7 +24,7 @@ const Retention = 30 * time.Minute
 // Refresher owns the periodic refresh loop and snapshot publication.
 type Refresher struct {
 	cfg         *config.Config
-	signer      *sign.Signer
+	signer      sign.Signer
 	store       *store.Store
 	fetcher     *fetch.Fetcher
 	httpClient  *http.Client
@@ -44,7 +44,7 @@ type Refresher struct {
 // without disabling the rest of the refresher.
 type Options struct {
 	Cfg         *config.Config
-	Signer      *sign.Signer
+	Signer      sign.Signer
 	Store       *store.Store
 	Fetcher     *fetch.Fetcher
 	HTTPClient  *http.Client

@@ -141,6 +141,14 @@ nfpms:
         file_info:
           mode: 0640
 
+      # Reference shim wiring signpost's external-signing contract to
+      # vault-pgp-sign(1). Ships under /usr/share/doc; operators copy it
+      # somewhere on PATH and reference it from signing.external.command.
+      - src: ./packaging/contrib/vault-pgp-sign-shim.sh
+        dst: /usr/share/doc/apt-signpost/contrib/vault-pgp-sign-shim.sh
+        file_info:
+          mode: 0755
+
       # Ownership of the dirs and conffile is set by postinstall once the
       # signpost user/group exist. dpkg extracts by numeric uid/gid from
       # tar headers (always 0/0 here), so naming the owner in file_info

@@ -43,6 +43,25 @@ type Signing struct {
 	// dev / first-run UX. The generated key's UID is derived from
 	// bootstrap.maintainer.
 	AutoGenerate bool `yaml:"auto_generate"`
+
+	// External, when set, delegates signing to an exec'd command instead
+	// of the in-process internal/sign path. KeyFile, PassphraseEnv,
+	// PassphraseFile, and AutoGenerate are rejected by validation when
+	// External is set — the daemon holds no secret material in that mode.
+	// NextPubkeyFile is still consulted (operator-supplied rotation pubkey).
+	// See internal/sign/external.go for the CLI contract.
+	External *SigningExternal `yaml:"external"`
+}
+
+// SigningExternal mirrors internal/sign.ExternalConfig at the config layer.
+// Field semantics live there; this struct only carries YAML tags + the
+// validation rules from internal/config.
+type SigningExternal struct {
+	Command    []string          `yaml:"command"`
+	Key        string            `yaml:"key"`
+	PubkeyFile string            `yaml:"pubkey_file"`
+	Timeout    Duration          `yaml:"timeout"`
+	Env        map[string]string `yaml:"env"`
 }
 
 type Server struct {

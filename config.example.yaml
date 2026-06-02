@@ -37,6 +37,11 @@ bootstrap:
     APT repository signing key and sources list.
 
 # ---- Signing --------------------------------------------------------------
+# Two modes: internal (in-process via go-crypto) or external (exec an
+# admin-supplied command per signing op — Vault / HSM / shell shim).
+# Pick exactly one block; their fields are mutually exclusive at startup.
+#
+# --- Internal (default) ---
 # key_file must be readable by the signpost user (mode 0400, owner signpost).
 # To bootstrap a fresh install for local testing, flip auto_generate to true:
 # signpost will create an unencrypted RSA key at key_file on first start. For
@@ -48,6 +53,33 @@ signing:
   # passphrase_env: "SIGNPOST_GPG_PASSPHRASE"
   # passphrase_file: "/var/lib/signpost/passphrase"
   # next_pubkey_file: "/var/lib/signpost/next.pub"   # ships in the keyring for rotation
+#
+# --- External (Vault / HSM / arbitrary CLI) ---
+# Comment out the internal block above and uncomment this to delegate
+# signing to a separate process. signpost holds no secret material in
+# this mode. command[0] must be an absolute path; PATH is unset. The
+# CLI contract:
+#
+#   <command> detach-sign --key <key> --in <path> --out <path>
+#                         [--source-date-epoch <epoch>] [--digest-algo SHA256]
+#   <command> clear-sign  --key <key> --in <path> --out <path>
+#                         [--source-date-epoch <epoch>] [--digest-algo SHA256]
+#   <command> export      --key <key>                       # optional; emits cert to stdout
+#
+# vault-pgp-sign(1) speaks this surface verbatim; everything else fits
+# behind a thin shim — see packaging/contrib/vault-pgp-sign-shim.sh.
+#
+# signing:
+#   next_pubkey_file: "/etc/signpost/next.asc"   # optional rotation pubkey
+#   external:
+#     command: ["/usr/local/bin/vault-pgp-sign-shim.sh"]
+#     key: "release-2025"
+#     # pubkey_file: "/etc/signpost/release-2025.asc"
+#     # When pubkey_file is omitted, signpost runs `<command> export --key <key>`
+#     # at startup to seed the bootstrap keyring.
+#     timeout: "30s"
+#     env:                                       # explicit allowlist; nothing else passes through
+#       VAULT_ADDR: "https://vault.example.com:8200"
 
 # ---- HTTP server ----------------------------------------------------------
 # Listen on loopback by default; front with a reverse proxy for TLS and
