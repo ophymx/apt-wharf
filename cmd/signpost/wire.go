@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/config"
-	"github.com/ophymx/apt-wharf/internal/fetch"
 	"github.com/ophymx/apt-wharf/internal/ghclient"
 	"github.com/ophymx/apt-wharf/internal/secret"
-	"github.com/ophymx/apt-wharf/internal/sign"
-	"github.com/ophymx/apt-wharf/internal/source"
-	"github.com/ophymx/apt-wharf/internal/store"
+	"github.com/ophymx/apt-wharf/internal/signpost/config"
+	"github.com/ophymx/apt-wharf/internal/signpost/fetch"
+	"github.com/ophymx/apt-wharf/internal/signpost/sign"
+	"github.com/ophymx/apt-wharf/internal/signpost/source"
+	"github.com/ophymx/apt-wharf/internal/signpost/store"
 )
 
 // Wired bundles the lazily constructed runtime objects shared by serve and

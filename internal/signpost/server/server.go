@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/refresh"
-	"github.com/ophymx/apt-wharf/internal/status"
+	"github.com/ophymx/apt-wharf/internal/signpost/refresh"
+	"github.com/ophymx/apt-wharf/internal/signpost/status"
 )
 
 // Handler returns an http.Handler backed by the snapshot held in h, with

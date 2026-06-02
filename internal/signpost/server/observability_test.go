@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/refresh"
-	"github.com/ophymx/apt-wharf/internal/status"
-	"github.com/ophymx/apt-wharf/internal/store"
+	"github.com/ophymx/apt-wharf/internal/signpost/refresh"
+	"github.com/ophymx/apt-wharf/internal/signpost/status"
+	"github.com/ophymx/apt-wharf/internal/signpost/store"
 )
 
 func newPopulatedTracker(t *testing.T) *status.Tracker {

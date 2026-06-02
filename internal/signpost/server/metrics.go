@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/refresh"
-	"github.com/ophymx/apt-wharf/internal/status"
+	"github.com/ophymx/apt-wharf/internal/signpost/refresh"
+	"github.com/ophymx/apt-wharf/internal/signpost/status"
 )
 
 // metricsHandler exposes Prometheus text-format metrics derived from the

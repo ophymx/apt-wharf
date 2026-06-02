@@ -483,15 +483,18 @@ external/             public Go helper for tools implementing the external contr
 examples/external-producers/discover-zoom/
                       reference external discoverer (Zoom Linux client; see
                       §"Built-in: external" for when to reach for this pattern)
-internal/config/      YAML schema, validation, env interpolation
-internal/source/      Discoverer interface + built-in impls (github_release, latest_url, json_url, xml_url, external)
-internal/refresh/     poll loop, change detection, control extraction, snapshot composition
-internal/index/       Packages, Release, InRelease writers
-internal/sign/        Signer interface + internal (go-crypto) and external (exec) backends
-internal/bootstrap/   nfpm-driven keyring/.sources package builder
-internal/store/       per-source JSON state read/write
-internal/fetch/       range-fetch + control extraction from upstream .debs
-internal/server/      http: static metadata, redirector, /release/... endpoints
+internal/secret/      env-or-file Secret loader + 0400-owner secure-file check (shared)
+internal/procgroup/   POSIX process-group SIGKILL helper for exec'd children (shared)
+internal/ghclient/    go-github wrapper with If-None-Match transport (shared)
+internal/signpost/config/    YAML schema, validation, env interpolation
+internal/signpost/source/    Discoverer interface + built-in impls (github_release, latest_url, json_url, xml_url, external)
+internal/signpost/refresh/   poll loop, change detection, control extraction, snapshot composition
+internal/signpost/index/     Packages, Release, InRelease writers
+internal/signpost/sign/      Signer interface + internal (go-crypto) and external (exec) backends
+internal/signpost/bootstrap/ nfpm-driven keyring/.sources package builder
+internal/signpost/store/     per-source JSON state read/write
+internal/signpost/fetch/     range-fetch + control extraction from upstream .debs
+internal/signpost/server/    http: static metadata, redirector, /release/... endpoints
 packaging/            systemd unit and signpost's maintainer scripts
                       (referenced by .goreleaser.yaml at the repo root)
 packaging/contrib/    optional adapters for the external signing contract

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/bootstrap"
-	"github.com/ophymx/apt-wharf/internal/store"
+	"github.com/ophymx/apt-wharf/internal/signpost/bootstrap"
+	"github.com/ophymx/apt-wharf/internal/signpost/store"
 )
 
 // ensureBootstrap returns the active BootstrapState plus the cached .deb

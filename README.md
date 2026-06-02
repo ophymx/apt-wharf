@@ -207,7 +207,7 @@ correctness requirement.
 
 ```sh
 go test ./...                                  # default: skips integration + nfpm-required
-go test -tags integration ./internal/source/...  # live GitHub
+go test -tags integration ./internal/signpost/source/...  # live GitHub
 ```
 
 Cooper's and chandler's reproducibility self-checks run only when `nfpm`

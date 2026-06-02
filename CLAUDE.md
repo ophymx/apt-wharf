@@ -33,7 +33,7 @@ Five related command-line tools share one Go module
 
 A reference external producer for signpost's discovery contract lives
 at `examples/external-producers/discover-zoom/` (Zoom's vendor JSON
-endpoint). It demonstrates the `internal/source/external.go`
+endpoint). It demonstrates the `internal/signpost/source/external.go`
 pluggable-producer pattern; it is not part of any main tool's binary
 and is not shipped. The Zoom case is itself redundant now — five
 lines of `json_url` config in signpost handle it without exec'ing
@@ -85,7 +85,7 @@ goreleaser release --snapshot --clean
 go test ./...
 
 # Live GitHub integration tests (requires network, optional GITHUB_TOKEN env):
-go test -tags integration ./internal/source/...
+go test -tags integration ./internal/signpost/source/...
 
 # Cooper's and chandler's reproducibility self-checks run only when nfpm
 # is on PATH; they auto-skip otherwise.
@@ -111,15 +111,23 @@ manually before pushing.
 
 ## Architectural conventions
 
-### Cooper, drayman, staves, chandler packages live under `internal/<tool>/...`
+### Per-tool internal packages live under `internal/<tool>/...`
 
-All four newer tools share a Go module with signpost. To avoid colliding
-with signpost's existing `internal/config`, `internal/source`, etc.,
-their internal packages live under `internal/cooper/<name>`,
+All five tools share one Go module. Per-tool internal packages live
+under `internal/signpost/<name>`, `internal/cooper/<name>`,
 `internal/drayman/<name>`, `internal/staves/<name>`, and
 `internal/chandler/<name>` respectively. The eventual split into
-standalone `github.com/ophymx/apt-cooper` / `apt-chandler` / etc.
-modules is a deferred import-path rename and shouldn't gate v0 work.
+standalone `github.com/ophymx/apt-signpost` / `apt-cooper` /
+`apt-chandler` / etc. modules is a deferred import-path rename and
+shouldn't gate v0 work.
+
+Cross-cutting helpers shared by more than one tool live flat under
+`internal/<name>` — today that's `internal/secret` (env-or-file
+secret loader + 0400 owner check), `internal/procgroup` (POSIX
+process-group kill discipline), and `internal/ghclient` (go-github
+wrapper with the ETag round-tripper). Adding a tool-specific
+package: put it under `internal/<tool>/`. Adding a cross-cutting
+helper: keep it flat under `internal/`.
 
 ### `pkg/plan` is the public, stable JSON contract
 
@@ -185,7 +193,7 @@ deployment.
 
 ### Signpost's discovery contract is pluggable
 
-`internal/source/` defines a `Discoverer` interface with built-in
+`internal/signpost/source/` defines a `Discoverer` interface with built-in
 implementations for `github_release`, `latest_url`, `json_url`, plus an
 `external` source kind that exec's a separate program speaking the same
 JSON contract on stdin/stdout. `examples/external-producers/discover-zoom/`
@@ -205,7 +213,7 @@ shape (multi-step auth, cookies, non-JSON/XML wire format).
 - **`internal/cooper/source/github_test.go`** uses `httptest` against a
   go-github client whose `BaseURL` is rewritten to the test server.
   Mirror that pattern when adding GitHub API tests.
-- **`internal/refresh/bootstrap_stability_test.go`** asserts the
+- **`internal/signpost/refresh/bootstrap_stability_test.go`** asserts the
   bootstrap `.deb` is byte-stable across runs — like cooper's
   reproducibility test, but for signpost's self-built keyring package.
 - **`pkg/plan/hash_test.go`** is the cross-language-producer corpus

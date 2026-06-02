@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/fetch"
 	"github.com/ophymx/apt-wharf/internal/ghclient"
-	"github.com/ophymx/apt-wharf/internal/index"
+	"github.com/ophymx/apt-wharf/internal/signpost/fetch"
+	"github.com/ophymx/apt-wharf/internal/signpost/index"
 )
 
 func liveDiscoverer(t *testing.T, repo, pattern string, includePre bool) *GitHubReleaseDiscoverer {

@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/config"
-	"github.com/ophymx/apt-wharf/internal/refresh"
-	"github.com/ophymx/apt-wharf/internal/server"
-	"github.com/ophymx/apt-wharf/internal/status"
+	"github.com/ophymx/apt-wharf/internal/signpost/config"
+	"github.com/ophymx/apt-wharf/internal/signpost/refresh"
+	"github.com/ophymx/apt-wharf/internal/signpost/server"
+	"github.com/ophymx/apt-wharf/internal/signpost/status"
 )
 
 func cmdServe(args []string, log *slog.Logger) error {

@@ -849,10 +849,11 @@ Cooper is **stateless**: no state files, no cross-run memory.
 
 ## Package layout
 
-Cooper shares the apt-wharf Go module with signpost, so its internal
-packages are namespaced under `internal/cooper/` to avoid colliding
-with signpost's pre-existing internals (`internal/config`,
-`internal/source`, etc.).
+Cooper shares the apt-wharf Go module with the other tools. Its
+internal packages are namespaced under `internal/cooper/`; signpost's
+sit alongside under `internal/signpost/`; cross-cutting helpers
+shared by both (secret loading, process-group kill, the go-github
+wrapper) live flat under `internal/`.
 
 ```
 cmd/cooper/                 main, subcommand dispatch (validate, discover, build)
@@ -1076,7 +1077,7 @@ invoked from) and a stripped environment built in three layers:
 Later layers win on key collision (standard `exec.Cmd` behavior), so
 the recipe's literal `env:` always overrides whatever the caller's
 environment happened to carry. The child-process discipline matches
-signpost's `internal/source/external.go`: proc-group SIGKILL on
+signpost's `internal/signpost/source/external.go`: proc-group SIGKILL on
 timeout, stderr captured and surfaced in error messages, exit 0 =
 success.
 

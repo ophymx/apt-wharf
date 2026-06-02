@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/ophymx/apt-wharf/internal/refresh"
-	"github.com/ophymx/apt-wharf/internal/status"
+	"github.com/ophymx/apt-wharf/internal/signpost/refresh"
+	"github.com/ophymx/apt-wharf/internal/signpost/status"
 )
 
 // statusHandler returns a JSON view of the tracker plus a few derived

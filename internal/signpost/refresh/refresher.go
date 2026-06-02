@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ophymx/apt-wharf/internal/config"
-	"github.com/ophymx/apt-wharf/internal/fetch"
-	"github.com/ophymx/apt-wharf/internal/sign"
-	"github.com/ophymx/apt-wharf/internal/source"
-	"github.com/ophymx/apt-wharf/internal/status"
-	"github.com/ophymx/apt-wharf/internal/store"
+	"github.com/ophymx/apt-wharf/internal/signpost/config"
+	"github.com/ophymx/apt-wharf/internal/signpost/fetch"
+	"github.com/ophymx/apt-wharf/internal/signpost/sign"
+	"github.com/ophymx/apt-wharf/internal/signpost/source"
+	"github.com/ophymx/apt-wharf/internal/signpost/status"
+	"github.com/ophymx/apt-wharf/internal/signpost/store"
 )
 
 // Retention default per design-mvp.md: 30 minutes.
