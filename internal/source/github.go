@@ -11,48 +11,9 @@ import (
 	"time"
 
 	"github.com/google/go-github/v86/github"
+
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 )
-
-// etagCtxKey injects per-request If-None-Match into go-github calls without
-// having to plumb headers through every API surface.
-type etagCtxKey struct{}
-
-// withEtag returns a derived context that the etag transport will read.
-func withEtag(ctx context.Context, etag string) context.Context {
-	if etag == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, etagCtxKey{}, etag)
-}
-
-// etagTransport injects If-None-Match from request context.
-type etagTransport struct{ base http.RoundTripper }
-
-func (t *etagTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if v := r.Context().Value(etagCtxKey{}); v != nil {
-		r.Header.Set("If-None-Match", v.(string))
-	}
-	return t.base.RoundTrip(r)
-}
-
-// NewGitHubClient wraps an http.Client with the etag transport and produces
-// a go-github *github.Client. Pass token = nil for unauthenticated.
-func NewGitHubClient(httpClient *http.Client, token []byte) *github.Client {
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	wrapped := *httpClient // copy
-	base := wrapped.Transport
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	wrapped.Transport = &etagTransport{base: base}
-	c := github.NewClient(&wrapped)
-	if len(token) > 0 {
-		c = c.WithAuthToken(string(token))
-	}
-	return c
-}
 
 // GitHubReleaseDiscoverer probes one source backed by a github_release config.
 type GitHubReleaseDiscoverer struct {
@@ -65,7 +26,7 @@ type GitHubReleaseDiscoverer struct {
 	BucketID string
 
 	// Client is the per-credential go-github client; in production this is
-	// constructed via NewGitHubClient. Tests inject a client wired to an
+	// constructed via ghclient.New. Tests inject a client wired to an
 	// httptest server.
 	Client *github.Client
 }
@@ -111,7 +72,7 @@ func (g *GitHubReleaseDiscoverer) Probe(ctx context.Context, in ProbeInput) (*Pr
 	if in.Prev != nil {
 		prevEtag = in.Prev.APIEtag
 	}
-	apiCtx := withEtag(ctx, prevEtag)
+	apiCtx := ghclient.WithEtag(ctx, prevEtag)
 
 	if g.IncludePrerelease {
 		return g.probeIncludingPrereleases(apiCtx, in.Prev)

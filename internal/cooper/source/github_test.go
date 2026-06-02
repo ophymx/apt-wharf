@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-github/v86/github"
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
-	signsource "github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 )
 
 type ghAssetJSON struct {
@@ -33,7 +33,7 @@ type ghReleaseJSON struct {
 // newClient wires a go-github *github.Client at a local httptest server.
 func newClient(t *testing.T, srv *httptest.Server) *github.Client {
 	t.Helper()
-	client := signsource.NewGitHubClient(srv.Client(), nil)
+	client := ghclient.New(srv.Client(), nil)
 	base, _ := url.Parse(srv.URL + "/")
 	client.BaseURL = base
 	return client

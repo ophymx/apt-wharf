@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
-	signsource "github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
@@ -102,7 +102,7 @@ func newTestServer(t *testing.T, hits *int) *httptest.Server {
 
 func testClient(t *testing.T, srv *httptest.Server) Options {
 	t.Helper()
-	c := signsource.NewGitHubClient(srv.Client(), nil)
+	c := ghclient.New(srv.Client(), nil)
 	base, _ := url.Parse(srv.URL + "/")
 	c.BaseURL = base
 	return Options{

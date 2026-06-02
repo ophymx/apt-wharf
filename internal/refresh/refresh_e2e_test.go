@@ -27,6 +27,7 @@ import (
 
 	"github.com/ophymx/apt-wharf/internal/config"
 	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 	"github.com/ophymx/apt-wharf/internal/sign"
 	"github.com/ophymx/apt-wharf/internal/source"
 	"github.com/ophymx/apt-wharf/internal/store"
@@ -127,7 +128,7 @@ func TestRefresh_EndToEnd(t *testing.T) {
 	}
 
 	registry := source.NewRegistry(50, 4500)
-	ghClient := source.NewGitHubClient(httpClient, nil)
+	ghClient := ghclient.New(httpClient, nil)
 	apiBase, _ := url.Parse(apiSrv.URL + "/")
 	ghClient.BaseURL = apiBase
 	disc, err := source.NewGitHubReleaseDiscoverer("acme/widget", `widget_.*_amd64\.deb`, false,

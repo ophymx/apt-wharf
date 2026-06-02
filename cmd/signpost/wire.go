@@ -9,6 +9,7 @@ import (
 
 	"github.com/ophymx/apt-wharf/internal/config"
 	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 	"github.com/ophymx/apt-wharf/internal/secret"
 	"github.com/ophymx/apt-wharf/internal/sign"
 	"github.com/ophymx/apt-wharf/internal/source"
@@ -75,7 +76,7 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 			}
 			bucket := registry.BucketFor(tokBytes)
 			bucketID := registry.CredentialID(tokBytes)
-			client := source.NewGitHubClient(httpClient, tokBytes)
+			client := ghclient.New(httpClient, tokBytes)
 			d, err := source.NewGitHubReleaseDiscoverer(
 				src.Discovery.Repo,
 				src.Discovery.Asset,

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ophymx/apt-wharf/internal/fetch"
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 	"github.com/ophymx/apt-wharf/internal/index"
 )
 
@@ -32,7 +33,7 @@ func liveDiscoverer(t *testing.T, repo, pattern string, includePre bool) *GitHub
 	}
 	reg := NewRegistry(50, 4500)
 	httpClient := &http.Client{Timeout: 60 * time.Second}
-	client := NewGitHubClient(httpClient, token)
+	client := ghclient.New(httpClient, token)
 	d, err := NewGitHubReleaseDiscoverer(repo, pattern, includePre,
 		reg.BucketFor(token), reg.CredentialID(token), client)
 	if err != nil {

@@ -15,8 +15,8 @@ import (
 	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
 	"github.com/ophymx/apt-wharf/internal/cooper/discover"
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 	"github.com/ophymx/apt-wharf/internal/secret"
-	signsource "github.com/ophymx/apt-wharf/internal/source"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
@@ -102,7 +102,7 @@ func cmdDiscover(args []string) error {
 }
 
 // buildGitHubClient resolves the configured GitHub token (env or file)
-// and wraps it in signpost's NewGitHubClient transport. Empty token
+// and wraps it in the shared ghclient transport. Empty token
 // → unauthenticated client (subject to GitHub's anonymous rate limit).
 func buildGitHubClient(gh config.GitHubConfig) (*github.Client, error) {
 	tok, err := secret.LoadSecret(gh.TokenEnv, gh.TokenFile, "github.token_env", "github.token_file")
@@ -113,7 +113,7 @@ func buildGitHubClient(gh config.GitHubConfig) (*github.Client, error) {
 	if tok != nil {
 		token = tok.Value
 	}
-	return signsource.NewGitHubClient(http.DefaultClient, token), nil
+	return ghclient.New(http.DefaultClient, token), nil
 }
 
 func anyError(p *plan.Plan) bool {

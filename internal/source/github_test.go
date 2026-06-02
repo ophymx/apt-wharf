@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v86/github"
+
+	"github.com/ophymx/apt-wharf/internal/ghclient"
 )
 
 // newDiscoverer builds a discoverer pointed at a local httptest server.
@@ -18,7 +20,7 @@ import (
 func newDiscoverer(t *testing.T, srv *httptest.Server, pattern string, includePre bool, token []byte) *GitHubReleaseDiscoverer {
 	t.Helper()
 	reg := NewRegistry(50, 4500)
-	client := NewGitHubClient(srv.Client(), token)
+	client := ghclient.New(srv.Client(), token)
 	base, _ := url.Parse(srv.URL + "/")
 	client.BaseURL = base
 	d, err := NewGitHubReleaseDiscoverer("acme/widget", pattern, includePre, reg.BucketFor(token), reg.CredentialID(token), client)
@@ -167,7 +169,7 @@ func TestGitHub_RateLimitBlocksOnReset(t *testing.T) {
 	defer srv.Close()
 
 	reg := NewRegistry(50, 4500)
-	client := NewGitHubClient(srv.Client(), nil)
+	client := ghclient.New(srv.Client(), nil)
 	base, _ := url.Parse(srv.URL + "/")
 	client.BaseURL = base
 	d, err := NewGitHubReleaseDiscoverer("acme/widget", `x\.deb`, false, reg.BucketFor(nil), reg.CredentialID(nil), client)
