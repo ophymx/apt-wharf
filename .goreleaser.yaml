@@ -9,8 +9,14 @@
 # Local snapshot build (no tag required):
 #   goreleaser release --snapshot --clean
 #
-# Output lands in dist/. GitHub release publishing is disabled below; this
-# config is only the local build pipeline.
+# Tagged release publish to GitHub (needs GITHUB_TOKEN with repo scope):
+#   goreleaser release --clean
+#
+# Both write artifacts to dist/. The tagged form additionally creates a
+# GitHub release at the current tag and attaches every produced file.
+# Release notes come from the annotated tag message — goreleaser's
+# auto-changelog stays off (changelog.disable: true below) because the
+# tag messages are hand-curated.
 #
 # Example external-producer code lives under examples/external-producers/
 # (e.g. discover-zoom). Those are buildable reference programs, not
@@ -234,7 +240,16 @@ snapshot:
   version_template: "{{ .Version }}-snapshot-{{ .ShortCommit }}"
 
 changelog:
+  # Tag messages already carry hand-written release notes (see v0.1.5,
+  # v0.2.0); goreleaser's git-log-based changelog would just duplicate
+  # commit subjects above the curated narrative.
   disable: true
 
 release:
-  disable: true
+  # Publish to the GitHub repo derived from `git remote get-url origin`.
+  # Mode "replace" updates an existing release at the same tag instead
+  # of erroring; useful when re-running after a fix to the .goreleaser
+  # config or contrib shim. prerelease: auto marks tags like v0.3.0-rc1
+  # as prereleases without manual flagging.
+  mode: replace
+  prerelease: auto
