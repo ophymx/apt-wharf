@@ -44,4 +44,3 @@ func TestBuildEnv_WithSource(t *testing.T) {
 		t.Errorf("SOURCE: %q, want /work/source", got["SOURCE"])
 	}
 }
-

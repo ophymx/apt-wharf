@@ -53,9 +53,9 @@ sources:
 	cfg := writeConfig(t, yaml)
 
 	p1, err := Run(context.Background(), cfg, Options{
-		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
-		Client:  &keys.Client{HTTP: srv.Client()},
-		Stderr:  &bytes.Buffer{},
+		Tool:   plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
+		Client: &keys.Client{HTTP: srv.Client()},
+		Stderr: &bytes.Buffer{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,9 +166,9 @@ sources:
 	cfg := writeConfig(t, yaml)
 
 	opts := Options{
-		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
-		Client:  &keys.Client{HTTP: srv.Client()},
-		Stderr:  &bytes.Buffer{},
+		Tool:   plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
+		Client: &keys.Client{HTTP: srv.Client()},
+		Stderr: &bytes.Buffer{},
 	}
 	p1, err := Run(context.Background(), cfg, opts)
 	if err != nil {
@@ -237,9 +237,9 @@ sources:
 	cfg := writeConfig(t, yaml)
 
 	p, err := Run(context.Background(), cfg, Options{
-		Tool:    plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
-		Client:  &keys.Client{HTTP: srv.Client()},
-		Stderr:  &bytes.Buffer{},
+		Tool:   plan.Tool{Name: "chandler", Version: "test", FormatRevision: plan.FormatRevision},
+		Client: &keys.Client{HTTP: srv.Client()},
+		Stderr: &bytes.Buffer{},
 	})
 	if err != nil {
 		t.Fatal(err)

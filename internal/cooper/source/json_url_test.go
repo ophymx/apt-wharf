@@ -173,4 +173,3 @@ func TestRenderAssetURL_RejectsNonHTTPS(t *testing.T) {
 		t.Errorf("expected scheme rejection, got %v", err)
 	}
 }
-
