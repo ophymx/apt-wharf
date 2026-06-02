@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
-	signsource "github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/internal/procgroup"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
@@ -91,7 +91,7 @@ func ResolveExternal(ctx context.Context, e *config.ExternalSource, workdir stri
 	cmd.Env = buildExternalEnv(e.Env, e.EnvForward)
 	// Share signpost's procgroup-SIGKILL + WaitDelay discipline so
 	// grandchildren spawned by a wrapper shell can't survive timeout.
-	signsource.SetProcAttrs(cmd)
+	procgroup.SetProcAttrs(cmd)
 	cmd.WaitDelay = 2 * time.Second
 
 	var stderrBuf bytes.Buffer

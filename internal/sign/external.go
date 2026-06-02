@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
-	"github.com/ophymx/apt-wharf/internal/source"
+	"github.com/ophymx/apt-wharf/internal/procgroup"
 )
 
 // ExternalConfig describes the exec contract that backs externalSigner.
@@ -283,7 +283,7 @@ func runExternal(ctx context.Context, cfg ExternalConfig, op string, extras []st
 
 	cmd := exec.CommandContext(cctx, cfg.Command[0], argv...)
 	cmd.Env = buildEnv(cfg.Env)
-	source.SetProcAttrs(cmd)
+	procgroup.SetProcAttrs(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
