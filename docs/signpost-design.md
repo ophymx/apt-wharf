@@ -584,8 +584,14 @@ embedding them in command arguments.
 
 ### Validation rules (enforced at startup, hard-fail)
 
-- `repository.base_url` is a valid `http`/`https` URL with no path or
-  trailing slash.
+- `repository.base_url` is a valid `http`/`https` URL with no trailing
+  slash and no query/fragment. A path component is allowed and is what
+  enables mounting signpost behind a reverse proxy at a subpath — the
+  prefix is baked into the bootstrap `.deb`'s `URIs:` line and is
+  prepended to the self-referential `/release/<suite>/latest.deb`
+  Location header. The proxy is expected to strip the prefix before
+  forwarding to signpost (which still serves at `/dists/`, `/pool/`,
+  etc.).
 - `suite.codename` matches `^[a-z0-9][a-z0-9._-]*$`; `suite.architectures`
   is non-empty and does not contain `"all"` (handled implicitly).
 - `bootstrap.package_name` matches Debian's package-name grammar.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -62,13 +63,29 @@ func validateRepository(r *Repository) error {
 	if u.Host == "" {
 		return fmt.Errorf("repository.base_url %q is missing host", r.BaseURL)
 	}
-	if u.Path != "" && u.Path != "/" {
-		return fmt.Errorf("repository.base_url %q must not have a path", r.BaseURL)
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("repository.base_url %q must not have a query or fragment", r.BaseURL)
 	}
 	if strings.HasSuffix(r.BaseURL, "/") {
 		return fmt.Errorf("repository.base_url %q must not have a trailing slash", r.BaseURL)
 	}
+	if u.Path != "" && path.Clean(u.Path) != u.Path {
+		return fmt.Errorf("repository.base_url %q path must be already-clean (no \"..\" or duplicate slashes)", r.BaseURL)
+	}
 	return nil
+}
+
+// PathPrefix returns the URL path component of base_url with a leading slash
+// and no trailing slash, or the empty string when base_url has no path (i.e.
+// signpost is mounted at the host root). Validation guarantees BaseURL parses
+// cleanly and has no trailing slash, so the returned value is suitable to
+// prepend to a self-referential absolute-path Location header.
+func (r Repository) PathPrefix() string {
+	u, err := url.Parse(r.BaseURL)
+	if err != nil {
+		return ""
+	}
+	return u.Path
 }
 
 func validateSuite(s *Suite) error {

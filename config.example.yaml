@@ -12,7 +12,9 @@
 # ---- Repository identity --------------------------------------------------
 # Origin/Label appear in the signed Release file. base_url is the public root
 # under which apt clients will see /dists/ and /pool/ — no trailing slash, no
-# path component.
+# query/fragment. A path is allowed (e.g. "https://host.example/apt") for
+# mounting behind a reverse proxy at a subpath; in that case the proxy is
+# expected to strip the prefix before forwarding to signpost.
 repository:
   origin: "CHANGEME"                          # e.g. "Acme"
   label: "CHANGEME"                           # e.g. "Acme APT"

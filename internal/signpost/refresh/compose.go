@@ -123,10 +123,13 @@ func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *st
 	bsPool := bootstrap.PoolPath(r.cfg.Bootstrap.PackageName, bs.Version)
 	files[bsPool] = FileEntry{Data: debBytes, ContentType: "application/vnd.debian.binary-package", ExpiresAt: now.Add(Retention)}
 
-	// Convenience endpoints.
+	// Convenience endpoints. The latest.deb Location is prefixed with the
+	// base_url path component so a reverse proxy mounting signpost at a
+	// subpath (e.g. https://host/apt) sees the client follow Location:
+	// /apt/pool/... back through the proxy, not /pool/... at the host root.
 	files["/pubkey.gpg"] = FileEntry{Data: r.signer.KeyringBytes(), ContentType: "application/pgp-keys"}
 	files[fmt.Sprintf("/release/%s/latest", suiteSegment)] = FileEntry{Data: []byte(bs.Version + "\n"), ContentType: "text/plain"}
-	redirects[fmt.Sprintf("/release/%s/latest.deb", suiteSegment)] = Redirect{URL: bsPool}
+	redirects[fmt.Sprintf("/release/%s/latest.deb", suiteSegment)] = Redirect{URL: r.cfg.Repository.PathPrefix() + bsPool}
 
 	// Carry over non-expired entries from prev that aren't already present.
 	if prev != nil {

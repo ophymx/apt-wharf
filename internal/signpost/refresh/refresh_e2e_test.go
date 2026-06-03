@@ -93,7 +93,9 @@ func TestRefresh_EndToEnd(t *testing.T) {
 	cfg := &config.Config{
 		Repository: config.Repository{
 			Origin: "Acme", Label: "Acme APT",
-			BaseURL: "https://apt.acme.example",
+			// Subpath in base_url — exercises the path-prefix prepending
+			// on the self-referential /release/<suite>/latest.deb redirect.
+			BaseURL: "https://apt.acme.example/apt",
 		},
 		Suite: config.Suite{
 			Codename: "stable", Description: "Acme stable",
@@ -256,7 +258,7 @@ func TestRefresh_EndToEnd(t *testing.T) {
 			t.Fatal("/release/stable/latest missing")
 		}
 		rd, ok := snap.Redirects["/release/stable/latest.deb"]
-		if !ok || !strings.HasPrefix(rd.URL, "/pool/main/a/acme-archive-keyring/") {
+		if !ok || !strings.HasPrefix(rd.URL, "/apt/pool/main/a/acme-archive-keyring/") {
 			t.Fatalf("/release/stable/latest.deb redirect = %+v", rd)
 		}
 	})
