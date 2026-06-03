@@ -18,8 +18,16 @@ Restart=on-failure
 RestartSec=5
 
 # Filesystem
+# StateDirectory= creates /var/lib/signpost on first start (safety net
+# for non-deb installs); the deb's postinstall pre-creates it with the
+# same 0750 mode, so pinning StateDirectoryMode= keeps systemd from
+# logging a mode-mismatch warning. /etc/signpost is intentionally NOT
+# declared as ConfigurationDirectory= because it must be root:signpost
+# (admin-owned, daemon-readable) — systemd would create it owned by
+# User=/Group= = signpost:signpost, which is the wrong trust model.
+# The postinstall is the sole source of truth for /etc/signpost.
 StateDirectory=signpost
-ConfigurationDirectory=signpost
+StateDirectoryMode=0750
 ReadWritePaths=/var/lib/signpost
 ProtectSystem=strict
 ProtectHome=true
