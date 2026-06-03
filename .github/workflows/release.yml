@@ -1,0 +1,48 @@
+# Tag-driven release pipeline. On `git push origin vX.Y.Z`, runs goreleaser
+# against .goreleaser.yaml at the repo root — which builds the signpost,
+# cooper, chandler, drayman, and staves binaries for linux/{amd64,arm64,
+# arm,riscv64}, packs the per-binary tarballs, builds the apt-signpost +
+# apt-wharf .debs via nfpm, computes checksums, and publishes the lot to
+# a GitHub release whose body comes from the annotated tag message
+# (changelog.disable: true in goreleaser config).
+#
+# Release notes therefore live in the tag itself — write them with
+#   git tag -a vX.Y.Z -m "<notes>"
+# before pushing.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # required to create the GitHub release + upload assets
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # goreleaser needs full history + tags to compute version / commit metadata.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          # Pin to the goreleaser v2.x line; matches `version: 2` in
+          # .goreleaser.yaml. Major bumps require a config audit, so don't
+          # widen this to `latest`.
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
