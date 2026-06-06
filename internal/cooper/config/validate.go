@@ -150,6 +150,9 @@ func validateSource(src *Source, yamlDir string) error {
 	if src.GitHub != nil {
 		count++
 	}
+	if src.Gitea != nil {
+		count++
+	}
 	if src.JSONURL != nil {
 		count++
 	}
@@ -161,11 +164,11 @@ func validateSource(src *Source, yamlDir string) error {
 	}
 	switch count {
 	case 0:
-		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url, source.external")
+		return fmt.Errorf("source: must set exactly one of source.github, source.gitea, source.json_url, source.xml_url, source.external")
 	case 1:
 		// ok
 	default:
-		return fmt.Errorf("source: must set exactly one of source.github, source.json_url, source.xml_url, source.external (got %d)", count)
+		return fmt.Errorf("source: must set exactly one of source.github, source.gitea, source.json_url, source.xml_url, source.external (got %d)", count)
 	}
 
 	if src.GitHub != nil {
@@ -178,8 +181,34 @@ func validateSource(src *Source, yamlDir string) error {
 		if gh.Release == nil {
 			gh.Release = &Release{Latest: true}
 		}
-		if err := validateRelease(gh.Release); err != nil {
+		if err := validateRelease("source.github.release", gh.Release); err != nil {
 			return err
+		}
+	}
+
+	if src.Gitea != nil {
+		gt := src.Gitea
+		if gt.Server == "" {
+			return fmt.Errorf("source.gitea.server: required (Gitea instance base URL, e.g. https://gitea.example.com)")
+		}
+		if !strings.HasPrefix(gt.Server, "http://") && !strings.HasPrefix(gt.Server, "https://") {
+			return fmt.Errorf("source.gitea.server %q must use http or https scheme", gt.Server)
+		}
+		owner, name, ok := strings.Cut(gt.Repo, "/")
+		if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+			return fmt.Errorf("source.gitea.repo %q must be \"owner/name\"", gt.Repo)
+		}
+		if gt.Release == nil {
+			gt.Release = &Release{Latest: true}
+		}
+		if err := validateRelease("source.gitea.release", gt.Release); err != nil {
+			return err
+		}
+		if gt.TokenEnv != "" && gt.TokenFile != "" {
+			return fmt.Errorf("source.gitea.token_env and source.gitea.token_file are mutually exclusive")
+		}
+		if gt.TokenFile != "" && !filepath.IsAbs(gt.TokenFile) {
+			return fmt.Errorf("source.gitea.token_file %q must be absolute", gt.TokenFile)
 		}
 	}
 
@@ -264,7 +293,11 @@ func validateSource(src *Source, yamlDir string) error {
 	return nil
 }
 
-func validateRelease(r *Release) error {
+// validateRelease enforces the latest/tag_pattern/tag union rule on the
+// shared Release struct. fieldPath is the dotted YAML path used in error
+// messages so the same logic serves both source.github.release and
+// source.gitea.release.
+func validateRelease(fieldPath string, r *Release) error {
 	count := 0
 	if r.Latest {
 		count++
@@ -276,15 +309,15 @@ func validateRelease(r *Release) error {
 		count++
 	}
 	if count == 0 {
-		return fmt.Errorf("source.github.release: must set one of latest, tag_pattern, tag")
+		return fmt.Errorf("%s: must set one of latest, tag_pattern, tag", fieldPath)
 	}
 	if count > 1 {
-		return fmt.Errorf("source.github.release: latest, tag_pattern, tag are mutually exclusive")
+		return fmt.Errorf("%s: latest, tag_pattern, tag are mutually exclusive", fieldPath)
 	}
 	if r.TagPattern != "" {
 		re, err := regexp.Compile(r.TagPattern)
 		if err != nil {
-			return fmt.Errorf("source.github.release.tag_pattern: %w", err)
+			return fmt.Errorf("%s.tag_pattern: %w", fieldPath, err)
 		}
 		r.tagPatternRE = re
 	}
@@ -404,6 +437,32 @@ func validateArches(src *Source, arches map[string]Arch) error {
 			// selectors are an optional extra).
 			if len(a.Assets) == 0 && !src.GitHub.SourceArchive {
 				return fmt.Errorf("arches.%s.asset(s): required for source.github (omit only when source.github.source_archive is true)", arch)
+			}
+			for i, asset := range a.Assets {
+				if asset == "" {
+					return fmt.Errorf("arches.%s.assets[%d]: empty entry", arch, i)
+				}
+				for _, m := range assetSubstPattern.FindAllStringSubmatch(asset, -1) {
+					if m[1] != "VERSION" {
+						return fmt.Errorf("arches.%s.assets[%d]: only ${VERSION} substitution is allowed (saw ${%s})", arch, i, m[1])
+					}
+				}
+			}
+			if err := checkDuplicateTemplates(arch, "assets", a.Assets); err != nil {
+				return err
+			}
+		case src.Gitea != nil:
+			// Same shape as github_release: exact-match attachment names
+			// with ${VERSION} substitution allowed.
+			if a.AssetURL != "" || len(a.AssetURLs) > 0 {
+				return fmt.Errorf("arches.%s: asset_url/asset_urls not valid for source.gitea (use asset/assets instead)", arch)
+			}
+			if a.Asset != "" {
+				a.Assets = []string{a.Asset}
+				a.Asset = ""
+			}
+			if len(a.Assets) == 0 && !src.Gitea.SourceArchive {
+				return fmt.Errorf("arches.%s.asset(s): required for source.gitea (omit only when source.gitea.source_archive is true)", arch)
 			}
 			for i, asset := range a.Assets {
 				if asset == "" {

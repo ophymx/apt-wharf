@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"code.gitea.io/sdk/gitea"
 	"github.com/google/go-github/v86/github"
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
@@ -27,6 +28,14 @@ type Options struct {
 	Client     *github.Client
 	HTTPClient *http.Client
 	Now        func() time.Time
+
+	// GiteaClient returns the Gitea SDK client for a given (server,
+	// token_env, token_file) triple, lazily caching the underlying
+	// gitea.Client so multiple source.gitea recipes hitting the same
+	// instance share a connection pool. The implementation owns secret
+	// resolution — the discover package never touches env/files. Nil →
+	// no source.gitea packages can be resolved.
+	GiteaClient func(serverURL, tokenEnv, tokenFile string) (*gitea.Client, error)
 
 	// PackageFilter restricts processing to packages whose nfpm name is
 	// in the set. nil means "all packages."
@@ -97,6 +106,8 @@ func processPackage(ctx context.Context, opts Options, path string) []plan.Packa
 	switch {
 	case pkgFile.Sidecar.Source.GitHub != nil:
 		return processGitHubPackage(ctx, opts, pkgFile, refsByDoc)
+	case pkgFile.Sidecar.Source.Gitea != nil:
+		return processGiteaPackage(ctx, opts, pkgFile, refsByDoc)
 	case pkgFile.Sidecar.Source.JSONURL != nil:
 		return processJSONURLPackage(ctx, opts, pkgFile, refsByDoc)
 	case pkgFile.Sidecar.Source.XMLURL != nil:
@@ -115,7 +126,7 @@ func processGitHubPackage(ctx context.Context, opts Options, pkgFile *config.Pac
 		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindDiscoveryFailed, err)}
 	}
 
-	resolvedVersion, err := version.Assemble(&pkgFile.Sidecar, release)
+	resolvedVersion, err := version.Assemble(&pkgFile.Sidecar, version.FromGitHub(release))
 	if err != nil {
 		return []plan.Package{errPkg(pkgFile.NfpmDocs[0].Name, plan.ErrorKindVersionInvalid, err)}
 	}

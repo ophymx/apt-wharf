@@ -1,0 +1,40 @@
+---
+# Doc 1 — cooper sidecar
+#
+# tea — the Gitea command-line client — is released on gitea.com itself,
+# the canonical demo for the gitea_release source kind. Single-ELF
+# per arch (no archive), tags use the v<version> convention, and amd64 +
+# arm64 are both published. Authentication is optional for public
+# releases; declare source.gitea.token_env / token_file when targeting
+# a private Gitea instance.
+source:
+  gitea:
+    server: https://gitea.com
+    repo: gitea/tea
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "tea-${VERSION}-linux-amd64"
+  arm64:
+    asset: "tea-${VERSION}-linux-arm64"
+
+---
+# Doc 2 — vanilla nfpm
+name: tea
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+maintainer: "Ophymx <ops@ophymx.com>"
+description: |
+  Command-line client for Gitea, providing a familiar git-style CLI for
+  issues, pull requests, releases, and notifications across one or more
+  Gitea instances.
+homepage: https://gitea.com/gitea/tea
+license: MIT
+section: utils
+contents:
+  - src: ${ASSETS}/tea-${VERSION}-linux-${ARCH}
+    dst: /usr/bin/tea
+    file_info:
+      mode: 0755

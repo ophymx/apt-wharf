@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ophymx/apt-wharf/internal/ghclient"
+	"github.com/ophymx/apt-wharf/internal/giteaclient"
 	"github.com/ophymx/apt-wharf/internal/secret"
 	"github.com/ophymx/apt-wharf/internal/signpost/config"
 	"github.com/ophymx/apt-wharf/internal/signpost/fetch"
@@ -84,6 +85,43 @@ func Wire(cfg *config.Config, log *slog.Logger) (*Wired, error) {
 				bucket,
 				bucketID,
 				client,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("source %s: %w", name, err)
+			}
+			discoverers[name] = d
+			perSrcTokens[name] = tok
+		case "gitea_release":
+			// gitea_release reuses the discovery-token loader: per-source
+			// token_env/token_file wins; otherwise the global github.token
+			// is reused as a sane default (typical deployments declare one
+			// token block per server, and gitea + github tokens are
+			// invariably different env vars anyway).
+			tok, err := loadDiscoveryToken(name, src, globalTok)
+			if err != nil {
+				return nil, err
+			}
+			var tokStr string
+			if tok != nil {
+				tokStr = string(tok.Value)
+			}
+			// Per-credential bucket, same rates as github. Gitea doesn't
+			// document a global rate-limit policy; this is a defensive
+			// per-process cap, not an API-mandated one.
+			tokBytes := []byte(tokStr)
+			bucket := registry.BucketFor(tokBytes)
+			bucketID := registry.CredentialID(tokBytes)
+			gc, err := giteaclient.New(httpClient, src.Discovery.Server, tokStr)
+			if err != nil {
+				return nil, fmt.Errorf("source %s: gitea client: %w", name, err)
+			}
+			d, err := source.NewGiteaReleaseDiscoverer(
+				src.Discovery.Repo,
+				src.Discovery.Asset,
+				src.Discovery.IncludePrerelease,
+				bucket,
+				bucketID,
+				gc,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("source %s: %w", name, err)

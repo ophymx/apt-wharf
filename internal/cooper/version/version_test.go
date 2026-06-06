@@ -21,7 +21,7 @@ func ts(t *testing.T, s string) github.Timestamp {
 
 func sp(s string) *string { return &s }
 
-func ghRelease(t *testing.T, tag, publishedAt string, assetNames ...string) *github.RepositoryRelease {
+func ghRelease(t *testing.T, tag, publishedAt string, assetNames ...string) ReleaseInfo {
 	t.Helper()
 	r := &github.RepositoryRelease{TagName: sp(tag)}
 	pa := ts(t, publishedAt)
@@ -29,7 +29,7 @@ func ghRelease(t *testing.T, tag, publishedAt string, assetNames ...string) *git
 	for _, n := range assetNames {
 		r.Assets = append(r.Assets, &github.ReleaseAsset{Name: sp(n)})
 	}
-	return r
+	return FromGitHub(r)
 }
 
 func mustCompileRelease(t *testing.T, s *config.Sidecar) {

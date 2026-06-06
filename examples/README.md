@@ -31,6 +31,7 @@ like.
 | [`intellij-idea-community/`](./intellij-idea-community) | `xml_url` source kind; XPath against JetBrains' `updates.xml` feed |
 | [`cfssl/`](./cfssl) | **multi-asset per arch** — eight independent binaries from one release staged side-by-side under `${ASSETS}/` |
 | [`golang/`](./golang) | `json_url` source kind against `go.dev/dl/?mode=json`; `version_strip_prefix` to turn `go1.26.3` into `1.26.3` |
+| [`gitea/`](./gitea) | `gitea_release` source kind against `https://gitea.com/gitea/tea`; per-recipe `source.gitea.server` (no global `gitea:` block) |
 
 ## How to run
 
@@ -165,6 +166,22 @@ Asset-name collisions (two selectors resolving to the same release
 asset) are rejected at discover time — both selectors land under one
 `${ASSETS}/` directory, so identical resolved basenames can't both
 exist.
+
+### `gitea/` — `gitea_release` source kind
+
+Worked example of cooper resolving releases against a Gitea instance —
+in this case gitea.com itself, where the `tea` CLI is published. Single
+ELF per arch (no archive), same single-asset shape as `talosctl`. The
+recipe declares `source.gitea.server` per-package because cooper has no
+top-level `gitea:` block: real deployments target multiple distinct
+Gitea instances each with their own auth. Public releases on gitea.com
+need no token; for a private Gitea instance set
+`source.gitea.token_env` (or `token_file`) alongside `server`.
+
+The plan JSON's `source.kind` lands as `gitea_release`, with `url` set
+to the server base. Asset `sha256` is always `null` at discover time —
+Gitea's API exposes no digest — so cooper-build streams + hashes on
+download (same fallback path the `json_url` kind already uses).
 
 ### `intellij-idea-community/` — `xml_url` source kind
 

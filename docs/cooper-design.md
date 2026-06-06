@@ -184,6 +184,11 @@ packages:
 package names come from each file's nfpm document (`name:`); not
 duplicated here.
 
+There is no top-level `gitea:` block. Each `source.gitea` sidecar names
+its own server URL (`source.gitea.server`) and, optionally, its own
+`token_env` / `token_file` — recipes commonly target multiple distinct
+Gitea instances, each with its own auth.
+
 There are no `paths:` keys — output and work directories are CLI flags
 on `cooper build` (see *CLI*), not in `cooper.yaml`. They're build-time
 concerns, and discover and build can run on different hosts.
@@ -275,6 +280,17 @@ source.github.source_archive  bool                     default false
                               (also fetch
                               archive/refs/tags/<tag>.tar.gz;
                               arches[].asset becomes optional)
+source.gitea.server           URL                      required
+                              (e.g. https://gitea.example.com)
+source.gitea.repo             <owner>/<name>           required
+source.gitea.release          (same union as           default "latest"
+                               source.github.release)
+source.gitea.include_prerelease  bool                  default false
+source.gitea.source_archive   bool                     default false
+                              (uses Release.tarball_url
+                              from the Gitea API)
+source.gitea.token_env        STRING                   optional (auth)
+source.gitea.token_file       PATH (absolute, 0400)    optional (auth)
 source.external.command       [STRING, ...]            required (argv)
 source.external.env           map<STRING, STRING>      optional (literal)
 source.external.env_forward   [STRING, ...]            optional; forward
@@ -463,12 +479,16 @@ Discover does not modify any cooper-owned state. A failed package
 becomes an `error` entry; it does not abort the run. Network use is
 bounded — one GitHub releases API call per package, plus optional
 `HEAD` per asset when SHA256 isn't on the release payload. The
-algorithm above is the github_release path; json_url, xml_url, and
-external substitute their own discovery step (HTTP GET + gjson, HTTP
-GET + XPath, and child-process exec respectively) at step 2 but
-otherwise follow the same shape. External-source recipes exec a
-user-supplied script; cooper sandboxes it but the script's own side
-effects are the script author's responsibility.
+algorithm above is the github_release path; gitea_release, json_url,
+xml_url, and external substitute their own discovery step (Gitea
+SDK call, HTTP GET + gjson, HTTP GET + XPath, and child-process exec
+respectively) at step 2 but otherwise follow the same shape. The
+gitea_release path additionally requires `source.gitea.server` so
+cooper knows which Gitea instance to call, and skips SHA256 on
+attachments (Gitea's API does not expose a digest) — build streams
+and hashes at download time as it already does for json_url. External-
+source recipes exec a user-supplied script; cooper sandboxes it but
+the script's own side effects are the script author's responsibility.
 
 ### Build
 
@@ -630,6 +650,9 @@ Field notes:
   the hash during streaming download and records it in the re-emitted
   JSON; the orchestrator should treat such artifacts as "re-import
   unconditionally" because dedup needs the SHA in `build_inputs_hash`.
+  `gitea_release` always lands here (Gitea attachments expose no
+  digest); the json_url / xml_url / external paths land here whenever
+  the producer can't supply a SHA at discover time.
 - **`build_plan.nfpm`** is doc 2 with `${VERSION}` and `${ARCH}`
   substituted to literals; `${ASSETS}` left symbolic. Globs and
   directory references are also kept verbatim (e.g.

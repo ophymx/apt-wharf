@@ -301,6 +301,36 @@ discovery:
 - Optional GitHub token via `discovery.token_env` / `discovery.token_file`
   (per-source) or the global `github.token_env` / `github.token_file`.
 
+### Built-in: `gitea_release`
+
+```yaml
+discovery:
+  type: gitea_release
+  server: https://gitea.example.com
+  repo: owner/name
+  asset: 'foo_.*_amd64\.deb'
+  include_prerelease: false
+  token_env: GITEA_TOKEN          # or token_file: /etc/...
+```
+
+- Same shape as `github_release` with one extra field: `server` (the Gitea
+  instance base URL), required because there is no canonical hosted Gitea.
+- Uses `code.gitea.io/sdk/gitea` against `/api/v1/repos/<repo>/releases/...`
+  (`/latest`, list, or `/tags/<tag>`). Drafts are always filtered out;
+  prereleases only flow through when `include_prerelease: true`.
+- Token = release `id`; URL = matching attachment's `browser_download_url`.
+- ETag conditional GETs work identically to `github_release`.
+- Gitea attachments do **not** carry a digest field, so the refresher
+  always streams the asset to compute SHA256 (signpost's standard
+  fallback when the upstream API doesn't expose a digest).
+- The per-credential rate-limit bucket is shared with `github_release`
+  — Gitea publishes no global rate-limit policy, but the per-process
+  cap from `github.rate_limit` is a sane defensive default.
+- The Gitea SDK injects `Authorization: token <value>` rather than
+  GitHub's `Bearer <value>`.
+- Multiple `gitea_release` sources may point at different Gitea
+  instances; each `(server, token)` pair gets its own client.
+
 ### Built-in: `json_url`
 
 ```yaml
@@ -486,8 +516,9 @@ examples/external-producers/discover-zoom/
 internal/secret/      env-or-file Secret loader + 0400-owner secure-file check (shared)
 internal/procgroup/   POSIX process-group SIGKILL helper for exec'd children (shared)
 internal/ghclient/    go-github wrapper with If-None-Match transport (shared)
+internal/giteaclient/ code.gitea.io/sdk/gitea wrapper, same If-None-Match contract (shared)
 internal/signpost/config/    YAML schema, validation, env interpolation
-internal/signpost/source/    Discoverer interface + built-in impls (github_release, latest_url, json_url, xml_url, external)
+internal/signpost/source/    Discoverer interface + built-in impls (github_release, gitea_release, latest_url, json_url, xml_url, external)
 internal/signpost/refresh/   poll loop, change detection, control extraction, snapshot composition
 internal/signpost/index/     Packages, Release, InRelease writers
 internal/signpost/sign/      Signer interface + internal (go-crypto) and external (exec) backends

@@ -56,13 +56,14 @@ func (e *ExtractLimits) ResolvedMaxFiles() int {
 }
 
 // Source is a discriminated union over discovery backends. Exactly one
-// of GitHub / JSONURL / XMLURL / External must be set; validation
+// of GitHub / Gitea / JSONURL / XMLURL / External must be set; validation
 // enforces this. For sources still outside this set — typically when
 // the recipe needs dynamic control over nfpm.yaml itself — fall back
 // to the external-producer pattern per cooper-design.md §"External
 // producers".
 type Source struct {
 	GitHub   *GitHubSource   `yaml:"github"`
+	Gitea    *GiteaSource    `yaml:"gitea"`
 	JSONURL  *JSONURLSource  `yaml:"json_url"`
 	XMLURL   *XMLURLSource   `yaml:"xml_url"`
 	External *ExternalSource `yaml:"external"`
@@ -82,6 +83,31 @@ type GitHubSource struct {
 	Release           *Release `yaml:"release"`
 	IncludePrerelease bool     `yaml:"include_prerelease"`
 	SourceArchive     bool     `yaml:"source_archive"`
+}
+
+// GiteaSource selects a Gitea release. Mirrors GitHubSource — same Release
+// union (latest / tag_pattern / tag) and source_archive flag — with one
+// extra field: Server is the Gitea instance base URL
+// (https://gitea.example.com or http://localhost:3000), required for
+// every gitea source since there is no canonical hosted Gitea analogous
+// to api.github.com.
+//
+// Asset URLs come from the Gitea attachment's browser_download_url,
+// which the SDK exposes as Attachment.DownloadURL.
+type GiteaSource struct {
+	Server            string   `yaml:"server"`
+	Repo              string   `yaml:"repo"`
+	Release           *Release `yaml:"release"`
+	IncludePrerelease bool     `yaml:"include_prerelease"`
+	SourceArchive     bool     `yaml:"source_archive"`
+
+	// TokenEnv / TokenFile are mutually exclusive. Either points at the
+	// API token cooper should present to the Gitea instance; if neither
+	// is set, cooper runs unauthenticated. There is no global cooper.yaml
+	// gitea token equivalent to the github: block since recipes commonly
+	// target multiple distinct Gitea instances (each with its own auth).
+	TokenEnv  string `yaml:"token_env"`
+	TokenFile string `yaml:"token_file"`
 }
 
 // JSONURLSource fetches a vendor JSON metadata endpoint, extracts the
@@ -214,6 +240,8 @@ func (r *Release) UnmarshalYAML(value *yaml.Node) error {
 //     names (`hugo_${VERSION}_linux-amd64.tar.gz`). Plural form covers
 //     the cfssl-shape: one release ships N independent binaries with
 //     no bundling archive.
+//   - gitea_release:  same shape as github_release — Asset / Assets are
+//     exact-match attachment names, with ${VERSION} substitution.
 //   - json_url:       AssetURL / AssetURLs are fully-qualified download
 //     URL templates (`https://example.com/foo-${VERSION}-${ARCH}.tar.gz`,
 //     with optional signpost-style {token} / {gjson.path} placeholders

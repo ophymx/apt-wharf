@@ -33,6 +33,7 @@ const (
 // Source.Kind values.
 const (
 	SourceKindGitHubRelease = "github_release"
+	SourceKindGiteaRelease  = "gitea_release"
 	SourceKindJSONURL       = "json_url"
 	SourceKindXMLURL        = "xml_url"
 	SourceKindExternal      = "external"

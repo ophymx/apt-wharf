@@ -114,6 +114,12 @@ type Discovery struct {
 	TokenEnv          string `yaml:"token_env"`
 	TokenFile         string `yaml:"token_file"`
 
+	// gitea_release shares Repo / Asset / IncludePrerelease / TokenEnv /
+	// TokenFile with github_release; Server is the only extra field —
+	// the base URL of the Gitea instance (https://gitea.example.com).
+	// Required for gitea_release, must not be set for any other type.
+	Server string `yaml:"server"`
+
 	// latest_url, json_url, and xml_url share the URL field — the
 	// upstream HTTP endpoint to GET. For latest_url it's the asset URL
 	// itself; for json_url it's the metadata endpoint that returns JSON;

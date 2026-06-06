@@ -9,13 +9,16 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
+	"code.gitea.io/sdk/gitea"
 	"github.com/google/go-github/v86/github"
 
 	"github.com/ophymx/apt-wharf/internal/cli"
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
 	"github.com/ophymx/apt-wharf/internal/cooper/discover"
 	"github.com/ophymx/apt-wharf/internal/ghclient"
+	"github.com/ophymx/apt-wharf/internal/giteaclient"
 	"github.com/ophymx/apt-wharf/internal/secret"
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
@@ -60,13 +63,17 @@ func cmdDiscover(args []string) error {
 		return fmt.Errorf("github client: %w", err)
 	}
 
+	gtFactory := newGiteaClientFactory()
+	defer gtFactory.zero()
+
 	opts := discover.Options{
 		Tool: plan.Tool{
 			Name:           "cooper",
 			Version:        cooperVersion,
 			FormatRevision: plan.FormatRevision,
 		},
-		Client: client,
+		Client:      client,
+		GiteaClient: gtFactory.client,
 	}
 	if len(pkgFilter) > 0 {
 		opts.PackageFilter = make(map[string]bool, len(pkgFilter))
@@ -99,6 +106,64 @@ func cmdDiscover(args []string) error {
 		return errors.New("one or more packages failed discovery")
 	}
 	return nil
+}
+
+// giteaClientFactory lazily constructs one gitea.Client per (server,
+// resolved-token) and caches it for the duration of a discover run.
+// Multiple recipes pointing at the same Gitea instance reuse the same
+// client (and its underlying HTTP connection pool); recipes whose
+// token specs resolve to the same plaintext token share a client even
+// across different env-var/file paths. Tokens are zeroed on close.
+type giteaClientFactory struct {
+	mu      sync.Mutex
+	clients map[string]*gitea.Client
+	secrets []*secret.Secret // tracked for zero() at run end
+}
+
+func newGiteaClientFactory() *giteaClientFactory {
+	return &giteaClientFactory{clients: map[string]*gitea.Client{}}
+}
+
+// client resolves the token spec, normalizes server URL, and returns
+// the cached gitea.Client (constructing one on first miss).
+func (f *giteaClientFactory) client(serverURL, tokenEnv, tokenFile string) (*gitea.Client, error) {
+	server := strings.TrimRight(serverURL, "/")
+
+	var tokenStr string
+	if tokenEnv != "" || tokenFile != "" {
+		tok, err := secret.LoadSecret(tokenEnv, tokenFile,
+			"source.gitea.token_env", "source.gitea.token_file")
+		if err != nil {
+			return nil, err
+		}
+		if tok != nil {
+			tokenStr = string(tok.Value)
+			f.mu.Lock()
+			f.secrets = append(f.secrets, tok)
+			f.mu.Unlock()
+		}
+	}
+
+	key := server + "\x00" + tokenStr
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c, ok := f.clients[key]; ok {
+		return c, nil
+	}
+	c, err := giteaclient.New(http.DefaultClient, server, tokenStr)
+	if err != nil {
+		return nil, err
+	}
+	f.clients[key] = c
+	return c, nil
+}
+
+func (f *giteaClientFactory) zero() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range f.secrets {
+		s.Zero()
+	}
 }
 
 // buildGitHubClient resolves the configured GitHub token (env or file)

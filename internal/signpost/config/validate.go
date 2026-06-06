@@ -308,6 +308,8 @@ func validateDiscovery(sourceName string, d *Discovery) error {
 	switch d.Type {
 	case "github_release":
 		return validateGitHubRelease(sourceName, d)
+	case "gitea_release":
+		return validateGiteaRelease(sourceName, d)
 	case "latest_url":
 		return validateLatestURL(sourceName, d)
 	case "json_url":
@@ -317,15 +319,66 @@ func validateDiscovery(sourceName string, d *Discovery) error {
 	case "external":
 		return validateExternal(sourceName, d)
 	default:
-		return fmt.Errorf("source %s: discovery.type %q is not supported (supported: github_release, latest_url, json_url, xml_url, external)",
+		return fmt.Errorf("source %s: discovery.type %q is not supported (supported: github_release, gitea_release, latest_url, json_url, xml_url, external)",
 			sourceName, d.Type)
 	}
 }
 
 func validateGitHubRelease(sourceName string, d *Discovery) error {
 	if d.URL != "" || d.TokenPath != "" || d.TokenXPath != "" || d.AssetURL != "" ||
+		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 || d.Server != "" {
+		return fmt.Errorf("source %s: discovery.url/token_path/token_xpath/asset_url/command/timeout/env/server are not valid for type github_release", sourceName)
+	}
+	if !githubRepoPattern.MatchString(d.Repo) {
+		return fmt.Errorf("source %s: discovery.repo %q must match owner/name", sourceName, d.Repo)
+	}
+	if d.Asset == "" {
+		return fmt.Errorf("source %s: discovery.asset is required", sourceName)
+	}
+	if _, err := regexp.Compile(d.Asset); err != nil {
+		return fmt.Errorf("source %s: discovery.asset %q does not compile as Go regex: %w",
+			sourceName, d.Asset, err)
+	}
+	if d.TokenEnv != "" && d.TokenFile != "" {
+		return fmt.Errorf("source %s: discovery.token_env and discovery.token_file are mutually exclusive",
+			sourceName)
+	}
+	if d.TokenFile != "" {
+		if !filepath.IsAbs(d.TokenFile) {
+			return fmt.Errorf("source %s: discovery.token_file %q must be absolute",
+				sourceName, d.TokenFile)
+		}
+		if err := secret.CheckSecureFile(d.TokenFile,
+			fmt.Sprintf("source %s: discovery.token_file", sourceName)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateGiteaRelease mirrors validateGitHubRelease — the gitea_release
+// type reuses Repo/Asset/IncludePrerelease/TokenEnv/TokenFile and adds the
+// Server URL identifying the Gitea instance to call.
+func validateGiteaRelease(sourceName string, d *Discovery) error {
+	if d.URL != "" || d.TokenPath != "" || d.TokenXPath != "" || d.AssetURL != "" ||
 		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
-		return fmt.Errorf("source %s: discovery.url/token_path/token_xpath/asset_url/command/timeout/env are not valid for type github_release", sourceName)
+		return fmt.Errorf("source %s: discovery.url/token_path/token_xpath/asset_url/command/timeout/env are not valid for type gitea_release", sourceName)
+	}
+	if d.Server == "" {
+		return fmt.Errorf("source %s: discovery.server is required for type gitea_release (Gitea instance base URL, e.g. https://gitea.example.com)", sourceName)
+	}
+	u, err := url.Parse(d.Server)
+	if err != nil {
+		return fmt.Errorf("source %s: discovery.server %q: %w", sourceName, d.Server, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("source %s: discovery.server %q must be http or https", sourceName, d.Server)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("source %s: discovery.server %q is missing host", sourceName, d.Server)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("source %s: discovery.server %q must not have a query or fragment", sourceName, d.Server)
 	}
 	if !githubRepoPattern.MatchString(d.Repo) {
 		return fmt.Errorf("source %s: discovery.repo %q must match owner/name", sourceName, d.Repo)
@@ -358,9 +411,9 @@ func validateLatestURL(sourceName string, d *Discovery) error {
 	if d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
 		d.TokenEnv != "" || d.TokenFile != "" ||
 		d.TokenPath != "" || d.TokenXPath != "" || d.AssetURL != "" ||
-		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
+		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 || d.Server != "" {
 		return fmt.Errorf(
-			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/token_path/token_xpath/asset_url/command/timeout/env are not valid for type latest_url",
+			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/token_path/token_xpath/asset_url/command/timeout/env/server are not valid for type latest_url",
 			sourceName)
 	}
 	if d.URL == "" {
@@ -382,9 +435,9 @@ func validateLatestURL(sourceName string, d *Discovery) error {
 func validateJSONURL(sourceName string, d *Discovery) error {
 	if d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
 		d.TokenEnv != "" || d.TokenFile != "" || d.TokenXPath != "" ||
-		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
+		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 || d.Server != "" {
 		return fmt.Errorf(
-			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/token_xpath/command/timeout/env are not valid for type json_url",
+			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/token_xpath/command/timeout/env/server are not valid for type json_url",
 			sourceName)
 	}
 	if d.URL == "" {
@@ -417,9 +470,9 @@ func validateJSONURL(sourceName string, d *Discovery) error {
 func validateXMLURL(sourceName string, d *Discovery) error {
 	if d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
 		d.TokenEnv != "" || d.TokenFile != "" || d.TokenPath != "" ||
-		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 {
+		len(d.Command) != 0 || d.Timeout.AsDuration() != 0 || len(d.Env) != 0 || d.Server != "" {
 		return fmt.Errorf(
-			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/token_path/command/timeout/env are not valid for type xml_url",
+			"source %s: discovery.repo/asset/include_prerelease/token_env/token_file/token_path/command/timeout/env/server are not valid for type xml_url",
 			sourceName)
 	}
 	if d.URL == "" {
@@ -447,9 +500,9 @@ func validateXMLURL(sourceName string, d *Discovery) error {
 func validateExternal(sourceName string, d *Discovery) error {
 	if d.URL != "" || d.Repo != "" || d.Asset != "" || d.IncludePrerelease ||
 		d.TokenEnv != "" || d.TokenFile != "" ||
-		d.TokenPath != "" || d.TokenXPath != "" || d.AssetURL != "" {
+		d.TokenPath != "" || d.TokenXPath != "" || d.AssetURL != "" || d.Server != "" {
 		return fmt.Errorf(
-			"source %s: discovery.url/repo/asset/include_prerelease/token_env/token_file/token_path/token_xpath/asset_url are not valid for type external",
+			"source %s: discovery.url/repo/asset/include_prerelease/token_env/token_file/token_path/token_xpath/asset_url/server are not valid for type external",
 			sourceName)
 	}
 	if len(d.Command) == 0 {

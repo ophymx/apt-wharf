@@ -37,6 +37,8 @@ type Package struct {
 //
 // Field population depends on Kind:
 //   - "github_release": Repo, ReleaseID, ReleaseTag, ReleasePublishedAt.
+//   - "gitea_release":  URL (Gitea server base URL), Repo, ReleaseID,
+//     ReleaseTag, ReleasePublishedAt.
 //   - "json_url":       URL, Token (the extracted version).
 //   - "xml_url":        URL, Token (the extracted version, same shape as
 //     json_url; XPath in place of gjson against an XML body).

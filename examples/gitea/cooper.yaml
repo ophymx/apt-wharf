@@ -1,0 +1,7 @@
+# No top-level github: block — this recipe doesn't touch GitHub.
+# Cooper's gitea source kind reads per-recipe server / token settings
+# under source.gitea in the package file (no global gitea: block; see
+# cooper-design.md §"Top-level cooper.yaml").
+
+packages:
+  - ./packages/tea.yaml

@@ -4,11 +4,28 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	"code.gitea.io/sdk/gitea"
 	"github.com/google/go-github/v86/github"
 
 	"github.com/ophymx/apt-wharf/internal/cooper/config"
 )
+
+// FromGitea converts a Gitea SDK release into the SDK-agnostic shape
+// Assemble consumes. Gitea's PublishedAt is already a time.Time (vs
+// go-github's wrapper Timestamp); attachments are the SDK's "asset" model.
+func FromGitea(r *gitea.Release) ReleaseInfo {
+	names := make([]string, 0, len(r.Attachments))
+	for _, a := range r.Attachments {
+		names = append(names, a.Name)
+	}
+	return ReleaseInfo{
+		Tag:         r.TagName,
+		PublishedAt: r.PublishedAt,
+		AssetNames:  names,
+	}
+}
 
 // debianVersionRE is the upstream-version grammar from Debian Policy:
 // must start with a digit, then any of [A-Za-z0-9.+~-]. Cooper's
@@ -21,21 +38,45 @@ var debianVersionRE = regexp.MustCompile(`^[0-9][A-Za-z0-9.+~-]*$`)
 // surfaces don't collide.
 var curlyPattern = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
+// ReleaseInfo is the minimal surface of an upstream release that Assemble
+// needs. Both github_release and gitea_release adapt their SDK types into
+// this shape so the version-assembly logic stays SDK-agnostic.
+type ReleaseInfo struct {
+	Tag         string
+	PublishedAt time.Time
+	AssetNames  []string
+}
+
+// FromGitHub converts a go-github release into the SDK-agnostic shape
+// Assemble consumes.
+func FromGitHub(r *github.RepositoryRelease) ReleaseInfo {
+	names := make([]string, 0, len(r.Assets))
+	for _, a := range r.Assets {
+		names = append(names, a.GetName())
+	}
+	return ReleaseInfo{
+		Tag:         r.GetTagName(),
+		PublishedAt: r.GetPublishedAt().Time,
+		AssetNames:  names,
+	}
+}
+
 // Assemble computes the resolved ${VERSION} string for one package and
-// the GitHub release it points at.
+// the release it points at. The release is passed in SDK-agnostic form so
+// the same logic serves the github_release and gitea_release source kinds.
 //
 // For asset_filename mode, the first asset whose name matches
 // sidecar.VersionRegex provides the captures used as substitutions
 // (named groups) and as the fallback base value (first numbered group).
 // All arches in a typical package land at the same captured value, so
 // "first match wins" is deterministic per release.
-func Assemble(sidecar *config.Sidecar, release *github.RepositoryRelease) (string, error) {
-	tag := release.GetTagName()
+func Assemble(sidecar *config.Sidecar, info ReleaseInfo) (string, error) {
+	tag := info.Tag
 
 	subs := map[string]string{
 		"tag":         tag,
 		"tag_strip_v": strings.TrimPrefix(tag, "v"),
-		"date":        release.GetPublishedAt().UTC().Format("20060102"),
+		"date":        info.PublishedAt.UTC().Format("20060102"),
 	}
 
 	assetFirstCapture := ""
@@ -45,8 +86,8 @@ func Assemble(sidecar *config.Sidecar, release *github.RepositoryRelease) (strin
 			return "", fmt.Errorf("version_regex: %w", err)
 		}
 		var match []string
-		for _, a := range release.Assets {
-			if m := re.FindStringSubmatch(a.GetName()); m != nil {
+		for _, name := range info.AssetNames {
+			if m := re.FindStringSubmatch(name); m != nil {
 				match = m
 				break
 			}
