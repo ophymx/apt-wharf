@@ -6,18 +6,21 @@ import (
 	"github.com/google/go-github/v86/github"
 )
 
-func stringPtr(s string) *string { return &s }
-func intPtr(i int) *int          { return &i }
+//go:fix inline
+func stringPtr(s string) *string { return new(s) }
+
+//go:fix inline
+func intPtr(i int) *int { return new(i) }
 
 // ghAsset constructs a *github.ReleaseAsset shaped like the API response
 // — with name, digest, browser_download_url, and a token size.
 func ghAsset(name, digest string) *github.ReleaseAsset {
 	a := &github.ReleaseAsset{
-		Name: stringPtr(name),
-		Size: intPtr(123),
+		Name: new(name),
+		Size: new(123),
 	}
 	if digest != "" {
-		a.Digest = stringPtr(digest)
+		a.Digest = new(digest)
 	}
 	url := "https://example.invalid/" + name
 	a.BrowserDownloadURL = &url

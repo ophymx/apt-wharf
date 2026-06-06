@@ -231,7 +231,7 @@ arches: { amd64: { asset: x } }
 
 func TestMatchAsset(t *testing.T) {
 	rel := &github.RepositoryRelease{
-		TagName: stringPtr("v1.2.3"),
+		TagName: new("v1.2.3"),
 		Assets: []*github.ReleaseAsset{
 			ghAsset("widget_1.2.3_linux-amd64.tar.gz", "sha256:aa"),
 			ghAsset("widget_1.2.3_linux-arm64.tar.gz", "sha256:bb"),
@@ -253,7 +253,7 @@ func TestMatchAsset(t *testing.T) {
 
 func TestMatchAsset_NoMatch(t *testing.T) {
 	rel := &github.RepositoryRelease{
-		TagName: stringPtr("v1.2.3"),
+		TagName: new("v1.2.3"),
 		Assets:  []*github.ReleaseAsset{ghAsset("other.tgz", "")},
 	}
 	_, err := MatchAsset(rel, "widget_${VERSION}.tar.gz", "1.2.3")
@@ -264,7 +264,7 @@ func TestMatchAsset_NoMatch(t *testing.T) {
 
 func TestMatchAsset_AmbiguousRejected(t *testing.T) {
 	rel := &github.RepositoryRelease{
-		TagName: stringPtr("v1.2.3"),
+		TagName: new("v1.2.3"),
 		Assets: []*github.ReleaseAsset{
 			ghAsset("dup.tgz", ""),
 			ghAsset("dup.tgz", ""),

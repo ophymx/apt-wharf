@@ -29,7 +29,8 @@ func fixtureBuildPlan(t *testing.T) BuildPlan {
 	}
 }
 
-func ptr(s string) *string { return &s }
+//go:fix inline
+func ptr(s string) *string { return new(s) }
 
 // oneSHA wraps a single optional SHA into the per-artifact slice the
 // new hash schema expects. Most tests in this file are singleton
@@ -41,7 +42,7 @@ func oneSHA(p *string) []*string { return []*string{p} }
 // cooper-design.md §"External producers". Edit only when intentionally
 // bumping FormatRevision.
 func TestComputeBuildInputsHash_Golden(t *testing.T) {
-	got, err := ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), fixtureBuildPlan(t))
+	got, err := ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), fixtureBuildPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +54,11 @@ func TestComputeBuildInputsHash_Golden(t *testing.T) {
 
 func TestComputeBuildInputsHash_Deterministic(t *testing.T) {
 	bp := fixtureBuildPlan(t)
-	a, err := ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), bp)
+	a, err := ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), bp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), bp)
+	b, err := ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), bp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,13 +68,13 @@ func TestComputeBuildInputsHash_Deterministic(t *testing.T) {
 }
 
 func TestComputeBuildInputsHash_Sensitivity(t *testing.T) {
-	base, err := ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), fixtureBuildPlan(t))
+	base, err := ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), fixtureBuildPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Different format_revision → different hash.
-	got, err := ComputeBuildInputsHash(2, oneSHA(ptr("sha256:abc123")), fixtureBuildPlan(t))
+	got, err := ComputeBuildInputsHash(2, oneSHA(new("sha256:abc123")), fixtureBuildPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestComputeBuildInputsHash_Sensitivity(t *testing.T) {
 	}
 
 	// Different asset_sha256 → different hash.
-	got, err = ComputeBuildInputsHash(1, oneSHA(ptr("sha256:deadbeef")), fixtureBuildPlan(t))
+	got, err = ComputeBuildInputsHash(1, oneSHA(new("sha256:deadbeef")), fixtureBuildPlan(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestComputeBuildInputsHash_Sensitivity(t *testing.T) {
 	}
 
 	// Additional asset → different hash (proves plural shape flows in).
-	twoShas := []*string{ptr("sha256:abc123"), ptr("sha256:secondary")}
+	twoShas := []*string{new("sha256:abc123"), new("sha256:secondary")}
 	got, err = ComputeBuildInputsHash(1, twoShas, fixtureBuildPlan(t))
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +113,7 @@ func TestComputeBuildInputsHash_Sensitivity(t *testing.T) {
 	// Different source_date_epoch → different hash (proves build_plan flows in).
 	bp := fixtureBuildPlan(t)
 	bp.SourceDateEpoch++
-	got, err = ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), bp)
+	got, err = ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), bp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestComputeBuildInputsHash_Sensitivity(t *testing.T) {
 	// Different aux_files content → different hash.
 	bp = fixtureBuildPlan(t)
 	bp.AuxFiles["./hugo.service"] = AuxFile{ContentB64: "d29ybGQ="}
-	got, err = ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), bp)
+	got, err = ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), bp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,11 +142,11 @@ func TestComputeBuildInputsHash_NfpmKeyOrderIrrelevant(t *testing.T) {
 	bp2 := bp1
 	bp2.Nfpm = json.RawMessage(`{"arch":"amd64","name":"hugo","version":"0.140.0","platform":"linux","contents":[{"file_info":{"mode":493},"src":"${ASSETS}/hugo","dst":"/usr/bin/hugo"}]}`)
 
-	a, err := ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), bp1)
+	a, err := ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), bp1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ComputeBuildInputsHash(1, oneSHA(ptr("sha256:abc123")), bp2)
+	b, err := ComputeBuildInputsHash(1, oneSHA(new("sha256:abc123")), bp2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +159,7 @@ func TestComputeBuildInputsHash_NfpmKeyOrderIrrelevant(t *testing.T) {
 // tampered or stale plans.
 func TestVerifyBuildInputsHash(t *testing.T) {
 	bp := fixtureBuildPlan(t)
-	asset := ptr("sha256:abc123")
+	asset := new("sha256:abc123")
 	expected, err := ComputeBuildInputsHash(1, oneSHA(asset), bp)
 	if err != nil {
 		t.Fatal(err)

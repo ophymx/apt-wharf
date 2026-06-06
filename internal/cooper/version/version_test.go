@@ -19,15 +19,16 @@ func ts(t *testing.T, s string) github.Timestamp {
 	return github.Timestamp{Time: v}
 }
 
-func sp(s string) *string { return &s }
+//go:fix inline
+func sp(s string) *string { return new(s) }
 
 func ghRelease(t *testing.T, tag, publishedAt string, assetNames ...string) ReleaseInfo {
 	t.Helper()
-	r := &github.RepositoryRelease{TagName: sp(tag)}
+	r := &github.RepositoryRelease{TagName: new(tag)}
 	pa := ts(t, publishedAt)
 	r.PublishedAt = &pa
 	for _, n := range assetNames {
-		r.Assets = append(r.Assets, &github.ReleaseAsset{Name: sp(n)})
+		r.Assets = append(r.Assets, &github.ReleaseAsset{Name: new(n)})
 	}
 	return FromGitHub(r)
 }
