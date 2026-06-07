@@ -73,6 +73,15 @@ func serveSnapshot(w http.ResponseWriter, r *http.Request, h *refresh.Holder) st
 		if f.ContentType != "" {
 			w.Header().Set("Content-Type", f.ContentType)
 		}
+		if !f.LastModified.IsZero() {
+			w.Header().Set("Last-Modified", f.LastModified.UTC().Format(http.TimeFormat))
+			if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+				if t, err := http.ParseTime(ims); err == nil && !f.LastModified.After(t) {
+					w.WriteHeader(http.StatusNotModified)
+					return "not-modified"
+				}
+			}
+		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(f.Data)))
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {

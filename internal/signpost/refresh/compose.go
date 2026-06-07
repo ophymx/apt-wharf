@@ -24,6 +24,11 @@ const suiteSegment = "stable"
 func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *store.BootstrapState, debBytes []byte, prev *Snapshot, now time.Time) (*Snapshot, error) {
 	entries := make([]*index.Entry, 0, len(states)+1)
 	redirects := map[string]Redirect{}
+	// archLastChanged tracks the latest source change per architecture, so
+	// the served per-arch Packages can advertise a Last-Modified that's
+	// stable between ticks-without-change. Bootstrap is `all`, so its
+	// LastChanged feeds every arch (folded in below).
+	archLastChanged := map[string]time.Time{}
 
 	for name, s := range states {
 		if s.Control == "" {
@@ -46,6 +51,9 @@ func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *st
 		})
 		// Pool path → upstream URL (302 redirect).
 		redirects[poolPath] = Redirect{URL: s.AssetURL, ExpiresAt: now.Add(Retention)}
+		if t := s.LastChanged.UTC().Truncate(time.Second); t.After(archLastChanged[fields.Architecture]) {
+			archLastChanged[fields.Architecture] = t
+		}
 	}
 
 	// Bootstrap stanza injection. We extract control verbatim from the
@@ -73,6 +81,21 @@ func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *st
 		return nil, err
 	}
 
+	// Bootstrap is `all` so its LastChanged feeds every arch's Packages,
+	// and the suite-wide max governs Release/InRelease/Release.gpg.
+	bootstrapLM := bs.LastChanged.UTC().Truncate(time.Second)
+	for arch := range archLastChanged {
+		if bootstrapLM.After(archLastChanged[arch]) {
+			archLastChanged[arch] = bootstrapLM
+		}
+	}
+	suiteLastChanged := bootstrapLM
+	for _, t := range archLastChanged {
+		if t.After(suiteLastChanged) {
+			suiteLastChanged = t
+		}
+	}
+
 	files := map[string]FileEntry{}
 
 	// Per-arch metadata + by-hash entries. We emit Packages plus three
@@ -82,6 +105,7 @@ func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *st
 	for arch, af := range built.PerArch {
 		canonicalPkg := fmt.Sprintf("/dists/%s/main/binary-%s/Packages", suiteSegment, arch)
 		byHashPrefix := fmt.Sprintf("/dists/%s/main/binary-%s/by-hash/SHA256/", suiteSegment, arch)
+		archLM := archLastChanged[arch]
 
 		variants := []struct {
 			suffix      string
@@ -94,12 +118,13 @@ func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *st
 			{".zst", af.PackagesZst, "application/zstd"},
 		}
 		for _, v := range variants {
-			files[canonicalPkg+v.suffix] = FileEntry{Data: v.data, ContentType: v.contentType}
+			files[canonicalPkg+v.suffix] = FileEntry{Data: v.data, ContentType: v.contentType, LastModified: archLM}
 			hash := built.PackagesSHA256[fmt.Sprintf("main/binary-%s/Packages%s", arch, v.suffix)]
 			files[byHashPrefix+hash] = FileEntry{
-				Data:        v.data,
-				ContentType: v.contentType,
-				ExpiresAt:   now.Add(Retention),
+				Data:         v.data,
+				ContentType:  v.contentType,
+				ExpiresAt:    now.Add(Retention),
+				LastModified: archLM,
 			}
 		}
 	}
@@ -115,20 +140,20 @@ func (r *Refresher) composeSnapshot(states map[string]*store.SourceState, bs *st
 		return nil, fmt.Errorf("detached sign: %w", err)
 	}
 
-	files[fmt.Sprintf("/dists/%s/Release", suiteSegment)] = FileEntry{Data: releaseBytes, ContentType: "text/plain"}
-	files[fmt.Sprintf("/dists/%s/Release.gpg", suiteSegment)] = FileEntry{Data: releaseGpg.Bytes(), ContentType: "application/pgp-signature"}
-	files[fmt.Sprintf("/dists/%s/InRelease", suiteSegment)] = FileEntry{Data: inRelease.Bytes(), ContentType: "text/plain"}
+	files[fmt.Sprintf("/dists/%s/Release", suiteSegment)] = FileEntry{Data: releaseBytes, ContentType: "text/plain", LastModified: suiteLastChanged}
+	files[fmt.Sprintf("/dists/%s/Release.gpg", suiteSegment)] = FileEntry{Data: releaseGpg.Bytes(), ContentType: "application/pgp-signature", LastModified: suiteLastChanged}
+	files[fmt.Sprintf("/dists/%s/InRelease", suiteSegment)] = FileEntry{Data: inRelease.Bytes(), ContentType: "text/plain", LastModified: suiteLastChanged}
 
 	// Bootstrap deb served from its pool path (real bytes, not redirected).
 	bsPool := bootstrap.PoolPath(r.cfg.Bootstrap.PackageName, bs.Version)
-	files[bsPool] = FileEntry{Data: debBytes, ContentType: "application/vnd.debian.binary-package", ExpiresAt: now.Add(Retention)}
+	files[bsPool] = FileEntry{Data: debBytes, ContentType: "application/vnd.debian.binary-package", ExpiresAt: now.Add(Retention), LastModified: bootstrapLM}
 
 	// Convenience endpoints. The latest.deb Location is prefixed with the
 	// base_url path component so a reverse proxy mounting signpost at a
 	// subpath (e.g. https://host/apt) sees the client follow Location:
 	// /apt/pool/... back through the proxy, not /pool/... at the host root.
-	files["/pubkey.gpg"] = FileEntry{Data: r.signer.KeyringBytes(), ContentType: "application/pgp-keys"}
-	files[fmt.Sprintf("/release/%s/latest", suiteSegment)] = FileEntry{Data: []byte(bs.Version + "\n"), ContentType: "text/plain"}
+	files["/pubkey.gpg"] = FileEntry{Data: r.signer.KeyringBytes(), ContentType: "application/pgp-keys", LastModified: suiteLastChanged}
+	files[fmt.Sprintf("/release/%s/latest", suiteSegment)] = FileEntry{Data: []byte(bs.Version + "\n"), ContentType: "text/plain", LastModified: bootstrapLM}
 	redirects[fmt.Sprintf("/release/%s/latest.deb", suiteSegment)] = Redirect{URL: r.cfg.Repository.PathPrefix() + bsPool}
 
 	// Carry over non-expired entries from prev that aren't already present.

@@ -43,13 +43,16 @@ type SourceState struct {
 }
 
 // BootstrapState records the cached bootstrap .deb's identity. The .deb bytes
-// themselves live at bootstrap/<version>.deb.
+// themselves live at bootstrap/<version>.deb. LastChanged is stamped only
+// when the bootstrap is actually rebuilt (input-hash mismatch); reuse-on-tick
+// preserves the prior timestamp so it can drive HTTP Last-Modified.
 type BootstrapState struct {
-	Version   string `json:"version"`
-	InputHash string `json:"input_hash"`
-	Filename  string `json:"filename"`
-	Size      int64  `json:"size"`
-	SHA256    string `json:"sha256"`
+	Version     string    `json:"version"`
+	InputHash   string    `json:"input_hash"`
+	Filename    string    `json:"filename"`
+	Size        int64     `json:"size"`
+	SHA256      string    `json:"sha256"`
+	LastChanged time.Time `json:"last_changed,omitzero"`
 }
 
 // Store is the on-disk root.

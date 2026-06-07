@@ -65,11 +65,12 @@ func (r *Refresher) ensureBootstrap() (*store.BootstrapState, []byte, error) {
 		return nil, nil, fmt.Errorf("write bootstrap deb: %w", err)
 	}
 	state := &store.BootstrapState{
-		Version:   newVersion,
-		InputHash: wantHash,
-		Filename:  bootstrap.Filename(in.PackageName, newVersion),
-		Size:      int64(len(body)),
-		SHA256:    sha,
+		Version:     newVersion,
+		InputHash:   wantHash,
+		Filename:    bootstrap.Filename(in.PackageName, newVersion),
+		Size:        int64(len(body)),
+		SHA256:      sha,
+		LastChanged: time.Now().UTC().Truncate(time.Second),
 	}
 	if err := r.store.WriteBootstrap(state); err != nil {
 		return nil, nil, fmt.Errorf("write bootstrap state: %w", err)

@@ -10,11 +10,14 @@ import (
 
 // FileEntry is one served file. ExpiresAt is consulted only at composition
 // time; once a file is in a published snapshot, it serves until the next
-// snapshot replaces it.
+// snapshot replaces it. LastModified, when non-zero, is emitted as the
+// HTTP Last-Modified header so apt-get update can short-circuit unchanged
+// metadata with a 304 instead of redownloading every tick.
 type FileEntry struct {
-	Data        []byte
-	ContentType string
-	ExpiresAt   time.Time // zero = never expires (gets overwritten in next snapshot anyway)
+	Data         []byte
+	ContentType  string
+	ExpiresAt    time.Time // zero = never expires (gets overwritten in next snapshot anyway)
+	LastModified time.Time // zero = no validator; server omits Last-Modified header
 }
 
 // Redirect is a synthetic upstream-redirected pool path.

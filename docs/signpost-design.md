@@ -252,6 +252,36 @@ Omit `Valid-Until` from `Release` in v1. apt then imposes no freshness
 requirement, so a signpost outage doesn't break installs. Revisit if we
 want freshness as an explicit watchdog signal later.
 
+### HTTP cache validation
+
+Every served metadata file carries a `Last-Modified` header derived from
+the upstream signals signpost already tracks, and the handler honors
+`If-Modified-Since` with a `304 Not Modified` when nothing semantically
+changed for that file. This makes `apt-get update` show `Hit` between
+ticks-without-change and lets the front caching proxy revalidate cheaply
+instead of repulling every poll.
+
+The timestamps are computed per file in `composeSnapshot`:
+
+| File class                                                          | `Last-Modified` source                                  |
+| ------------------------------------------------------------------- | ------------------------------------------------------- |
+| `/dists/<suite>/main/binary-<arch>/Packages[.gz\|.xz\|.zst]` + by-hash | `max(SourceState.LastChanged across arch, BootstrapState.LastChanged)` (bootstrap is `all` so it feeds every arch) |
+| `/dists/<suite>/Release`, `Release.gpg`, `InRelease`                | `max(across all archs, BootstrapState.LastChanged)`     |
+| Bootstrap `.deb` pool path, `/release/<suite>/latest`               | `BootstrapState.LastChanged`                            |
+| `/pubkey.gpg`                                                       | Suite-wide max (key rotation triggers a bootstrap rebuild, so consistent) |
+
+`SourceState.LastChanged` is only bumped when the source's content
+genuinely changed (refresher's `Changed: true` path). `BootstrapState.LastChanged`
+is bumped only when the bootstrap is actually rebuilt
+(`input_hash` mismatch path); the reuse-on-tick branch preserves the
+prior timestamp. So a tick that does nothing semantically leaves every
+file's `Last-Modified` identical to the previous tick's, and apt's
+conditional request returns 304.
+
+All HTTP timestamps are truncated to one-second precision (HTTP-Date
+format). Entries with a zero `LastModified` omit the header — that's
+the cold-start case before any source has been imported.
+
 ## Discovery plugins
 
 Single interface, trivially small:

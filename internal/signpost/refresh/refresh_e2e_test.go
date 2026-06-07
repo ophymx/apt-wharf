@@ -287,7 +287,26 @@ func TestRefresh_EndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("second refresh tick is a no-op (304 path)", func(t *testing.T) {
+	t.Run("metadata entries advertise Last-Modified", func(t *testing.T) {
+		for _, p := range []string{
+			"/dists/stable/InRelease",
+			"/dists/stable/Release",
+			"/dists/stable/Release.gpg",
+			"/dists/stable/main/binary-amd64/Packages",
+			"/dists/stable/main/binary-amd64/Packages.gz",
+		} {
+			f, ok := snap.Files[p]
+			if !ok {
+				t.Errorf("%s missing", p)
+				continue
+			}
+			if f.LastModified.IsZero() {
+				t.Errorf("%s has zero LastModified — apt-get update will always Get", p)
+			}
+		}
+	})
+
+	t.Run("second refresh tick is a no-op (304 path) and preserves LastModified", func(t *testing.T) {
 		// Mock currently always returns 200; rewrap to honor If-None-Match.
 		var apiCalls int
 		apiSrv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -312,11 +331,24 @@ func TestRefresh_EndToEnd(t *testing.T) {
 		newBase, _ := url.Parse(apiSrv2.URL + "/")
 		ghClient.BaseURL = newBase
 
+		priorLM := snap.Files["/dists/stable/InRelease"].LastModified
+		priorPkgLM := snap.Files["/dists/stable/main/binary-amd64/Packages"].LastModified
+
 		if err := rf.Refresh(ctx); err != nil {
 			t.Fatalf("Refresh: %v", err)
 		}
 		if apiCalls != 1 {
 			t.Fatalf("expected 1 API call (only /releases/latest), got %d", apiCalls)
+		}
+
+		next := holder.Load()
+		if got := next.Files["/dists/stable/InRelease"].LastModified; !got.Equal(priorLM) {
+			t.Errorf("InRelease LastModified moved across no-change tick: %s -> %s",
+				priorLM, got)
+		}
+		if got := next.Files["/dists/stable/main/binary-amd64/Packages"].LastModified; !got.Equal(priorPkgLM) {
+			t.Errorf("amd64 Packages LastModified moved across no-change tick: %s -> %s",
+				priorPkgLM, got)
 		}
 	})
 
