@@ -23,4 +23,8 @@ chmod 0750 /var/lib/signpost
 
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload >/dev/null 2>&1 || true
+    # try-restart is a no-op when the unit isn't running, so this picks
+    # up the new binary on upgrade without starting signpost on a fresh
+    # install (where the operator hasn't enabled the unit yet).
+    systemctl try-restart signpost.service >/dev/null 2>&1 || true
 fi
