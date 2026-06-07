@@ -82,8 +82,12 @@ func New(opts Options) *Refresher {
 func (r *Refresher) Snapshot() *Snapshot { return r.holder.Load() }
 
 // SyncImportNew is the startup pass: any source declared in config that
-// lacks a state file is fetched synchronously. Failure is fatal — the
-// daemon should refuse to come up with a misconfigured new source.
+// lacks a state file is fetched synchronously. Per-source failures are
+// logged and surfaced on /status via the tracker; the offending source
+// is simply absent from the initial snapshot and re-attempted on the
+// next refresh tick. Only structural errors (state-dir unreadable) are
+// returned as fatal — a single misconfigured source must not crash-loop
+// the daemon out of serving everything else.
 func (r *Refresher) SyncImportNew(ctx context.Context) error {
 	states, err := r.store.LoadSources()
 	if err != nil {
@@ -104,7 +108,8 @@ func (r *Refresher) SyncImportNew(ctx context.Context) error {
 	r.log.Info("syncImportNew", "count", len(missing), "sources", missing)
 	for _, name := range missing {
 		if err := r.processOneRecorded(ctx, name, nil); err != nil {
-			return fmt.Errorf("source %s: %w", name, err)
+			r.log.Error("syncImportNew: source failed; will retry on next tick",
+				"source", name, "err", err)
 		}
 	}
 	return nil

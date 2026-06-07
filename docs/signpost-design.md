@@ -177,7 +177,12 @@ consistent view of metadata + redirects for the rest of the request.
   → build initial snapshot (no network) → sign → `current.Store(snap)` →
   start HTTP → schedule refresh ticker → kick off first refresh
   asynchronously. Clients can install/upgrade against cached state
-  immediately, before the first network refresh completes.
+  immediately, before the first network refresh completes. Sources that
+  are declared in config but have no state file yet are imported
+  synchronously at startup; if any individual probe fails the error is
+  logged + recorded on `/status` and the source is simply absent from
+  the initial `Packages` until a later tick succeeds — daemon comes up
+  regardless.
 - **Idle**: ticker armed, HTTP serving `current`.
 - **Refreshing**: single-writer mutex held; a tick that fires while held
   is dropped (logged), not queued.
@@ -233,7 +238,8 @@ consistent view of metadata + redirects for the rest of the request.
 
 | Failure                                  | Effect                                              |
 | ---------------------------------------- | --------------------------------------------------- |
-| Discovery error for source X             | Source X holds at last-known good; others ok       |
+| Discovery error for source X             | Source X holds at last-known good; others ok        |
+| Discovery error at startup, no prior state | Source X omitted from initial snapshot; daemon up; retried each tick |
 | Fetch / hash / control-parse error for X | Same                                                |
 | Token unchanged for X                    | Skip fetch (intended)                               |
 | Bootstrap rebuild fails                  | Whole tick fails, prior snapshot retained           |
