@@ -35,10 +35,11 @@ apt-cooper is a two-phase tool with a JSON contract between them:
 plus one multi-doc YAML file per package — doc 1 cooper-shaped, doc 2
 **vanilla nfpm**), resolves the GitHub release per package, and emits a
 JSON plan to stdout. `cooper build <JSON_FILE>` reads the plan, downloads
-assets, stages files at the paths doc 2 references, and exec's `nfpm pkg`
-per artifact to emit `.deb`s. The JSON between phases is the
-orchestration boundary **and** the plugin point: any program emitting
-valid JSON is a producer (see *External producers*).
+assets, stages files at the paths doc 2 references, and invokes nfpm
+**as a library** (`github.com/goreleaser/nfpm/v2`) per artifact to
+emit `.deb`s. The JSON between phases is the orchestration boundary
+**and** the plugin point: any program emitting valid JSON is a
+producer (see *External producers*).
 
 The trivial pipeline `cooper discover c.yaml | cooper build -` is the
 no-orchestrator case — always builds whatever discover found, at the
@@ -346,8 +347,8 @@ else passes through verbatim.
 | ------------ | ----------- | ------------------------------------------------ |
 | `${VERSION}` | discover    | substituted to a literal in `build_plan.nfpm`    |
 | `${ARCH}`    | discover    | substituted to a literal in `build_plan.nfpm`    |
-| `${ASSETS}`  | build       | left symbolic; build sets it as an env var when exec'ing nfpm |
-| `${SOURCE}`  | build       | symbolic; set as env var only when the artifact carries a `source_archive` (otherwise unset — recipes that reference `${SOURCE}` without enabling source_archive will fail nfpm expansion) |
+| `${ASSETS}`  | build       | left symbolic; build supplies it through nfpm.ParseWithEnvMapping's env mapper |
+| `${SOURCE}`  | build       | symbolic; supplied through the env mapper only when the artifact carries a `source_archive` (otherwise unset — recipes that reference `${SOURCE}` without enabling source_archive will fail nfpm expansion) |
 
 For nfpm to expand `${ASSETS}` / `${SOURCE}` at build time, every
 `contents[]` entry needs `expand: true`. Cooper sets that flag
@@ -370,10 +371,11 @@ referenced by relative path actually exist when nfpm runs:
 Every other field — `name`, `description`, `depends`, `changelog`,
 `deb.fields.*`, `deb.signature.*`, `rpm.*`, `apk.*`, anything else —
 is **passthrough**. Cooper does not stage files for those fields,
-and nfpm runs with cwd set to the staging dir (which contains only
-files cooper materialized). A passthrough relative path like
-`changelog: ./CHANGELOG.md` will not resolve unless the user uses
-an absolute path; cooper doesn't touch these fields.
+and within the in-scope sections cooper rewrites relative `src:`
+paths to be rooted at the staging directory before nfpm reads them.
+A passthrough relative path like `changelog: ./CHANGELOG.md` will
+not resolve unless the user uses an absolute path; cooper doesn't
+touch these fields.
 
 Within the in-scope sections, cooper classifies each path by shape and
 acts:
@@ -545,12 +547,25 @@ for each artifact (across packages[*].artifacts[*]) with result: "ok":
            `none` makes nfpm emit the version verbatim.
      None of these adjustments flow back into the JSON, so none of
      them perturb build_inputs_hash.
-  5. exec `nfpm pkg --packager deb -f nfpm.yaml -t <out-dir>/` with:
-       cwd = <staging>
-       env (everything else dropped):
-         VERSION=<from JSON>     ARCH=<from JSON>
-         ASSETS=<staging>/asset  SOURCE_DATE_EPOCH=<from JSON>
-         LC_ALL=C  PATH=<minimal, fixed; resolves only nfpm>
+  5. Invoke nfpm/v2 in-process to write the .deb to
+     <out-dir>/<artifact.deb.filename>:
+       a. nfpm.ParseWithEnvMapping reads <staging>/nfpm.yaml with a
+          cooper-controlled env-mapping function. Only these names
+          resolve; anything else returns "" (same behavior as the
+          prior exec path running under a scrubbed env):
+            VERSION=<from JSON>     ARCH=<from JSON>
+            ASSETS=<staging>/asset  SOURCE_DATE_EPOCH=<from JSON>
+            SOURCE=<staging>/source  (omitted when no source_archive)
+       b. config.Get("deb") materializes the nfpm.Info struct.
+       c. info.MTime is pinned to time.Unix(source_date_epoch, 0).UTC()
+          so nfpm.WithDefaults can't fall back to modtime.FromEnv()
+          reading the process SOURCE_DATE_EPOCH (which cooper does
+          not set on its own process).
+       d. Relative `src:` paths in info.Contents are rewritten to be
+          rooted at <staging>; nfpm's os.Stat would otherwise resolve
+          them against the build process's cwd. (Absolute paths from
+          ${ASSETS}/${SOURCE} expansion are left untouched.)
+       e. nfpm.Validate(info) → packager.Package(info, outFile).
   6. SHA256 the resulting .deb.
 re-emit annotated JSON on stdout (artifact.deb.path / .sha256 populated).
 clean <work-dir>/<run-id>/ (unless --keep-work).
@@ -681,9 +696,10 @@ Field notes:
   directory references, one key per inlined match
   (`./completions/hugo.bash`, `./completions/hugo.zsh`, …). Build
   materializes each at `<staging>/<key>` so doc 2's relative-path
-  references resolve naturally with cwd set to the staging dir. Raw
-  inlined files and rendered templates are indistinguishable here —
-  intentional.
+  references resolve against the staging dir (build absolutizes
+  relative `src:` paths in `info.Contents` before handing the doc to
+  nfpm). Raw inlined files and rendered templates are indistinguishable
+  here — intentional.
 - **`deb.path` / `deb.sha256`** are `null` in discover output and
   populated in build output. Same JSON shape on both sides.
 - **`artifact.source_archive`** is an optional sibling of `assets[]`
@@ -694,8 +710,8 @@ Field notes:
   is `null` at discover time (the API doesn't expose a digest for
   archive URLs); build streams + hashes during download, records the
   value in the re-emitted JSON, and stages the extracted tree under a
-  per-artifact `source/` dir whose absolute path becomes the
-  `${SOURCE}` env var when exec'ing nfpm.
+  per-artifact `source/` dir whose absolute path is supplied to nfpm
+  through the env mapper as `${SOURCE}`.
 - **`artifact.extract`** is an optional sibling of `build_plan` with
   `max_bytes` (int64) and `max_files` (int); absent means "use cooper's
   defaults" (1 GiB / 100 000). Populated by discover from the recipe's
@@ -842,9 +858,9 @@ default config path.
   see *Orchestrator dedup & version policy*). Errors out when a
   recipe already claims the debian-revision slot (either `-` in
   `nfpm.version` or a non-empty `nfpm.release`). `--stage-only`: do
-  everything *except* the final `nfpm pkg` exec; print one line per
-  artifact giving the path to the resolved `nfpm.yaml`; leave the
-  work dir intact. `--keep-work`: do a normal build but skip cleanup.
+  everything *except* the final `packager.Package` library call;
+  print one line per artifact giving the path to the resolved
+  `nfpm.yaml`; leave the work dir intact. `--keep-work`: do a normal build but skip cleanup.
   `--stage-only` and `--keep-work` are mutually exclusive;
   `--revision` is compatible with either.
 - **`validate <CONFIG>`** — lint without network. Checks: top-level
@@ -864,11 +880,15 @@ No daemon mode. Run from cron, systemd timer, or CI.
 
 Pure Go, no CGO.
 
-- **`nfpm` (CLI subprocess)** — cooper exec's `nfpm pkg` against an
-  on-disk `nfpm.yaml`. Cooper does **not** import
-  `github.com/goreleaser/nfpm/v2` as a library; the user-facing
-  contract is "this is the nfpm.yaml nfpm sees." nfpm's expected
-  version is named in cooper's release notes.
+- **`github.com/goreleaser/nfpm/v2`** — imported as a library. Cooper
+  writes the staged `nfpm.yaml` to disk (so `--stage-only` /
+  `--keep-work` debugging is unchanged) and then calls
+  `nfpm.ParseWithEnvMapping` on it with a cooper-controlled env
+  mapper, materializes the `nfpm.Info`, and writes the .deb via
+  `packager.Package(info, out)`. The nfpm version is pinned by
+  `go.mod`; deployment containers no longer need the `nfpm` CLI on
+  PATH. The user-facing contract is unchanged: the doc-2 stays
+  vanilla nfpm, and the on-disk `nfpm.yaml` matches what nfpm reads.
 - **`github.com/google/go-github/v86`** — releases API.
 - **`gopkg.in/yaml.v3`** — multi-document YAML decode/encode.
 - **`github.com/bmatcuk/doublestar/v4`** — glob expansion at discover
@@ -902,7 +922,7 @@ internal/cooper/stage/      aux file walker, template renderer, doc 2 substituti
                             aux_files materialization (used by both discover and build)
 internal/cooper/discover/   per-package orchestrator emitting plan.Plan
 internal/cooper/build/      download, sandboxed archive extract, staging,
-                            mtime pin, exec nfpm, .deb hashing
+                            mtime pin, in-process nfpm Package, .deb hashing
 ```
 
 ## Security & sandboxing
@@ -1017,7 +1037,9 @@ Test coverage at v0 release:
 - `internal/cooper/build` — every archive-extraction security
   rejection (traversal, absolute, setuid, device, symlink-out,
   hardlink-out, byte cap, file cap), plus end-to-end orchestrator
-  (stub-exec) and end-to-end real-nfpm with reproducibility check.
+  against the real in-process nfpm library, including a
+  reproducibility check and the short-version (`4.32`) padding
+  regression covered by `TestRun_RealNfpm_ShortVersionNoPadding`.
 
 ## Source kinds
 

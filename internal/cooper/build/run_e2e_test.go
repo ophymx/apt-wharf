@@ -14,12 +14,13 @@ import (
 	"github.com/ophymx/apt-wharf/pkg/plan"
 )
 
-// TestRun_RealNfpm exercises the full build pipeline against the real
-// `nfpm` binary. Skipped automatically when nfpm isn't on PATH so the
-// test suite stays portable.
+// TestRun_RealNfpm covers the parts of the build pipeline that need to
+// read the resulting .deb's control fields back via dpkg-deb. nfpm
+// itself runs as a library (always available); only dpkg-deb is
+// optional, so the test auto-skips when it isn't on PATH.
 func TestRun_RealNfpm(t *testing.T) {
-	if _, err := exec.LookPath("nfpm"); err != nil {
-		t.Skip("nfpm not on PATH; skipping live e2e")
+	if _, err := exec.LookPath("dpkg-deb"); err != nil {
+		t.Skip("dpkg-deb not on PATH; skipping field-level e2e")
 	}
 
 	asset := makeArchive(t, "fake hugo binary")
@@ -80,27 +81,19 @@ func TestRun_RealNfpm(t *testing.T) {
 		t.Errorf("non-reproducible build: a=%v b=%v", art.Deb.SHA256, art2.Deb.SHA256)
 	}
 
-	// dpkg-deb -I sanity check, if available.
-	if _, err := exec.LookPath("dpkg-deb"); err == nil {
-		out, err := exec.Command("dpkg-deb", "-I", *art.Deb.Path).CombinedOutput()
-		if err != nil {
-			t.Errorf("dpkg-deb -I failed: %v\n%s", err, out)
-		}
-		// Verify the control field claims the right Package name.
-		if !strings.Contains(string(out), "Package: hugo") {
-			t.Errorf("control field missing Package: hugo:\n%s", out)
-		}
-		// Verify the X-Cooper-Build-Inputs-Hash control field is
-		// present and matches the plan's build_inputs_hash.
-		field, err := exec.Command("dpkg-deb", "-f", *art.Deb.Path, "X-Cooper-Build-Inputs-Hash").Output()
-		if err != nil {
-			t.Errorf("dpkg-deb -f X-Cooper-Build-Inputs-Hash failed: %v", err)
-		}
-		got := strings.TrimSpace(string(field))
-		want := art.Deb.BuildInputsHash
-		if got != want {
-			t.Errorf("X-Cooper-Build-Inputs-Hash mismatch:\n  in .deb:   %q\n  in plan:   %q", got, want)
-		}
+	dpkgOut, err := exec.Command("dpkg-deb", "-I", *art.Deb.Path).CombinedOutput()
+	if err != nil {
+		t.Errorf("dpkg-deb -I failed: %v\n%s", err, dpkgOut)
+	}
+	// Verify the control field claims the right Package name.
+	if !strings.Contains(string(dpkgOut), "Package: hugo") {
+		t.Errorf("control field missing Package: hugo:\n%s", dpkgOut)
+	}
+	// Verify the X-Cooper-Build-Inputs-Hash control field is present
+	// and matches the plan's build_inputs_hash.
+	got := dpkgDebField(t, *art.Deb.Path, "X-Cooper-Build-Inputs-Hash")
+	if got != art.Deb.BuildInputsHash {
+		t.Errorf("X-Cooper-Build-Inputs-Hash mismatch:\n  in .deb:   %q\n  in plan:   %q", got, art.Deb.BuildInputsHash)
 	}
 
 	_ = filepath.Walk
@@ -115,11 +108,8 @@ func TestRun_RealNfpm(t *testing.T) {
 //     both .debs — the load-bearing property of the revision-excluded
 //     hash design.
 //
-// Skipped automatically when nfpm or dpkg-deb is unavailable.
+// Skipped automatically when dpkg-deb is unavailable.
 func TestRun_RealNfpm_Revision(t *testing.T) {
-	if _, err := exec.LookPath("nfpm"); err != nil {
-		t.Skip("nfpm not on PATH; skipping live e2e")
-	}
 	if _, err := exec.LookPath("dpkg-deb"); err != nil {
 		t.Skip("dpkg-deb not on PATH; skipping field-level e2e")
 	}
@@ -190,9 +180,6 @@ func dpkgDebField(t *testing.T, debPath, field string) string {
 // version-schema drift that made drayman idempotent-skip every rebuild
 // of seaweedfs after migration to cooper.
 func TestRun_RealNfpm_ShortVersionNoPadding(t *testing.T) {
-	if _, err := exec.LookPath("nfpm"); err != nil {
-		t.Skip("nfpm not on PATH; skipping live e2e")
-	}
 	if _, err := exec.LookPath("dpkg-deb"); err != nil {
 		t.Skip("dpkg-deb not on PATH; skipping field-level e2e")
 	}

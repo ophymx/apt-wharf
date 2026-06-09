@@ -30,10 +30,10 @@ type Options struct {
 	// recomputed; see cooper-design.md §"`--revision N` mechanics".
 	Revision int
 
-	// Downloader and NfpmExec are dependencies tests can override.
-	// Defaults: NewDownloader(http.DefaultClient) and DefaultNfpmExec.
+	// Downloader is the dependency tests override; default is
+	// NewDownloader(http.DefaultClient). nfpm runs in-process via the
+	// nfpm/v2 library (see Pack), so there's no exec seam to inject.
 	Downloader *Downloader
-	NfpmExec   NfpmExecutor
 }
 
 // Run is the build orchestrator. It returns a re-emitted plan annotated
@@ -50,11 +50,11 @@ func Run(ctx context.Context, p *plan.Plan, opts Options) (*plan.Plan, error) {
 	if opts.WorkDir == "" {
 		opts.WorkDir = "./.cooper-work"
 	}
-	// nfpm runs with cmd.Dir set to the staging directory, so any
-	// relative -t path or ${ASSETS} expansion would resolve against
-	// staging instead of the caller's cwd. Absolutize once here so
-	// everything downstream (debPath, assetDir → ASSETS env) stays
-	// rooted at the caller's cwd.
+	// Pack resolves relative `src:` paths against the staging
+	// directory, and ${ASSETS} is expanded from PackInputs.AssetsDir.
+	// Absolutize OutDir / WorkDir once here so debPath and assetDir
+	// stay rooted at the caller's cwd regardless of where the build
+	// process happens to chdir.
 	absOut, err := filepath.Abs(opts.OutDir)
 	if err != nil {
 		return nil, fmt.Errorf("out-dir: %w", err)
@@ -81,9 +81,6 @@ func Run(ctx context.Context, p *plan.Plan, opts Options) (*plan.Plan, error) {
 	}
 	if opts.Downloader == nil {
 		opts.Downloader = NewDownloader(http.DefaultClient)
-	}
-	if opts.NfpmExec == nil {
-		opts.NfpmExec = DefaultNfpmExec
 	}
 
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
@@ -271,13 +268,19 @@ func buildOne(
 	}
 
 	if opts.StageOnly {
-		// Skip nfpm exec; leave the work dir intact for inspection.
+		// Skip the nfpm library call; leave the work dir intact for
+		// inspection.
 		return art, nil
 	}
 
 	debPath := filepath.Join(opts.OutDir, art.Deb.Filename)
-	env := BuildEnv(versionFromArtifact(pkg.Name, art), art.Arch, assetDir, sourceDir, art.BuildPlan.SourceDateEpoch)
-	if err := opts.NfpmExec(ctx, staging, debPath, env); err != nil {
+	if err := Pack(ctx, staging, debPath, PackInputs{
+		Version:         versionFromArtifact(pkg.Name, art),
+		Arch:            art.Arch,
+		AssetsDir:       assetDir,
+		SourceDir:       sourceDir,
+		SourceDateEpoch: art.BuildPlan.SourceDateEpoch,
+	}); err != nil {
 		return art, err
 	}
 

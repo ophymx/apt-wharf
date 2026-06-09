@@ -120,6 +120,10 @@ func sha256Of(t *testing.T, body []byte) string {
 	return hex
 }
 
+// TestRun_HappyPath drives the full pipeline against the real nfpm
+// library: download → extract → write nfpm.yaml → Pack to .deb.
+// Asserts the annotated artifact carries the expected filename and a
+// sha256, and that the work dir is cleaned up by default.
 func TestRun_HappyPath(t *testing.T) {
 	asset := makeArchive(t, "ELF...hugo binary")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -132,47 +136,15 @@ func TestRun_HappyPath(t *testing.T) {
 	work := t.TempDir()
 	out := t.TempDir()
 
-	stubCalled := 0
-	var stubEnv []string
-	var stubDir string
-	var stubOutPath string
-
-	stubExec := func(_ context.Context, dir, outputPath string, env []string) error {
-		stubCalled++
-		stubEnv = append([]string(nil), env...)
-		stubDir = dir
-		stubOutPath = outputPath
-		// Fake nfpm: write a token .deb so the orchestrator can hash it.
-		return os.WriteFile(outputPath, []byte("fake-deb"), 0o644)
-	}
-
 	res, err := Run(context.Background(), p, Options{
-		OutDir:   out,
-		WorkDir:  work,
-		NfpmExec: stubExec,
+		OutDir:  out,
+		WorkDir: work,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if stubCalled != 1 {
-		t.Errorf("nfpm should run once, got %d", stubCalled)
-	}
-	if got := envMap(stubEnv); got["VERSION"] != "0.140.0" || got["ARCH"] != "amd64" {
-		t.Errorf("env: %v", got)
-	}
-	if got := envMap(stubEnv); !strings.HasSuffix(got["ASSETS"], "/hugo/amd64/asset") {
-		t.Errorf("ASSETS env not at staging asset dir: %s", got["ASSETS"])
-	}
-	if !strings.HasSuffix(stubDir, "/hugo/amd64") {
-		t.Errorf("nfpm cwd not at staging: %s", stubDir)
-	}
-	if !strings.HasSuffix(stubOutPath, "/hugo_0.140.0_amd64.deb") {
-		t.Errorf("nfpm -t arg: %s", stubOutPath)
-	}
-
-	pkg := res.Packages[0]
-	art := pkg.Artifacts[0]
+	art := res.Packages[0].Artifacts[0]
 	if art.Result == plan.ResultError {
 		t.Fatalf("expected ok, got error: %+v", art.Error)
 	}
@@ -181,6 +153,11 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 	if art.Deb.SHA256 == nil || !strings.HasPrefix(*art.Deb.SHA256, "sha256:") {
 		t.Errorf("deb.sha256: %v", art.Deb.SHA256)
+	}
+	if st, err := os.Stat(*art.Deb.Path); err != nil {
+		t.Errorf("deb file missing: %v", err)
+	} else if st.Size() < 200 {
+		t.Errorf("deb suspiciously small: %d bytes", st.Size())
 	}
 
 	// Work dir cleaned up by default.
@@ -201,9 +178,8 @@ func TestRun_AssetSHAMismatch_BecomesArtifactError(t *testing.T) {
 	p := fixturePlan(t, srv, asset, "deadbeef00000000000000000000000000000000000000000000000000000000")
 
 	res, err := Run(context.Background(), p, Options{
-		OutDir:   t.TempDir(),
-		WorkDir:  t.TempDir(),
-		NfpmExec: func(context.Context, string, string, []string) error { return nil },
+		OutDir:  t.TempDir(),
+		WorkDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -223,6 +199,11 @@ func TestRun_AssetSHAMismatch_BecomesArtifactError(t *testing.T) {
 	}
 }
 
+// TestRun_NfpmFails_BecomesArtifactError forces a Pack-time failure by
+// pointing a contents entry at a path that no staging step
+// materializes. nfpm's PrepareForPackager calls os.Stat on every src
+// and errors when the file is missing — Run() should isolate that as
+// an artifact-level error, not a top-level Run() error.
 func TestRun_NfpmFails_BecomesArtifactError(t *testing.T) {
 	asset := makeArchive(t, "x")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -230,13 +211,31 @@ func TestRun_NfpmFails_BecomesArtifactError(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+	// Replace the working contents with one that references a file
+	// neither the asset archive nor aux_files ever produces.
+	p.Packages[0].Artifacts[0].BuildPlan.Nfpm = json.RawMessage(`{
+		"name": "hugo",
+		"version": "0.140.0",
+		"arch": "amd64",
+		"platform": "linux",
+		"maintainer": "Ophymx <ops@ophymx.com>",
+		"description": "Static site generator",
+		"contents": [
+			{"src": "${ASSETS}/does-not-exist", "dst": "/usr/bin/hugo"}
+		]
+	}`)
+	// Rehash so the build-time hash preamble accepts the plan.
+	sha := *p.Packages[0].Artifacts[0].Assets[0].SHA256
+	bp := p.Packages[0].Artifacts[0].BuildPlan
+	newHash, err := plan.ComputeBuildInputsHash(plan.FormatRevision, []*string{&sha}, bp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Packages[0].Artifacts[0].Deb.BuildInputsHash = newHash
 
 	res, err := Run(context.Background(), p, Options{
 		OutDir:  t.TempDir(),
 		WorkDir: t.TempDir(),
-		NfpmExec: func(context.Context, string, string, []string) error {
-			return os.ErrPermission
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -259,31 +258,31 @@ func TestRun_StageOnly_SkipsNfpmAndKeepsWork(t *testing.T) {
 	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
 
 	work := t.TempDir()
-	calls := 0
-	stub := func(context.Context, string, string, []string) error { calls++; return nil }
+	out := t.TempDir()
 
 	res, err := Run(context.Background(), p, Options{
-		OutDir:    t.TempDir(),
+		OutDir:    out,
 		WorkDir:   work,
 		StageOnly: true,
-		NfpmExec:  stub,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 0 {
-		t.Errorf("nfpm should not be called in stage-only mode")
-	}
 	if res.Packages[0].Artifacts[0].Deb.Path != nil {
 		t.Errorf("deb.path should remain nil in stage-only")
 	}
+	// No .deb should appear under OutDir.
+	entries, _ := os.ReadDir(out)
+	if len(entries) != 0 {
+		t.Errorf("out-dir should be empty in stage-only: %v", entries)
+	}
 
 	// Work dir preserved with the staged tree.
-	entries, _ := os.ReadDir(work)
-	if len(entries) != 1 {
-		t.Fatalf("work-dir should keep run dir: got %d entries", len(entries))
+	workEntries, _ := os.ReadDir(work)
+	if len(workEntries) != 1 {
+		t.Fatalf("work-dir should keep run dir: got %d entries", len(workEntries))
 	}
-	stagingNfpm := filepath.Join(work, entries[0].Name(), "hugo", "amd64", "nfpm.yaml")
+	stagingNfpm := filepath.Join(work, workEntries[0].Name(), "hugo", "amd64", "nfpm.yaml")
 	if _, err := os.Stat(stagingNfpm); err != nil {
 		t.Errorf("nfpm.yaml should exist in staging: %v", err)
 	}
@@ -320,9 +319,6 @@ func TestRun_SiblingArtifactNotBlockedByFailure(t *testing.T) {
 	res, err := Run(context.Background(), p, Options{
 		OutDir:  t.TempDir(),
 		WorkDir: t.TempDir(),
-		NfpmExec: func(_ context.Context, _, outputPath string, _ []string) error {
-			return os.WriteFile(outputPath, []byte("x"), 0o644)
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -336,22 +332,13 @@ func TestRun_SiblingArtifactNotBlockedByFailure(t *testing.T) {
 	}
 }
 
-func envMap(env []string) map[string]string {
-	out := map[string]string{}
-	for _, e := range env {
-		k, v, ok := strings.Cut(e, "=")
-		if ok {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-// TestRun_Revision_AppendsToFilenameAndVersion asserts --revision N
-// rewrites both the .deb filename (annotated JSON) and the nfpm.yaml
-// version field at on-disk-write time, while leaving build_inputs_hash
-// unchanged.
-func TestRun_Revision_AppendsToFilenameAndVersion(t *testing.T) {
+// TestRun_Revision_AppendsToFilenameAndStagedYAML asserts --revision N
+// rewrites both the .deb filename (annotated JSON) and the staged
+// nfpm.yaml — `version:` stays bare, `release: "N"` carries the
+// debian-revision. build_inputs_hash is unchanged. The control-field
+// roundtrip through nfpm itself is covered by
+// TestRun_RealNfpm_Revision in run_e2e_test.go.
+func TestRun_Revision_AppendsToFilenameAndStagedYAML(t *testing.T) {
 	asset := makeArchive(t, "x")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(asset)
@@ -361,34 +348,16 @@ func TestRun_Revision_AppendsToFilenameAndVersion(t *testing.T) {
 	originalHash := p.Packages[0].Artifacts[0].Deb.BuildInputsHash
 
 	work := t.TempDir()
-	var stubOutPath string
-	var stubEnv []string
-	stub := func(_ context.Context, _, outPath string, env []string) error {
-		stubOutPath = outPath
-		stubEnv = append([]string(nil), env...)
-		return os.WriteFile(outPath, []byte("fake"), 0o644)
-	}
-
 	res, err := Run(context.Background(), p, Options{
 		OutDir:   t.TempDir(),
 		WorkDir:  work,
 		Revision: 2,
 		KeepWork: true,
-		NfpmExec: stub,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// nfpm exec received the revised filename.
-	if !strings.HasSuffix(stubOutPath, "/hugo_0.140.0-2_amd64.deb") {
-		t.Errorf("nfpm output path: %s, want suffix /hugo_0.140.0-2_amd64.deb", stubOutPath)
-	}
-	// VERSION env is the revised value (consumers of ${VERSION} in
-	// nfpm.yaml see the same string as the published deb).
-	if got := envMap(stubEnv); got["VERSION"] != "0.140.0-2" {
-		t.Errorf("VERSION env: %q, want 0.140.0-2", got["VERSION"])
-	}
 	// Annotated JSON: filename revised, hash unchanged.
 	art := res.Packages[0].Artifacts[0]
 	if art.Deb.Filename != "hugo_0.140.0-2_amd64.deb" {
@@ -437,13 +406,11 @@ func TestRun_Revision_RejectsVersionContainingHyphen(t *testing.T) {
 		"platform": "linux"
 	}`)
 
-	called := 0
-	stub := func(context.Context, string, string, []string) error { called++; return nil }
+	out := t.TempDir()
 	_, err := Run(context.Background(), p, Options{
-		OutDir:   t.TempDir(),
+		OutDir:   out,
 		WorkDir:  t.TempDir(),
 		Revision: 1,
-		NfpmExec: stub,
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -451,8 +418,9 @@ func TestRun_Revision_RejectsVersionContainingHyphen(t *testing.T) {
 	if !strings.Contains(err.Error(), "--revision incompatible") {
 		t.Errorf("error message: %v", err)
 	}
-	if called != 0 {
-		t.Errorf("nfpm should not run when --revision validation fails (got %d calls)", called)
+	entries, _ := os.ReadDir(out)
+	if len(entries) != 0 {
+		t.Errorf("out-dir should stay empty when --revision rejects upfront: %v", entries)
 	}
 }
 
@@ -479,7 +447,6 @@ func TestRun_Revision_RejectsRecipeBakedRelease(t *testing.T) {
 		OutDir:   t.TempDir(),
 		WorkDir:  t.TempDir(),
 		Revision: 1,
-		NfpmExec: func(context.Context, string, string, []string) error { return nil },
 	})
 	if err == nil || !strings.Contains(err.Error(), "nfpm.release") {
 		t.Errorf("expected release-conflict error, got %v", err)
@@ -501,18 +468,17 @@ func TestRun_RejectsAnnotatedPlan(t *testing.T) {
 	priorPath := "/tmp/dist/hugo_0.140.0_amd64.deb"
 	p.Packages[0].Artifacts[0].Deb.Path = &priorPath
 
-	called := 0
-	stub := func(context.Context, string, string, []string) error { called++; return nil }
+	out := t.TempDir()
 	_, err := Run(context.Background(), p, Options{
-		OutDir:   t.TempDir(),
-		WorkDir:  t.TempDir(),
-		NfpmExec: stub,
+		OutDir:  out,
+		WorkDir: t.TempDir(),
 	})
 	if err == nil || !strings.Contains(err.Error(), "annotated output") {
 		t.Errorf("expected annotated-plan error, got %v", err)
 	}
-	if called != 0 {
-		t.Errorf("nfpm should not run when annotated-plan rejection fires (got %d calls)", called)
+	entries, _ := os.ReadDir(out)
+	if len(entries) != 0 {
+		t.Errorf("out-dir should stay empty when annotated-plan rejection fires: %v", entries)
 	}
 }
 
@@ -534,7 +500,8 @@ func TestRun_RejectsNegativeRevision(t *testing.T) {
 // TestRun_AssetOptional asserts cooper build skips the download +
 // extract phase when Asset.URL is empty (the local-source case driven
 // by staves and other producers that bake every byte into aux_files).
-// The aux_files materialization + nfpm exec path is identical.
+// The aux_files materialization + library Pack call is identical to
+// the assets path.
 func TestRun_AssetOptional(t *testing.T) {
 	// Hand-rolled plan: no asset URL, aux_files carries the only
 	// payload (one file destined for /usr/share/demo/hello.txt).
@@ -578,29 +545,12 @@ func TestRun_AssetOptional(t *testing.T) {
 	work := t.TempDir()
 	out := t.TempDir()
 
-	var stubOutPath string
-	stub := func(_ context.Context, dir, outputPath string, _ []string) error {
-		stubOutPath = outputPath
-		// Confirm the aux file landed where the recipe says.
-		body, err := os.ReadFile(filepath.Join(dir, "hello.txt"))
-		if err != nil {
-			return err
-		}
-		if string(body) != "hello\n" {
-			t.Errorf("aux body in staging: %q", body)
-		}
-		return os.WriteFile(outputPath, []byte("fake-deb"), 0o644)
-	}
 	res, err := Run(context.Background(), p, Options{
-		OutDir:   out,
-		WorkDir:  work,
-		NfpmExec: stub,
+		OutDir:  out,
+		WorkDir: work,
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.HasSuffix(stubOutPath, "/demo_1.0.0_all.deb") {
-		t.Errorf("nfpm output path: %s", stubOutPath)
 	}
 	art := res.Packages[0].Artifacts[0]
 	if art.Result == plan.ResultError {
@@ -609,18 +559,18 @@ func TestRun_AssetOptional(t *testing.T) {
 	if art.Deb.Path == nil || !strings.HasSuffix(*art.Deb.Path, "/demo_1.0.0_all.deb") {
 		t.Errorf("deb.path: %v", art.Deb.Path)
 	}
+	if _, err := os.Stat(*art.Deb.Path); err != nil {
+		t.Errorf("deb file missing: %v", err)
+	}
 }
 
-// TestRun_RelativeOutDir_PassesAbsPathToNfpm guards against the
+// TestRun_RelativeOutDir_ResolvesAbs guards against the
 // "open dist/foo.deb: no such file or directory" regression: when
-// --out-dir is relative (the default is "./dist"), nfpm runs with
-// cmd.Dir = staging, so a relative -t path would resolve under the
-// staging directory and fail. Run() must absolutize OutDir before
-// handing it down.
-//
-// Same hazard for WorkDir → ASSETS env: any nfpm content referencing
-// ${ASSETS} would expand to a path relative to staging and break.
-func TestRun_RelativeOutDir_PassesAbsPathToNfpm(t *testing.T) {
+// --out-dir is relative (the default is "./dist"), Run() must
+// absolutize it before passing the deb path down to Pack — Pack runs
+// nfpm in-process, and a relative outputPath would resolve against
+// whatever cwd the caller happens to have, not the staging tree.
+func TestRun_RelativeOutDir_ResolvesAbs(t *testing.T) {
 	asset := makeArchive(t, "x")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(asset)
@@ -628,28 +578,15 @@ func TestRun_RelativeOutDir_PassesAbsPathToNfpm(t *testing.T) {
 	defer srv.Close()
 	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
 
-	t.Chdir(t.TempDir())
-
-	var stubOutPath, stubAssets string
-	stub := func(_ context.Context, _, outputPath string, env []string) error {
-		stubOutPath = outputPath
-		stubAssets = envMap(env)["ASSETS"]
-		return os.WriteFile(outputPath, []byte("fake-deb"), 0o644)
-	}
+	callerCwd := t.TempDir()
+	t.Chdir(callerCwd)
 
 	res, err := Run(context.Background(), p, Options{
-		OutDir:   "./relout",
-		WorkDir:  "./relwork",
-		NfpmExec: stub,
+		OutDir:  "./relout",
+		WorkDir: "./relwork",
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !filepath.IsAbs(stubOutPath) {
-		t.Errorf("nfpm -t must be absolute (else resolves under staging cwd): %s", stubOutPath)
-	}
-	if !filepath.IsAbs(stubAssets) {
-		t.Errorf("ASSETS env must be absolute (else ${ASSETS} expands under staging cwd): %s", stubAssets)
 	}
 	art := res.Packages[0].Artifacts[0]
 	if art.Result == plan.ResultError {
@@ -657,5 +594,10 @@ func TestRun_RelativeOutDir_PassesAbsPathToNfpm(t *testing.T) {
 	}
 	if art.Deb.Path == nil || !filepath.IsAbs(*art.Deb.Path) {
 		t.Errorf("annotated deb.path should be absolute: %v", art.Deb.Path)
+	}
+	// The deb should be where the annotated path claims, regardless of
+	// the relative arg the caller passed in.
+	if _, err := os.Stat(*art.Deb.Path); err != nil {
+		t.Errorf("deb file missing at annotated path: %v", err)
 	}
 }
