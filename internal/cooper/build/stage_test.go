@@ -34,10 +34,34 @@ func TestWriteNfpmYAML(t *testing.T) {
 		"src: ${ASSETS}/hugo", // ${ASSETS} preserved verbatim for nfpm
 		"dst: /usr/bin/hugo",
 		"X-Cooper-Build-Inputs-Hash: " + hash,
+		"version_schema: none", // cooper pins this so nfpm doesn't pad short versions
 	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("missing %q in nfpm.yaml:\n%s", want, got)
 		}
+	}
+}
+
+// TestWriteNfpmYAML_VersionSchemaRespectsRecipe verifies that a recipe
+// explicitly choosing a version_schema keeps its choice — cooper only
+// supplies the "none" default when the recipe is silent.
+func TestWriteNfpmYAML_VersionSchemaRespectsRecipe(t *testing.T) {
+	bp := plan.BuildPlan{
+		Nfpm: json.RawMessage(`{"name":"hugo","version":"1.2.3","version_schema":"semver","arch":"amd64"}`),
+	}
+	target := filepath.Join(t.TempDir(), "nfpm.yaml")
+	if err := WriteNfpmYAML(bp, NfpmYAMLOpts{}, target); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "version_schema: semver") {
+		t.Errorf("explicit recipe version_schema was overridden:\n%s", got)
+	}
+	if strings.Contains(string(got), "version_schema: none") {
+		t.Errorf("cooper overrode the recipe's explicit version_schema:\n%s", got)
 	}
 }
 

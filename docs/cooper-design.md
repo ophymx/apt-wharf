@@ -118,19 +118,24 @@ parses Debian versions the same way.
 ### `--revision N` mechanics
 
 `cooper build --revision N` sets nfpm's `release: N` field on every
-artifact's on-disk `nfpm.yaml` — the third on-disk-only adjustment
-alongside `expand: true` and the `X-Cooper-Build-Inputs-Hash`
-injection. nfpm's deb packager concatenates `<version>-<release>`
-into the resulting Debian Version, so the published `.deb`'s version
-is `<bare>-N` and its filename is `<name>_<bare>-<N>_<arch>.deb`.
-**The `build_inputs_hash` is unchanged.** The revision is
-post-discover metadata, not a build input; including it would mean
-re-discovery never hits the dedup branch (infinite re-bumping).
+artifact's on-disk `nfpm.yaml` — one of the on-disk-only adjustments
+alongside `expand: true`, the `X-Cooper-Build-Inputs-Hash` injection,
+and the `version_schema: none` default. nfpm's deb packager
+concatenates `<version>-<release>` into the resulting Debian Version,
+so the published `.deb`'s version is `<bare>-N` and its filename is
+`<name>_<bare>-<N>_<arch>.deb`. **The `build_inputs_hash` is
+unchanged.** The revision is post-discover metadata, not a build
+input; including it would mean re-discovery never hits the dedup
+branch (infinite re-bumping).
 
 Cooper uses nfpm's dedicated `release:` field rather than rewriting
-`version:` because nfpm's default `version_schema: semver` interprets
-a `-N` suffix on `version:` as a semver prerelease and emits it as
-`~N` (Debian's tilde-prerelease) in the published `.deb`.
+`version:` so the JSON `build_plan.nfpm.version` stays revision-free
+and the same Plan re-fed through `cooper build --revision` produces
+the bumped `.deb` deterministically without the discover-time hash
+needing to know the revision in advance. (The `version_schema: none`
+pin from step 4 already keeps nfpm from rewriting either the bare
+version or any `-N` suffix on its own; `release:` is the structural
+separation, not just a quirk workaround.)
 
 `build_plan.nfpm.version` in the JSON stays bare; `cooper discover`
 is revision-unaware (no `--revision` flag, never emits `release:` or
@@ -519,7 +524,7 @@ for each artifact (across packages[*].artifacts[*]) with result: "ok":
   3. Materialize aux_files: for each (key, content) in build_plan.aux_files,
      write content to <staging>/<key> (preserving the source-relative path).
   4. Write resolved nfpm.yaml to <staging>/nfpm.yaml from
-     build_plan.nfpm with three on-disk-only adjustments:
+     build_plan.nfpm with four on-disk-only adjustments:
        (a) expand: true on every contents[] entry whose user did not
            explicitly set the flag, so nfpm expands ${ASSETS} at exec
            time.
@@ -530,6 +535,14 @@ for each artifact (across packages[*].artifacts[*]) with result: "ok":
        (c) if --revision N is set: write release: "N" alongside the
            bare version (the JSON stays bare; nfpm concatenates as
            "<version>-<release>" at build time).
+       (d) version_schema: none when the recipe didn't explicitly
+           choose one. nfpm's default schema is semver, which pads
+           short versions (`4.32` → `4.32.0`) and rewrites a "-N"
+           suffix as the Debian tilde-prerelease ("~N"). Either
+           transform makes the deb's `Version:` field disagree with
+           the version cooper resolved — and with the filename cooper
+           wrote — breaking orchestrator dedup queries. Pinning
+           `none` makes nfpm emit the version verbatim.
      None of these adjustments flow back into the JSON, so none of
      them perturb build_inputs_hash.
   5. exec `nfpm pkg --packager deb -f nfpm.yaml -t <out-dir>/` with:

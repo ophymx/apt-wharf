@@ -41,6 +41,10 @@ type NfpmYAMLOpts struct {
 //	    it explicitly set.
 //	(b) deb.fields["X-Cooper-Build-Inputs-Hash"] = opts.Hash.
 //	(c) version field gets "-N" appended when opts.Revision > 0.
+//	(d) version_schema: none when the recipe didn't pick one, so nfpm
+//	    doesn't rewrite the resolved version (semver padding,
+//	    prerelease tildes) and the deb's Version: matches what cooper
+//	    planned.
 func WriteNfpmYAML(bp plan.BuildPlan, opts NfpmYAMLOpts, target string) error {
 	var doc any
 	if err := json.Unmarshal(bp.Nfpm, &doc); err != nil {
@@ -49,6 +53,7 @@ func WriteNfpmYAML(bp plan.BuildPlan, opts NfpmYAMLOpts, target string) error {
 	doc = enableContentsExpand(doc)
 	doc = injectBuildInputsHash(doc, opts.Hash)
 	doc = applyRevision(doc, opts.Revision)
+	doc = pinVersionSchema(doc)
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("marshal nfpm yaml: %w", err)
@@ -64,10 +69,12 @@ func WriteNfpmYAML(bp plan.BuildPlan, opts NfpmYAMLOpts, target string) error {
 // onto the version field, so the resulting Debian Version is
 // "<version>-<release>". No-op otherwise.
 //
-// We use nfpm's `release` field rather than rewriting `version` because
-// nfpm's default version_schema=semver interprets a "-N" suffix on
-// `version` as a semver prerelease and emits it with a tilde ("~N") in
-// the deb output. The dedicated `release` field bypasses that path.
+// We use nfpm's dedicated `release` field rather than rewriting
+// `version` so the JSON `build_plan.nfpm.version` stays revision-free
+// — the same Plan re-fed with a different --revision is deterministic
+// without the discover-time hash needing to know the revision.
+// (pinVersionSchema separately keeps nfpm from rewriting "-N" suffixes
+// into semver tilde-prereleases.)
 func applyRevision(doc any, revision int) any {
 	if revision <= 0 {
 		return doc
@@ -103,6 +110,38 @@ func injectBuildInputsHash(doc any, hash string) any {
 		deb["fields"] = fields
 	}
 	fields["X-Cooper-Build-Inputs-Hash"] = hash
+	return root
+}
+
+// pinVersionSchema sets `version_schema: none` on the nfpm doc when the
+// recipe didn't pick a schema. nfpm's default `version_schema: semver`
+// rewrites the resolved version in two ways that drift it away from
+// what cooper planned:
+//
+//   - Pads short versions to three components (`4.32` → `4.32.0`), so
+//     the deb's Version: control field disagrees with the filename
+//     cooper writes (`<name>_<version>_<arch>.deb`) and with any
+//     orchestrator that re-queries the repo for the current max
+//     version. drayman's `(Package, base-version, Architecture)`
+//     revision-slot lookup can't recover — every fresh build of the
+//     same upstream tag plans the un-padded version while the repo
+//     reports the padded one, an unbreakable version_regression skip.
+//   - Re-emits a "-N" suffix as a tilde-prerelease ("~N"). cooper's
+//     applyRevision already routes around this via the dedicated
+//     release: field for orchestrator-driven bumps, but a recipe-baked
+//     version_template can still trip it.
+//
+// Recipes that genuinely want semver behavior keep their explicit
+// override.
+func pinVersionSchema(doc any) any {
+	root, ok := doc.(map[string]any)
+	if !ok {
+		return doc
+	}
+	if _, set := root["version_schema"]; set {
+		return doc
+	}
+	root["version_schema"] = "none"
 	return root
 }
 

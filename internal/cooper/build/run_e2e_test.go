@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -181,4 +182,55 @@ func dpkgDebField(t *testing.T, debPath, field string) string {
 		t.Fatalf("dpkg-deb -f %s %s: %v", field, debPath, err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// TestRun_RealNfpm_ShortVersionNoPadding asserts a two-component
+// upstream version (e.g. seaweedfs's "4.32") round-trips through nfpm
+// without being padded to "4.32.0". Regression coverage for the
+// version-schema drift that made drayman idempotent-skip every rebuild
+// of seaweedfs after migration to cooper.
+func TestRun_RealNfpm_ShortVersionNoPadding(t *testing.T) {
+	if _, err := exec.LookPath("nfpm"); err != nil {
+		t.Skip("nfpm not on PATH; skipping live e2e")
+	}
+	if _, err := exec.LookPath("dpkg-deb"); err != nil {
+		t.Skip("dpkg-deb not on PATH; skipping field-level e2e")
+	}
+
+	asset := makeArchive(t, "fake hugo binary")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+
+	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+	// Swap the fixture's three-component version for a two-component
+	// one so semver-style padding would be visible if it leaked through.
+	const shortVer = "4.32"
+	bp := &p.Packages[0].Artifacts[0].BuildPlan
+	bp.Nfpm = json.RawMessage(strings.Replace(string(bp.Nfpm), `"version": "0.140.0"`, `"version": "`+shortVer+`"`, 1))
+	p.Packages[0].Artifacts[0].Deb.Filename = "hugo_" + shortVer + "_amd64.deb"
+	// Rehash so the build-time hash-verification preamble accepts the plan.
+	sha := "sha256:" + sha256Of(t, asset)
+	hash, err := plan.ComputeBuildInputsHash(plan.FormatRevision, []*string{&sha}, *bp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Packages[0].Artifacts[0].Deb.BuildInputsHash = hash
+
+	res, err := Run(context.Background(), p, Options{
+		OutDir:  t.TempDir(),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	art := res.Packages[0].Artifacts[0]
+	if art.Result == plan.ResultError {
+		t.Fatalf("build failed: %s", art.Error.Message)
+	}
+	got := dpkgDebField(t, *art.Deb.Path, "Version")
+	if got != shortVer {
+		t.Errorf("deb Version: %q, want %q (nfpm padded the version — version_schema not pinned)", got, shortVer)
+	}
 }
