@@ -564,6 +564,68 @@ func TestRun_AssetOptional(t *testing.T) {
 	}
 }
 
+// TestRun_StagedScriptsResolve guards against the regression that
+// shipped in v0.4.0: cooper-design.md lists scripts.{pre,post}{install,
+// remove} alongside contents[].src as the fields whose relative paths
+// resolve against the staging dir. The exec path got this for free via
+// cmd.Dir = staging; the library path has to walk those fields and
+// absolutize them explicitly. Without it, a recipe with
+// `scripts.postinstall: ./postinstall.sh` fails with
+// "open ./postinstall.sh: no such file or directory" at Package time.
+func TestRun_StagedScriptsResolve(t *testing.T) {
+	asset := makeArchive(t, "x")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(asset)
+	}))
+	defer srv.Close()
+	p := fixturePlan(t, srv, asset, sha256Of(t, asset))
+
+	// Add a scripts.postinstall reference + the corresponding aux file.
+	bp := &p.Packages[0].Artifacts[0].BuildPlan
+	bp.Nfpm = json.RawMessage(`{
+		"name": "hugo",
+		"version": "0.140.0",
+		"arch": "amd64",
+		"platform": "linux",
+		"maintainer": "Ophymx <ops@ophymx.com>",
+		"description": "Static site generator",
+		"contents": [
+			{"src": "${ASSETS}/hugo/bin/hugo", "dst": "/usr/bin/hugo"}
+		],
+		"scripts": {
+			"postinstall": "./postinstall.sh"
+		}
+	}`)
+	bp.AuxFiles = map[string]plan.AuxFile{
+		// "#!/bin/sh\necho hi\n" base64-encoded
+		"./postinstall.sh": {ContentB64: "IyEvYmluL3NoCmVjaG8gaGkK"},
+	}
+	sha := *p.Packages[0].Artifacts[0].Assets[0].SHA256
+	newHash, err := plan.ComputeBuildInputsHash(plan.FormatRevision, []*string{&sha}, *bp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Packages[0].Artifacts[0].Deb.BuildInputsHash = newHash
+
+	res, err := Run(context.Background(), p, Options{
+		OutDir:  t.TempDir(),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	art := res.Packages[0].Artifacts[0]
+	if art.Result == plan.ResultError {
+		t.Fatalf("build failed: %s", art.Error.Message)
+	}
+	if art.Deb.Path == nil {
+		t.Fatal("deb.path nil")
+	}
+	if _, err := os.Stat(*art.Deb.Path); err != nil {
+		t.Errorf("deb file missing: %v", err)
+	}
+}
+
 // TestRun_RelativeOutDir_ResolvesAbs guards against the
 // "open dist/foo.deb: no such file or directory" regression: when
 // --out-dir is relative (the default is "./dist"), Run() must

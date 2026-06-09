@@ -77,7 +77,7 @@ func Pack(_ context.Context, stagingDir, outputPath string, in PackInputs) error
 	}
 	info.Target = outputPath
 	info.MTime = time.Unix(in.SourceDateEpoch, 0).UTC()
-	absolutizeContentSources(info, stagingDir)
+	absolutizeStagedPaths(info, stagingDir)
 
 	nfpm.WithDefaults(info)
 	if err := nfpm.Validate(info); err != nil {
@@ -102,17 +102,33 @@ func Pack(_ context.Context, stagingDir, outputPath string, in PackInputs) error
 	return nil
 }
 
-// absolutizeContentSources rewrites every relative Source path in
-// info.Contents to be rooted at stagingDir. The prior exec path
-// achieved the same thing implicitly via cmd.Dir = staging; with the
-// library call, nfpm's os.Stat / file-walk uses the process cwd, so
-// we resolve the paths here. Absolute paths (the common case after
-// ${ASSETS} expansion) are left alone.
-func absolutizeContentSources(info *nfpm.Info, stagingDir string) {
+// absolutizeStagedPaths rewrites every relative file-reference in the
+// in-scope nfpm fields to be rooted at stagingDir. The prior exec
+// path achieved the same thing implicitly via cmd.Dir = staging; with
+// the library call, nfpm's os.Stat / file reads use the process cwd,
+// so we resolve the paths here. Absolute paths (the common case after
+// ${ASSETS}/${SOURCE} expansion) are left alone.
+//
+// In-scope fields match cooper-design.md's "Aux file resolution"
+// list: contents[].src plus the four scripts.{pre,post}{install,remove}
+// entries. Other file-referencing fields (changelog, deb.scripts.*,
+// rpm.scripts.*, signature.key_file, ...) are passthrough per the
+// design — cooper doesn't stage files for them and the user is on the
+// hook to use absolute paths.
+func absolutizeStagedPaths(info *nfpm.Info, stagingDir string) {
 	for _, c := range info.Contents {
-		if c.Source == "" || filepath.IsAbs(c.Source) {
-			continue
+		if c.Source != "" && !filepath.IsAbs(c.Source) {
+			c.Source = filepath.Join(stagingDir, c.Source)
 		}
-		c.Source = filepath.Join(stagingDir, c.Source)
+	}
+	for _, p := range []*string{
+		&info.Scripts.PreInstall,
+		&info.Scripts.PostInstall,
+		&info.Scripts.PreRemove,
+		&info.Scripts.PostRemove,
+	} {
+		if *p != "" && !filepath.IsAbs(*p) {
+			*p = filepath.Join(stagingDir, *p)
+		}
 	}
 }
