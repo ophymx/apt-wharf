@@ -195,3 +195,93 @@ func TestValidateSource_ExternalEnvForward_EqualsRejected(t *testing.T) {
 		t.Errorf("expected '=' rejection, got %v", err)
 	}
 }
+
+func TestValidateArches_VarsAccepted(t *testing.T) {
+	s := Sidecar{
+		Source: Source{GitHub: &GitHubSource{
+			Repo:    "foo/bar",
+			Release: &Release{Latest: true},
+		}},
+		VersionFrom: VersionFromTagStripV,
+		Arches: map[string]Arch{
+			"amd64": {
+				Asset: "foo-linux-x86_64.tar.gz",
+				Vars: map[string]string{
+					"TARBALL_DIR": "x86_64-unknown-linux-gnu",
+					"VENDOR_CODE": "x64",
+				},
+			},
+		},
+	}
+	if err := validateSidecar(&s, ""); err != nil {
+		t.Errorf("valid per-arch vars rejected: %v", err)
+	}
+}
+
+func TestValidateArches_VarsReservedKeysRejected(t *testing.T) {
+	for _, key := range []string{"VERSION", "ARCH", "ARCH_GNU", "ASSETS", "SOURCE"} {
+		t.Run(key, func(t *testing.T) {
+			s := Sidecar{
+				Source: Source{GitHub: &GitHubSource{
+					Repo:    "foo/bar",
+					Release: &Release{Latest: true},
+				}},
+				VersionFrom: VersionFromTagStripV,
+				Arches: map[string]Arch{
+					"amd64": {
+						Asset: "foo.tar.gz",
+						Vars:  map[string]string{key: "whatever"},
+					},
+				},
+			}
+			err := validateSidecar(&s, "")
+			if err == nil || !strings.Contains(err.Error(), "reserved") {
+				t.Errorf("reserved key %s should be rejected, got %v", key, err)
+			}
+		})
+	}
+}
+
+func TestValidateArches_VarsBadKeyGrammarRejected(t *testing.T) {
+	for _, key := range []string{"lowercase", "9STARTS_WITH_DIGIT", "HAS-DASH", "HAS.DOT", "HAS SPACE"} {
+		t.Run(key, func(t *testing.T) {
+			s := Sidecar{
+				Source: Source{GitHub: &GitHubSource{
+					Repo:    "foo/bar",
+					Release: &Release{Latest: true},
+				}},
+				VersionFrom: VersionFromTagStripV,
+				Arches: map[string]Arch{
+					"amd64": {
+						Asset: "foo.tar.gz",
+						Vars:  map[string]string{key: "v"},
+					},
+				},
+			}
+			err := validateSidecar(&s, "")
+			if err == nil || !strings.Contains(err.Error(), "[A-Z][A-Z0-9_]*") {
+				t.Errorf("bad-grammar key %q should be rejected, got %v", key, err)
+			}
+		})
+	}
+}
+
+func TestValidateArches_VarsEmptyValueRejected(t *testing.T) {
+	s := Sidecar{
+		Source: Source{GitHub: &GitHubSource{
+			Repo:    "foo/bar",
+			Release: &Release{Latest: true},
+		}},
+		VersionFrom: VersionFromTagStripV,
+		Arches: map[string]Arch{
+			"amd64": {
+				Asset: "foo.tar.gz",
+				Vars:  map[string]string{"TARBALL_DIR": ""},
+			},
+		},
+	}
+	err := validateSidecar(&s, "")
+	if err == nil || !strings.Contains(err.Error(), "empty value") {
+		t.Errorf("empty-value var should be rejected, got %v", err)
+	}
+}

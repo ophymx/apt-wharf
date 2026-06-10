@@ -314,6 +314,9 @@ epoch                         int                      default 0
 arches                        map<arch, {
                                   asset: STRING        singular (sugar; one asset)
                                   assets: [STRING]     plural (multi-asset)
+                                  vars: map<STRING,    optional; per-arch
+                                          STRING>      ${KEY} substitutions
+                                                       into doc 2
                               }>                       ≥ 1 entry
 extract.max_bytes             STRING (humanized)       optional; default 1 GiB
                               ("8GiB", "4096MB", or    (ceiling 64 GiB)
@@ -343,12 +346,14 @@ at discover time.
 Cooper substitutes a fixed set of variables into doc 2; anything
 else passes through verbatim.
 
-| Variable     | Resolved by | Where in JSON                                    |
-| ------------ | ----------- | ------------------------------------------------ |
-| `${VERSION}` | discover    | substituted to a literal in `build_plan.nfpm`    |
-| `${ARCH}`    | discover    | substituted to a literal in `build_plan.nfpm`    |
-| `${ASSETS}`  | build       | left symbolic; build supplies it through nfpm.ParseWithEnvMapping's env mapper |
-| `${SOURCE}`  | build       | symbolic; supplied through the env mapper only when the artifact carries a `source_archive` (otherwise unset — recipes that reference `${SOURCE}` without enabling source_archive will fail nfpm expansion) |
+| Variable        | Resolved by | Where in JSON                                    |
+| --------------- | ----------- | ------------------------------------------------ |
+| `${VERSION}`    | discover    | substituted to a literal in `build_plan.nfpm`    |
+| `${ARCH}`       | discover    | substituted to a literal; Debian arch (`amd64`, `arm64`, `armhf`, `riscv64`, …) |
+| `${ARCH_GNU}`   | discover    | substituted to a literal; GNU/uname convention (`x86_64`, `aarch64`, `armv7l`, `riscv64`) — derived from `${ARCH}` via the table below |
+| `${<KEY>}`      | discover    | from `arches[<arch>].vars` (see *Per-arch user variables*); substituted to a literal in `build_plan.nfpm` |
+| `${ASSETS}`     | build       | left symbolic; build supplies it through nfpm.ParseWithEnvMapping's env mapper |
+| `${SOURCE}`     | build       | symbolic; supplied through the env mapper only when the artifact carries a `source_archive` (otherwise unset — recipes that reference `${SOURCE}` without enabling source_archive will fail nfpm expansion) |
 
 For nfpm to expand `${ASSETS}` / `${SOURCE}` at build time, every
 `contents[]` entry needs `expand: true`. Cooper sets that flag
@@ -356,8 +361,108 @@ For nfpm to expand `${ASSETS}` / `${SOURCE}` at build time, every
 `nfpm.yaml`; see *Build* step 4 for the full set of on-disk-only
 adjustments.
 
-That's the full set. There is no `${AUX}`, no `${TMPL_*}`, no
-cooper-specific env-var namespace beyond `${ASSETS}` / `${SOURCE}`.
+The discover-substituted names above are the full set cooper resolves
+into doc-2 literals. There is no `${AUX}`, no `${TMPL_*}`. The only
+build-time symbolic names are `${ASSETS}` and `${SOURCE}`.
+
+#### Built-in arch aliases
+
+`${ARCH_GNU}` resolves via a fixed table cooper applies at discover
+time, after `${ARCH}` is known:
+
+| `${ARCH}` | `${ARCH_GNU}` |
+| --------- | ------------- |
+| `amd64`   | `x86_64`      |
+| `arm64`   | `aarch64`     |
+| `armhf`   | `armv7l`      |
+| `riscv64` | `riscv64`     |
+
+The table is the contract — adding rows is non-breaking; renaming or
+removing a row bumps `format_revision` because resolved
+`build_plan.nfpm` bytes would diverge. Recipes targeting an arch
+outside the table that reference `${ARCH_GNU}` in doc 2 fail at
+discover with a dedicated `arch_gnu_unknown` error (distinct from
+the generic unresolved-substitution kind). The message must:
+
+- name the recipe, the arch key, and the doc-2 field where the
+  reference appeared (e.g. `contents[2].src`),
+- print the full `${ARCH}` → `${ARCH_GNU}` mapping table verbatim so
+  the user can see which arches are covered without having to
+  consult the docs,
+- spell out the two fixes: drop the `${ARCH_GNU}` reference from
+  doc 2, or pick a different per-arch `vars` key (e.g.
+  `TARBALL_ARCH`) for the literal the recipe needs. `vars` cannot
+  shadow `ARCH_GNU` itself per the reserved-name rule, so
+  redefining the built-in for an unsupported arch isn't an option —
+  by design, since adding arches to the table is the contract
+  surface for new arches. Validate emits the same message offline.
+
+Cooper does not synthesize a fallback; silent empty-string
+substitution would let a bad recipe ship a `.deb` with the wrong
+internal layout under a working hash.
+
+Rationale for shipping `${ARCH_GNU}` as a built-in: the
+`x86_64`/`aarch64` spelling shows up inside vendor tarballs (and
+sometimes in asset filenames) often enough that asking every recipe
+to redefine it via `vars:` is busywork. Other naming conventions
+(`x64`, `armv7`, `rv64`, microarch tiers, full GNU triples with
+vendor/OS suffixes) are vendor-specific and stay in `vars:`.
+
+#### Per-arch user variables (`arches[].vars`)
+
+For naming the built-in aliases don't cover, each arch entry takes an
+optional `vars:` map of literal strings exposed as `${KEY}`
+substitutions in doc 2:
+
+```yaml
+arches:
+  amd64:
+    asset: "tool-linux-x86_64.tar.gz"
+    vars:
+      TARBALL_DIR: x86_64-unknown-linux-gnu
+      VENDOR_CODE: x64
+  arm64:
+    asset: "tool-linux-aarch64.tar.gz"
+    vars:
+      TARBALL_DIR: aarch64-unknown-linux-gnu
+      VENDOR_CODE: arm64
+```
+
+Doc 2 references the keys like any other substitution:
+
+```yaml
+contents:
+  - src: ${ASSETS}/${TARBALL_DIR}/bin/tool
+    dst: /usr/bin/tool
+```
+
+Semantics:
+
+- **Discover-time substitution.** Each `${KEY}` is replaced with the
+  literal value at discover time, identical to how `${VERSION}` /
+  `${ARCH}` / `${ARCH_GNU}` resolve. The substituted literal lives in
+  `build_plan.nfpm`; nfpm never sees the variable name and the
+  build-time env scrub stays unchanged.
+- **Reserved keys.** `VERSION`, `ARCH`, `ARCH_GNU`, `ASSETS`,
+  `SOURCE`, and any future cooper-defined substitution name are
+  rejected at validate time — `vars:` cannot shadow a built-in. The
+  keyspace is otherwise open.
+- **Key grammar.** `[A-Z][A-Z0-9_]*` — uppercase to match the other
+  substitution names and avoid collision with arbitrary text in doc
+  2. Lowercase or punctuation-bearing keys are validate errors.
+- **Per-arch independence.** The set of keys may differ across arches
+  (e.g. only the `amd64` entry sets `MICROARCH_TIER`). Referencing an
+  unset key from doc 2 for that arch is a discover error per the
+  unresolved-substitution rule; cooper does not invent empty-string
+  defaults.
+- **Reproducibility.** Vars feed `build_inputs_hash` via the resolved
+  `build_plan.nfpm` — no separate hash input, no `schema_version`
+  bump. Changing a `vars` value flips the hash naturally because the
+  substituted literal flips inside `build_plan.nfpm`.
+- **External producers.** External producers (see *External
+  producers*) get this surface for free — they emit pre-substituted
+  `build_plan.nfpm` and never see `${KEY}` syntax. The contract
+  belongs to discover.
 
 ### Aux file resolution (and templating)
 
@@ -469,8 +574,9 @@ for each package file in cooper.yaml.packages:
        a. Substitute ${VERSION} into the asset selector; find the unique
           matching release asset. Read URL, size, GitHub-supplied SHA256.
           Do not download.
-       b. Substitute ${VERSION} and ${ARCH} into doc 2 → resolved nfpm
-          config (per arch).
+       b. Substitute ${VERSION}, ${ARCH}, ${ARCH_GNU}, and any
+          arches[<arch>].vars keys into doc 2 → resolved nfpm config
+          (per arch). Unresolved ${KEY} → discover error.
        c. Walk doc 2's contents[].src and scripts.* fields per the
           *Aux file resolution* rules; inline bytes (rendering .tmpl as
           needed) into aux_files keyed by the source-relative path the
@@ -681,8 +787,10 @@ Field notes:
   `gitea_release` always lands here (Gitea attachments expose no
   digest); the json_url / xml_url / external paths land here whenever
   the producer can't supply a SHA at discover time.
-- **`build_plan.nfpm`** is doc 2 with `${VERSION}` and `${ARCH}`
-  substituted to literals; `${ASSETS}` left symbolic. Globs and
+- **`build_plan.nfpm`** is doc 2 with every discover-time
+  substitution (`${VERSION}`, `${ARCH}`, `${ARCH_GNU}`, and any
+  user-defined `arches[<arch>].vars` keys) resolved to literals;
+  `${ASSETS}` and `${SOURCE}` left symbolic. Globs and
   directory references are also kept verbatim (e.g.
   `src: ./completions/*` is unchanged) — nfpm itself re-expands at
   build time against the staged tree. Cooper expands at discover only
@@ -728,9 +836,13 @@ Field notes:
 - **`error.kind`** values: `discovery_failed` (GitHub API or asset
   resolution); `version_invalid` (resolved version doesn't match
   Debian's grammar); `aux_resolution_failed` (template render error,
-  missing file, glob with no matches, etc.); `build_failed`
-  (build-only; nfpm exec, asset SHA mismatch, archive sandbox
-  rejection, or any other build-pipeline failure).
+  missing file, glob with no matches, etc.); `unresolved_substitution`
+  (doc 2 references a `${KEY}` that's neither a built-in nor declared
+  in `arches[<arch>].vars`); `arch_gnu_unknown` (doc 2 references
+  `${ARCH_GNU}` for an arch cooper has no GNU mapping for; message
+  prints the supported table); `build_failed` (build-only; nfpm exec,
+  asset SHA mismatch, archive sandbox rejection, or any other
+  build-pipeline failure).
 - **Filtering**: orchestrators may drop entire `packages[]` or
   `artifacts[]` entries. They MUST NOT edit any other field — build
   re-checks `build_inputs_hash` and rejects mismatches.
@@ -871,8 +983,12 @@ default config path.
   in-scope `.tmpl` parses *and renders* cleanly against placeholder
   values from the closed variable set (rendering is required because
   `text/template` only catches unknown-field and type-mismatch errors
-  at execution time). Per-package: a failed package is reported but
-  doesn't abort the rest.
+  at execution time); every `${KEY}` substitution in doc 2 resolves
+  against the union of built-ins (`VERSION`, `ARCH`, `ARCH_GNU`,
+  `ASSETS`, `SOURCE`) and per-arch `vars`, with key-grammar
+  (`[A-Z][A-Z0-9_]*`) and reserved-name checks on `arches[].vars`
+  entries. Per-package: a failed package is reported but doesn't
+  abort the rest.
 
 No daemon mode. Run from cron, systemd timer, or CI.
 
@@ -1286,3 +1402,11 @@ fall through to the heavier external-producer pattern below.
 - **Glob in `cooper.yaml`'s `packages:`** — ergonomics; explicit list is fine for v0.
 - **`--prefetch-hashes` for missing `asset.sha256`** — current contract (build streams + hashes; orchestrator re-imports unconditionally) loses dedup for that artifact. Wait for a real package that surfaces it.
 - **`version_template` under json_url** — for vendors whose extracted version needs post-processing beyond `version_strip_prefix` (e.g. regex-based extraction, composing multiple gjson fields into one version). Out of scope for v0; users can re-tag in their JSON or use an external producer.
+- **`.Vars` / `.ArchGNU` in aux templates** — `arches[].vars` and
+  `${ARCH_GNU}` are doc-2 substitutions only. Aux `.tmpl` files
+  (systemd units, postinstall scripts, etc.) still see just the
+  closed `.Name` / `.Version` / `.Arch` / `.Epoch` / `.PublishedAt`
+  set. Symmetry would let a unit file reference `{{ .Vars.TARBALL_DIR }}`
+  for the same per-arch literal doc 2 uses; revisit when a template
+  hits the same pain. Each addition is a one-way door under
+  `format_revision`.

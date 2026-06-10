@@ -82,6 +82,21 @@ func validateOne(pkgPath string) (ok bool, label, msg string) {
 			}
 			totalTmpls++
 		}
+		// Substitution coverage per arch: build the same subs map
+		// discover would use (with a placeholder VERSION since
+		// validate is offline) and run a dry substitution to surface
+		// arch_gnu_unknown / unresolved_substitution errors before
+		// any release fetch.
+		for arch, archCfg := range pkg.Sidecar.Arches {
+			clone, cerr := stage.CloneNfpm(&doc.Node)
+			if cerr != nil {
+				return false, doc.Name, fmt.Sprintf("clone (%s/%s): %v", doc.Name, arch, cerr)
+			}
+			subs := stage.BuildSubs(stage.PlaceholderVars().Version, arch, archCfg.Vars)
+			if serr := stage.SubstituteNfpm(clone, arch, subs); serr != nil {
+				return false, doc.Name, fmt.Sprintf("substitute (%s/%s):\n%v", doc.Name, arch, serr)
+			}
+		}
 	}
 	if len(pkg.NfpmDocs) == 1 {
 		return true, label, fmt.Sprintf("%d arches, %d aux refs (%d templates)",

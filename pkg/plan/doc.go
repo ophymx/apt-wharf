@@ -51,8 +51,10 @@ const (
 
 // Error.Kind values.
 const (
-	ErrorKindDiscoveryFailed     = "discovery_failed"
-	ErrorKindVersionInvalid      = "version_invalid"
-	ErrorKindAuxResolutionFailed = "aux_resolution_failed"
-	ErrorKindBuildFailed         = "build_failed"
+	ErrorKindDiscoveryFailed        = "discovery_failed"
+	ErrorKindVersionInvalid         = "version_invalid"
+	ErrorKindAuxResolutionFailed    = "aux_resolution_failed"
+	ErrorKindBuildFailed            = "build_failed"
+	ErrorKindUnresolvedSubstitution = "unresolved_substitution"
+	ErrorKindArchGNUUnknown         = "arch_gnu_unknown"
 )

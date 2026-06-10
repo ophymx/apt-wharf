@@ -403,6 +403,50 @@ func validateVersionSelection(s *Sidecar) error {
 // substitutions rule from cooper-design.md §"Doc 1 schema".
 var assetSubstPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
+// archVarKeyPattern is the grammar for arches[<arch>].vars keys —
+// uppercase, leading letter, no punctuation. Matches the shape of every
+// built-in substitution name so a key can't visually masquerade as
+// non-substitution text in doc 2. cooper-design.md §"Per-arch user
+// variables".
+var archVarKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// reservedVarKeys cannot be used as arches[].vars keys: the discover-
+// time substitution set (VERSION, ARCH, ARCH_GNU) and the build-time
+// passthrough names (ASSETS, SOURCE) cooper hands to nfpm's env mapper.
+// Shadowing any of these is rejected at validate per cooper-design.md
+// §"Per-arch user variables" — the table is the contract surface for
+// new arches, not recipe-side overrides.
+var reservedVarKeys = map[string]bool{
+	"VERSION":  true,
+	"ARCH":     true,
+	"ARCH_GNU": true,
+	"ASSETS":   true,
+	"SOURCE":   true,
+}
+
+// validateArchVars enforces the per-arch vars schema: key grammar,
+// reserved-name rejection, and non-empty key/value. Called from
+// validateArches once per arch entry; same rules apply to every source
+// kind because vars live in the source-agnostic doc 2 substitution
+// surface, not the asset-selector grammar.
+func validateArchVars(arch string, vars map[string]string) error {
+	for k, v := range vars {
+		if k == "" {
+			return fmt.Errorf("arches.%s.vars: empty key", arch)
+		}
+		if !archVarKeyPattern.MatchString(k) {
+			return fmt.Errorf("arches.%s.vars.%s: key must match [A-Z][A-Z0-9_]* (uppercase, leading letter)", arch, k)
+		}
+		if reservedVarKeys[k] {
+			return fmt.Errorf("arches.%s.vars.%s: key is reserved (cannot shadow a built-in substitution)", arch, k)
+		}
+		if v == "" {
+			return fmt.Errorf("arches.%s.vars.%s: empty value", arch, k)
+		}
+	}
+	return nil
+}
+
 func validateArches(src *Source, arches map[string]Arch) error {
 	if len(arches) == 0 {
 		return fmt.Errorf("arches: must define at least one entry")
@@ -419,6 +463,12 @@ func validateArches(src *Source, arches map[string]Arch) error {
 		}
 		if a.AssetURL != "" && len(a.AssetURLs) > 0 {
 			return fmt.Errorf("arches.%s: cannot set both asset_url and asset_urls", arch)
+		}
+		// Per-arch user vars are source-kind-agnostic: same rules apply
+		// regardless of whether this is a github_release / json_url /
+		// external recipe.
+		if err := validateArchVars(arch, a.Vars); err != nil {
+			return err
 		}
 
 		switch {

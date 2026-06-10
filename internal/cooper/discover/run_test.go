@@ -941,3 +941,156 @@ echo '{"version":"1.2.3","assets":[{"arch":"amd64","url":"https://example.invali
 		t.Errorf("error message: %s", pkg.Error.Message)
 	}
 }
+
+// TestRun_PerArchVarsAndArchGNU exercises a recipe that uses both the
+// ${ARCH_GNU} built-in alias and a per-arch arches[].vars key in doc 2.
+// Confirms the literals land in build_plan.nfpm, the hash differs per
+// arch (since the substituted bytes differ), and ${ASSETS} is still
+// preserved symbolically for nfpm to expand at build time.
+func TestRun_PerArchVarsAndArchGNU(t *testing.T) {
+	const recipeBody = `---
+source:
+  github:
+    repo: gohugoio/hugo
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "hugo_extended_${VERSION}_linux-amd64.tar.gz"
+    vars:
+      TARBALL_DIR: x86_64-unknown-linux-gnu
+  arm64:
+    asset: "hugo_extended_${VERSION}_linux-arm64.tar.gz"
+    vars:
+      TARBALL_DIR: aarch64-unknown-linux-gnu
+---
+name: hugo
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: A fast static site generator
+contents:
+  - src: ${ASSETS}/${TARBALL_DIR}/bin/hugo
+    dst: /usr/bin/hugo
+  - src: ${ASSETS}/share/${ARCH_GNU}/man
+    dst: /usr/share/man
+`
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "packages/hugo.yaml"), recipeBody)
+	writeFile(t, filepath.Join(dir, "cooper.yaml"), "packages:\n  - ./packages/hugo.yaml\n")
+	cfgPath := filepath.Join(dir, "cooper.yaml")
+
+	top, err := config.LoadTop(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, nil)
+	defer srv.Close()
+	opts := testClient(t, srv)
+
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 || got.Packages[0].Result != plan.ResultOK {
+		t.Fatalf("expected one ok package, got %+v", got.Packages)
+	}
+	arts := got.Packages[0].Artifacts
+	if len(arts) != 2 {
+		t.Fatalf("artifacts: %d", len(arts))
+	}
+
+	wantSubs := map[string]struct{ tarballDir, archGNU string }{
+		"amd64": {"x86_64-unknown-linux-gnu", "x86_64"},
+		"arm64": {"aarch64-unknown-linux-gnu", "aarch64"},
+	}
+	for _, a := range arts {
+		want, ok := wantSubs[a.Arch]
+		if !ok {
+			t.Errorf("unexpected arch %q", a.Arch)
+			continue
+		}
+		var nfpmDecoded map[string]any
+		if err := json.Unmarshal(a.BuildPlan.Nfpm, &nfpmDecoded); err != nil {
+			t.Fatal(err)
+		}
+		contents, _ := nfpmDecoded["contents"].([]any)
+		first, _ := contents[0].(map[string]any)
+		gotSrc, _ := first["src"].(string)
+		wantSrc := "${ASSETS}/" + want.tarballDir + "/bin/hugo"
+		if gotSrc != wantSrc {
+			t.Errorf("%s contents[0].src: got %q, want %q", a.Arch, gotSrc, wantSrc)
+		}
+		second, _ := contents[1].(map[string]any)
+		gotSrc2, _ := second["src"].(string)
+		wantSrc2 := "${ASSETS}/share/" + want.archGNU + "/man"
+		if gotSrc2 != wantSrc2 {
+			t.Errorf("%s contents[1].src: got %q, want %q", a.Arch, gotSrc2, wantSrc2)
+		}
+	}
+	if arts[0].Deb.BuildInputsHash == arts[1].Deb.BuildInputsHash {
+		t.Errorf("amd64 and arm64 should have different build_inputs_hash (different vars substituted)")
+	}
+}
+
+// TestRun_ArchGNUUnknown_PackageError verifies that a recipe referencing
+// ${ARCH_GNU} for an arch outside cooper's built-in table fails the
+// package with plan.ErrorKindArchGNUUnknown rather than discovery_failed,
+// and that the message includes the supported mapping table.
+func TestRun_ArchGNUUnknown_PackageError(t *testing.T) {
+	const recipeBody = `---
+source:
+  github:
+    repo: gohugoio/hugo
+    release: latest
+version_from: tag_strip_v
+arches:
+  amd64:
+    asset: "hugo_extended_${VERSION}_linux-amd64.tar.gz"
+  exotic_arch:
+    asset: "hugo_extended_${VERSION}_linux-amd64.tar.gz"
+---
+name: hugo
+version: ${VERSION}
+arch: ${ARCH}
+maintainer: "Ophymx <ops@ophymx.com>"
+description: A fast static site generator
+contents:
+  - src: ${ASSETS}/${ARCH_GNU}/hugo
+    dst: /usr/bin/hugo
+`
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "packages/hugo.yaml"), recipeBody)
+	writeFile(t, filepath.Join(dir, "cooper.yaml"), "packages:\n  - ./packages/hugo.yaml\n")
+	cfgPath := filepath.Join(dir, "cooper.yaml")
+
+	top, err := config.LoadTop(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, nil)
+	defer srv.Close()
+	opts := testClient(t, srv)
+
+	got, err := Run(context.Background(), top, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 {
+		t.Fatalf("packages: %d", len(got.Packages))
+	}
+	pkg := got.Packages[0]
+	if pkg.Result != plan.ResultError {
+		t.Fatalf("expected error result, got %s", pkg.Result)
+	}
+	if pkg.Error == nil || pkg.Error.Kind != plan.ErrorKindArchGNUUnknown {
+		t.Fatalf("expected arch_gnu_unknown error kind, got %+v", pkg.Error)
+	}
+	// Message must print the supported mapping so the user doesn't
+	// have to consult docs.
+	for _, want := range []string{"amd64", "x86_64", "aarch64", "armhf", "armv7l"} {
+		if !strings.Contains(pkg.Error.Message, want) {
+			t.Errorf("error.message missing %q:\n%s", want, pkg.Error.Message)
+		}
+	}
+}

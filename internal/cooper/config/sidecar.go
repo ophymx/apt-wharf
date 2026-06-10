@@ -258,4 +258,13 @@ type Arch struct {
 	AssetURL  string   `yaml:"asset_url"`
 	Assets    []string `yaml:"assets"`
 	AssetURLs []string `yaml:"asset_urls"`
+
+	// Vars are per-arch user-defined ${KEY} substitutions exposed to
+	// doc 2 alongside the built-in ${VERSION} / ${ARCH} / ${ARCH_GNU}
+	// names. Keys match [A-Z][A-Z0-9_]* and cannot shadow a built-in
+	// or any cooper passthrough name; validation enforces both. The
+	// substituted literal lives in build_plan.nfpm — vars never reach
+	// nfpm's env mapper, so the build-time scrub stays unchanged. See
+	// cooper-design.md §"Per-arch user variables".
+	Vars map[string]string `yaml:"vars"`
 }

@@ -102,7 +102,9 @@ func buildGiteaArtifact(
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
 	}
-	stage.SubstituteNfpm(nfpmClone, resolvedVersion, arch)
+	if err := stage.SubstituteNfpm(nfpmClone, arch, stage.BuildSubs(resolvedVersion, arch, archCfg.Vars)); err != nil {
+		return plan.Artifact{}, &discoveryError{wrapped: err}
+	}
 	nfpmJSON, err := stage.NfpmToJSON(nfpmClone)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("encode nfpm: %w", err)

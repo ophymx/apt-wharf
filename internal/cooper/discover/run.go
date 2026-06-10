@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -300,7 +301,9 @@ func buildXMLURLArtifact(
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
 	}
-	stage.SubstituteNfpm(nfpmClone, resolvedVersion, arch)
+	if err := stage.SubstituteNfpm(nfpmClone, arch, stage.BuildSubs(resolvedVersion, arch, archCfg.Vars)); err != nil {
+		return plan.Artifact{}, &discoveryError{wrapped: err}
+	}
 	nfpmJSON, err := stage.NfpmToJSON(nfpmClone)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("encode nfpm: %w", err)
@@ -377,7 +380,9 @@ func buildArtifact(
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
 	}
-	stage.SubstituteNfpm(nfpmClone, resolvedVersion, arch)
+	if err := stage.SubstituteNfpm(nfpmClone, arch, stage.BuildSubs(resolvedVersion, arch, archCfg.Vars)); err != nil {
+		return plan.Artifact{}, &discoveryError{wrapped: err}
+	}
 	nfpmJSON, err := stage.NfpmToJSON(nfpmClone)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("encode nfpm: %w", err)
@@ -476,7 +481,9 @@ func buildJSONURLArtifact(
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
 	}
-	stage.SubstituteNfpm(nfpmClone, resolvedVersion, arch)
+	if err := stage.SubstituteNfpm(nfpmClone, arch, stage.BuildSubs(resolvedVersion, arch, archCfg.Vars)); err != nil {
+		return plan.Artifact{}, &discoveryError{wrapped: err}
+	}
 	nfpmJSON, err := stage.NfpmToJSON(nfpmClone)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("encode nfpm: %w", err)
@@ -637,7 +644,9 @@ func buildExternalArtifact(
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("clone nfpm: %w", err)
 	}
-	stage.SubstituteNfpm(nfpmClone, resolvedVersion, arch)
+	if err := stage.SubstituteNfpm(nfpmClone, arch, stage.BuildSubs(resolvedVersion, arch, archCfg.Vars)); err != nil {
+		return plan.Artifact{}, &discoveryError{wrapped: err}
+	}
 	nfpmJSON, err := stage.NfpmToJSON(nfpmClone)
 	if err != nil {
 		return plan.Artifact{}, fmt.Errorf("encode nfpm: %w", err)
@@ -811,6 +820,19 @@ func (a *auxError) Error() string { return a.wrapped.Error() }
 func (a *auxError) Unwrap() error { return a.wrapped }
 
 func errKindFor(err error) string {
+	// Stage-level substitution errors carry typed shapes so we can map
+	// them to dedicated plan.Error.Kind values regardless of how deep
+	// the discoveryError wrapper sits. errors.As walks the Unwrap chain.
+	var (
+		gnuErr   *stage.ArchGNUUnknownError
+		unresErr *stage.UnresolvedSubstitutionError
+	)
+	switch {
+	case errors.As(err, &gnuErr):
+		return plan.ErrorKindArchGNUUnknown
+	case errors.As(err, &unresErr):
+		return plan.ErrorKindUnresolvedSubstitution
+	}
 	switch err.(type) {
 	case *discoveryError:
 		return plan.ErrorKindDiscoveryFailed
