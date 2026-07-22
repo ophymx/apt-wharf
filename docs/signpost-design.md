@@ -224,6 +224,31 @@ consistent view of metadata + redirects for the rest of the request.
 [release refresh lock]
 ```
 
+### Fetch timeouts: total for probes, progress-based for the hash pass
+
+`refresh.http_timeout` is a total wall-clock cap and it governs the bounded
+exchanges — discovery probes and the ≤1 MiB control-range fetch. It must
+**not** govern the stream-hash pass. When discovery yields no upstream digest
+(`latest_url` off S3, `json_url`, `gitea_release`, most vendor sources), the
+refresher drains the *entire* asset through SHA256 to learn its hash. A total
+timeout on that drain is size-proportional: any large enough `.deb` (Zoom's is
+~150–250 MB) over any slow enough link always trips it, the source is held at
+its prior state, and the next tick re-downloads and fails identically.
+
+So the hash pass runs on a separate client with **no** total `http.Client`
+timeout. It is bounded by *progress*, not size:
+
+- transport-level dial / TLS / **response-header** timeouts catch a server
+  that accepts the connection but never starts replying, and
+- a **read watchdog** (`fetch.DefaultStallTimeout`, 60 s) aborts the drain
+  only when no bytes arrive for that long — rearmed on every read that makes
+  progress.
+
+A healthy transfer of any size completes; a dead connection fails promptly
+with `drain body: no progress for <d>`. Sources that *do* expose a digest (S3
+`x-amz-checksum-sha256`, GitHub asset digests) skip the drain entirely and are
+unaffected. See `internal/signpost/fetch/fetch.go` (`streamHash`, `stallReader`).
+
 ### Atomicity guarantees
 
 - **Per-source state file**: written via tmp-file + `rename()`, atomic on

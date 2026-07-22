@@ -19,11 +19,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -35,7 +37,21 @@ const (
 	// member that doesn't fit in HeadWindow. 16 MiB is absurdly generous;
 	// in practice we never see >1 MiB.
 	MaxControlTar = 16 << 20
+
+	// DefaultStallTimeout bounds the hash-pass drain by *progress*, not by
+	// total size: the download is aborted only when no bytes arrive for this
+	// long. A healthy transfer of any size survives; a dead connection dies
+	// promptly.
+	DefaultStallTimeout = 60 * time.Second
+
+	// DefaultResponseHeaderTimeout caps the wait for the hash-pass server to
+	// start responding (headers), independent of body size.
+	DefaultResponseHeaderTimeout = 30 * time.Second
 )
+
+// errStall is the cancel cause the read watchdog attaches when the hash-pass
+// body makes no progress for StallTimeout.
+var errStall = errors.New("read stalled")
 
 // Options configure a single fetch.
 type Options struct {
@@ -53,10 +69,58 @@ type Result struct {
 
 // Fetcher performs control-stanza extraction with optional whole-asset hashing.
 type Fetcher struct {
+	// Client serves probes and the small (<=1 MiB) control-range fetches. Its
+	// http.Client.Timeout is a fine total cap for those bounded exchanges.
 	Client *http.Client
+
+	// HashClient streams the full asset for the SHA256 pass. It must NOT set a
+	// total http.Client.Timeout — that cap is size-proportional and any large
+	// enough .deb over any slow enough link would always trip it. Progress is
+	// instead bounded by transport-level timeouts (dial/TLS/response-header)
+	// plus the StallTimeout read watchdog. Nil falls back to Client.
+	HashClient *http.Client
+
+	// StallTimeout is the no-progress window for the hash-pass drain. <=0
+	// selects DefaultStallTimeout.
+	StallTimeout time.Duration
 }
 
-func New(client *http.Client) *Fetcher { return &Fetcher{Client: client} }
+// New builds a Fetcher whose hash-pass client is derived from client's
+// transport but strips the total timeout, so full-asset drains are bounded by
+// progress rather than size. client still serves probes and control-range
+// fetches under its own Timeout.
+func New(client *http.Client) *Fetcher {
+	return &Fetcher{
+		Client:       client,
+		HashClient:   newHashClient(client),
+		StallTimeout: DefaultStallTimeout,
+	}
+}
+
+// newHashClient returns a client with no total Timeout, reusing base's
+// transport (proxy/TLS/dial settings) but ensuring a response-header timeout
+// so a server that accepts the connection yet never replies still fails fast.
+func newHashClient(base *http.Client) *http.Client {
+	var rt http.RoundTripper
+	switch {
+	case base != nil && base.Transport != nil:
+		if t, ok := base.Transport.(*http.Transport); ok {
+			c := t.Clone()
+			if c.ResponseHeaderTimeout == 0 {
+				c.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+			}
+			rt = c
+		} else {
+			// Custom RoundTripper (e.g. a test double) — reuse verbatim.
+			rt = base.Transport
+		}
+	default:
+		c := http.DefaultTransport.(*http.Transport).Clone()
+		c.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+		rt = c
+	}
+	return &http.Client{Transport: rt}
+}
 
 // Fetch performs the full extraction pipeline for a single .deb URL.
 func (f *Fetcher) Fetch(ctx context.Context, opts Options) (*Result, error) {
@@ -215,14 +279,24 @@ func (f *Fetcher) rangeBody(ctx context.Context, url string, headers http.Header
 
 // streamHash performs a full GET, computes SHA256, returns hash + size. No
 // Range header — server may return 200 or 206; either is fine, we drain
-// everything.
+// everything. The drain is bounded by progress, not by total size: a read
+// watchdog cancels the request if no bytes arrive for StallTimeout, so a large
+// asset over a slow-but-live link succeeds while a stalled one fails promptly.
 func (f *Fetcher) streamHash(ctx context.Context, opts Options) (string, int64, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opts.URL, nil)
 	if err != nil {
 		return "", 0, err
 	}
 	applyHeaders(req, opts.Headers)
-	resp, err := f.Client.Do(req)
+
+	client := f.HashClient
+	if client == nil {
+		client = f.Client
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", 0, err
 	}
@@ -230,12 +304,41 @@ func (f *Fetcher) streamHash(ctx context.Context, opts Options) (string, int64, 
 	if resp.StatusCode != http.StatusOK {
 		return "", 0, fmt.Errorf("GET %s: unexpected status %s", opts.URL, resp.Status)
 	}
+
+	d := f.StallTimeout
+	if d <= 0 {
+		d = DefaultStallTimeout
+	}
+	sr := &stallReader{rc: resp.Body, d: d}
+	sr.timer = time.AfterFunc(d, func() { cancel(errStall) })
+	defer sr.timer.Stop()
+
 	h := sha256.New()
-	n, err := io.Copy(h, resp.Body)
+	n, err := io.Copy(h, sr)
 	if err != nil {
+		if errors.Is(context.Cause(ctx), errStall) {
+			return "", 0, fmt.Errorf("drain body: no progress for %s", d)
+		}
 		return "", 0, fmt.Errorf("drain body: %w", err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), n, nil
+}
+
+// stallReader wraps a response body and rearms a watchdog on every read that
+// makes progress. When the watchdog fires it cancels the request context,
+// unblocking an in-flight Read with the errStall cause.
+type stallReader struct {
+	rc    io.Reader
+	d     time.Duration
+	timer *time.Timer
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.rc.Read(p)
+	if n > 0 {
+		s.timer.Reset(s.d)
+	}
+	return n, err
 }
 
 func applyHeaders(req *http.Request, h http.Header) {

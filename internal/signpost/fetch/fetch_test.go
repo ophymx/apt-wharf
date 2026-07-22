@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // buildFakeDeb produces a minimal valid .deb byte slice with the given
@@ -201,6 +202,73 @@ func TestFetcher_NeedHashWith206TriggersStream(t *testing.T) {
 	want := sha256.Sum256(deb)
 	if res.SHA256 != hex.EncodeToString(want[:]) {
 		t.Fatalf("hash mismatch")
+	}
+}
+
+// TestStreamHash_SlowButProgressingSucceeds proves the drain is bounded by
+// progress, not total time: chunks arrive with gaps shorter than StallTimeout
+// but a total transfer time well past it, and the hash still completes. This
+// is the zoom-amd64 case — a large asset over a slow link.
+func TestStreamHash_SlowButProgressingSucceeds(t *testing.T) {
+	body := bytes.Repeat([]byte("z"), 4096)
+	const chunk = 256
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fl, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("ResponseWriter is not a Flusher")
+		}
+		w.WriteHeader(200)
+		for i := 0; i < len(body); i += chunk {
+			w.Write(body[i : i+chunk])
+			fl.Flush()
+			time.Sleep(15 * time.Millisecond) // per-gap < StallTimeout
+		}
+	}))
+	defer srv.Close()
+
+	f := New(srv.Client())
+	f.StallTimeout = 200 * time.Millisecond // 16 gaps * 15ms ~= 240ms total > StallTimeout
+
+	hash, n, err := f.streamHash(context.Background(), Options{URL: srv.URL})
+	if err != nil {
+		t.Fatalf("streamHash on slow-but-live link: %v", err)
+	}
+	if n != int64(len(body)) {
+		t.Fatalf("drained %d bytes, want %d", n, len(body))
+	}
+	want := sha256.Sum256(body)
+	if hash != hex.EncodeToString(want[:]) {
+		t.Fatalf("hash mismatch")
+	}
+}
+
+// TestStreamHash_StallAborts proves a connection that accepts then goes silent
+// past StallTimeout is aborted with a clear no-progress error rather than
+// hanging until some size-proportional total cap.
+func TestStreamHash_StallAborts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fl := w.(http.Flusher)
+		w.WriteHeader(200)
+		w.Write([]byte("partial"))
+		fl.Flush()
+		time.Sleep(400 * time.Millisecond) // >> StallTimeout: no further progress
+		w.Write([]byte("never-read"))
+	}))
+	defer srv.Close()
+
+	f := New(srv.Client())
+	f.StallTimeout = 100 * time.Millisecond
+
+	start := time.Now()
+	_, _, err := f.streamHash(context.Background(), Options{URL: srv.URL})
+	if err == nil {
+		t.Fatal("expected stall error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no progress") {
+		t.Fatalf("error = %q, want it to mention no progress", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("aborted after %s; stall watchdog should have fired near 100ms", elapsed)
 	}
 }
 
