@@ -301,8 +301,7 @@ func runExternal(ctx context.Context, cfg ExternalConfig, op string, extras []st
 			return stdoutBuf.Bytes(), stderrBuf.Bytes(),
 				fmt.Errorf("timeout after %s", timeout)
 		}
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return stdoutBuf.Bytes(), stderrBuf.Bytes(),
 				fmt.Errorf("exit %d", ee.ExitCode())
 		}

@@ -103,8 +103,7 @@ func ResolveExternal(ctx context.Context, e *config.ExternalSource, workdir stri
 			return nil, fmt.Errorf("external %s: timeout after %s%s",
 				e.Command[0], timeout, stderrTail(stderrBuf.Bytes()))
 		}
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return nil, fmt.Errorf("external %s: exit %d%s",
 				e.Command[0], ee.ExitCode(), stderrTail(stderrBuf.Bytes()))
 		}

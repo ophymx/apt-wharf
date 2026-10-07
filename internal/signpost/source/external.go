@@ -101,8 +101,7 @@ func (d *ExternalDiscoverer) Probe(ctx context.Context, in ProbeInput) (*ProbeRe
 			return nil, fmt.Errorf("external %s: timeout after %s%s",
 				d.Command[0], d.Timeout, stderrTail(stderrBuf.Bytes()))
 		}
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return nil, fmt.Errorf("external %s: exit %d%s",
 				d.Command[0], ee.ExitCode(), stderrTail(stderrBuf.Bytes()))
 		}
