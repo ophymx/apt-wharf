@@ -141,6 +141,20 @@ func (r *Refresher) Refresh(ctx context.Context) error {
 	return tickErr
 }
 
+// Rebuild composes and publishes a snapshot from on-disk state without
+// touching the network: no discovery sweep, no fetches. The bootstrap
+// rebuild check still runs (it is local). Used by `signpost export
+// --offline` to re-emit the last-known-good repository, e.g. onto a new
+// host or after a key rotation. Sources that have no state file yet are
+// simply absent, exactly as on a cold daemon start.
+func (r *Refresher) Rebuild() error {
+	if !r.tickMu.TryLock() {
+		return errors.New("rebuild: a refresh tick is in progress")
+	}
+	defer r.tickMu.Unlock()
+	return r.compose()
+}
+
 // refreshLocked is the inner refresh body — extracted so Refresh can wrap
 // it with tracker bookkeeping without nesting a giant defer.
 func (r *Refresher) refreshLocked(ctx context.Context) error {
@@ -150,8 +164,12 @@ func (r *Refresher) refreshLocked(ctx context.Context) error {
 	}
 
 	r.fanoutProcess(ctx, prevStates)
+	return r.compose()
+}
 
-	// Reload after writes to capture all updates.
+// compose is the tail of a tick: reload state after any writes, make sure
+// the bootstrap .deb is current, compose the snapshot, and publish it.
+func (r *Refresher) compose() error {
 	states, err := r.store.LoadSources()
 	if err != nil {
 		return fmt.Errorf("reload sources: %w", err)

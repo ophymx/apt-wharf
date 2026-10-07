@@ -19,7 +19,7 @@ at the upstream URLs without re-hosting them.
 
 | Binary | Role |
 | --- | --- |
-| [`signpost`](./cmd/signpost) | Daemon. Serves a signed apt repo whose `.deb` requests HTTP-redirect to upstream vendors. Hosts only `Release` / `InRelease` / `Packages` metadata; never caches `.deb` bytes. |
+| [`signpost`](./cmd/signpost) | Daemon. Serves a signed apt repo whose `.deb` requests HTTP-redirect to upstream vendors. Hosts only `Release` / `InRelease` / `Packages` metadata; never caches `.deb` bytes. `signpost export` writes the same repo as a static site with redirect rules for Cloudflare or nginx. |
 | [`cooper`](./cmd/cooper) | CLI. Turns GitHub-released binaries into reproducible `.deb` files via a two-phase JSON contract (`discover` → `plan.json` → `build`). Execs `nfpm pkg` for the actual Debian packaging. |
 | [`chandler`](./cmd/chandler) | CLI. Turns the `curl URL \| sudo tee ...` keyring + sources install ritual into a reproducible keyring + `.sources` `.deb`. Fetches keys over HTTPS, dearmors in-process, renders deb822. |
 | [`staves`](./cmd/staves) | CLI. Packs locally-checked-in files (configs, systemd units, scripts) into a `.deb` via cooper's build pipeline. `source_date_epoch` is a content-hash of the resolved nfpm subtree + every aux file's source bytes (git-independent). |

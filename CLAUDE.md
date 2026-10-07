@@ -90,6 +90,9 @@ go test -tags integration ./internal/signpost/source/...
 go test ./internal/cooper/build/ -run TestRun_RealNfpm
 go test ./internal/chandler/discover/ -run TestE2E
 
+# Static export of the signpost repo (same config + state dir as serve):
+go run ./cmd/signpost export --config config.yaml --out ./site --target cloudflare,manifest
+
 # Lint YAML examples without network:
 go run ./cmd/cooper   validate ./examples/hugo/cooper.yaml
 go run ./cmd/chandler validate ./examples/hashicorp/chandler.yaml

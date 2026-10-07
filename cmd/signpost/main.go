@@ -45,6 +45,8 @@ func main() {
 		err = cmdServe(os.Args[2:], log)
 	case "check":
 		err = cmdCheck(os.Args[2:], log)
+	case "export":
+		err = cmdExport(os.Args[2:], log)
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 		return
@@ -65,4 +67,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage:")
 	fmt.Fprintln(w, "  signpost serve  --config FILE")
 	fmt.Fprintln(w, "  signpost check  --config FILE [--source NAME]")
+	fmt.Fprintln(w, "  signpost export --config FILE --out DIR --target NAME[,NAME...] [--offline]")
 }

@@ -307,6 +307,98 @@ All HTTP timestamps are truncated to one-second precision (HTTP-Date
 format). Entries with a zero `LastModified` omit the header — that's
 the cold-start case before any source has been imported.
 
+## Static export
+
+`signpost export` writes the repository a daemon would serve to a
+directory, for deployment on a static host. The snapshot *is* the whole
+served state (files map + redirects map), so the export is a faithful
+transcription: every file key becomes a file under `--out`, every
+redirect key becomes one rule in the chosen target's redirect format.
+Nothing in composition changes; `export` runs the same import + refresh
+tick as `serve` and then hands the snapshot to `internal/signpost/export`
+instead of an HTTP listener.
+
+```sh
+signpost export --config FILE --out DIR --target cloudflare[,nginx,manifest] [--offline]
+```
+
+- `--target` is repeatable or comma-separated; unknown names are rejected.
+- `--offline` skips discovery and fetch entirely and composes from the
+  state dir (`Refresher.Rebuild`). The bootstrap rebuild check still runs
+  since it is local. Use it to re-emit the last-known-good repo onto a
+  new host or after a signing-key rotation.
+
+### Targets
+
+| Target       | Emits                                          | Notes |
+| ------------ | ---------------------------------------------- | ----- |
+| `cloudflare` | `_redirects`, `_headers`                       | Pages and Workers static assets parse the same files. Limits enforced at export: 2,000 static rules, 1,000 chars per line. |
+| `nginx`      | `signpost-nginx.conf`                          | An http-context `map $uri $signpost_redirect {}` plus a commented `server {}` example. nginx matches plain map keys case-insensitively, so case-colliding pool paths are refused. |
+| `manifest`   | `signpost-export.json`                         | Host-neutral JSON: every file with size, SHA256, content type, `last_modified`, and a cache class; every redirect with location and status. For scripting hosts without a built-in rule format (S3 website redirects, CDN functions). |
+
+GitHub Pages is intentionally unsupported: it has no server-side
+redirects and apt does not follow HTML meta refresh.
+
+Every redirect is a 302. Cache headers (Cloudflare `_headers`, the nginx
+example block) follow one rule: canonical metadata (`/dists/*`,
+`/pubkey.gpg`, `/release/*`) is `no-cache` so `apt update` always
+revalidates; `/pool/*` is `immutable` because pool paths are
+version-addressed. by-hash entries live under `/dists/` and so also get
+`no-cache` on Cloudflare (one greedy splat per rule, no way to carve
+them out); the manifest marks them `immutable` for hosts that can.
+
+### Write discipline
+
+- Every file is written tmp + rename, so a web server whose document
+  root is `--out` never serves a partial file.
+- Files land leaves-first: pool and target files, then by-hash, then
+  canonical `Packages`, then `Release.gpg`, `Release`, and `InRelease`
+  last. A client that reads the new `InRelease` finds the by-hash
+  entries it references already present.
+- `.signpost-export.json` at the output root records every path the
+  export wrote. The next export prunes paths listed there that it did
+  not write again (old by-hash entries, superseded bootstrap `.deb`,
+  files from a target no longer requested) and removes directories that
+  became empty. Nothing else is ever removed. A non-empty `--out`
+  without that marker is refused; an empty or missing one is fine.
+
+### Path validation
+
+Pool paths and redirect targets must be expressible in every rule
+syntax, so the export refuses paths containing whitespace, control or
+non-ASCII bytes, `:`, `*`, `"`, or `#`. The `:` rule means a package with
+an epoch in `Version` (`1:2.3`) is not exportable today, because
+`poolPath` interpolates the version verbatim; dpkg encodes the colon as
+`%3a` and signpost should too. That is a pre-existing pool-path quirk,
+not an export limitation, and fixing it changes `Filename:` in
+`Packages` for any epoch package.
+
+### Operational notes
+
+- **State must persist between runs.** Export uses the same state dir as
+  `serve`. Without it every run re-hashes every upstream `.deb` and
+  rebuilds the bootstrap package with a fresh date-based version, which
+  clients see as a phantom keyring upgrade. On a host with a systemd
+  timer this is automatic; in ephemeral CI the state dir needs a cache.
+- **Signing in CI.** `signing.external` already covers KMS or Vault
+  backed signers; `export` inherits it unchanged.
+- **`base_url` must match where the site is served.** The bootstrap
+  `.sources` file and the `/release/<suite>/latest.deb` redirect both
+  bake in `repository.base_url`, including any path prefix. Serve the
+  export at exactly that URL.
+- **`Date:` moves every run.** `Release` carries generation time, so two
+  exports of unchanged content differ. Idempotent re-export (reusing the
+  prior `Release` + signatures when nothing semantic moved) is a
+  possible refinement, not done. apt rejects a `Release` older than the
+  one it has, so never export from a stale state dir over a newer site.
+- **No by-hash carry-over.** The daemon keeps the previous tick's by-hash
+  entries for a retention window; a one-shot export has no previous
+  snapshot. Static-host deploys are atomic and apt falls back from
+  by-hash to the canonical path under `Acquire-By-Hash: yes`, so the
+  worst case is one hash-sum mismatch that a retry fixes.
+- `/status` and `/metrics` are not exported; they describe a running
+  process.
+
 ## Discovery plugins
 
 Single interface, trivially small:
@@ -740,9 +832,9 @@ embedding them in command arguments.
 
 - **Operational surface** — CLI for "force refresh source X", "rotate
   key"? Today there is `signpost check --source NAME` for one-off
-  probe+fetch verification, `signpost serve` for the daemon, and `kill
-  -HUP <pid>` for reload+refresh-now. No per-source force-refresh, no
-  key-rotate command.
+  probe+fetch verification, `signpost serve` for the daemon, `signpost
+  export` for a one-shot static-site write, and `kill -HUP <pid>` for
+  reload+refresh-now. No per-source force-refresh, no key-rotate command.
 - **Webhook-triggered refresh** — GitHub releases can webhook signpost to
   cut time-to-publish from up-to-an-hour to seconds; introduces an
   authenticated-write surface that doesn't exist today.
