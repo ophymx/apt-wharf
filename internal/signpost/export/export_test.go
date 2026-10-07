@@ -309,7 +309,7 @@ func TestBuildManifest_Rejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := testSnapshot()
 			tc.mutate(s)
-			_, err := BuildManifest(s)
+			_, err := BuildManifest(s, "")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want containing %q", err, tc.want)
 			}
@@ -323,7 +323,7 @@ func TestCloudflare_Limits(t *testing.T) {
 		for i := 0; i <= cloudflareMaxStaticRedirects; i++ {
 			s.Redirects["/pool/main/p/p/p_1."+strconv.Itoa(i)+"_amd64.deb"] = refresh.Redirect{URL: "https://x.example/p.deb"}
 		}
-		m, err := BuildManifest(s)
+		m, err := BuildManifest(s, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -334,7 +334,7 @@ func TestCloudflare_Limits(t *testing.T) {
 	t.Run("line too long", func(t *testing.T) {
 		s := testSnapshot()
 		s.Redirects["/pool/main/l/long/long_1_amd64.deb"] = refresh.Redirect{URL: "https://x.example/" + strings.Repeat("a", cloudflareMaxRedirectLine)}
-		m, err := BuildManifest(s)
+		m, err := BuildManifest(s, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,7 +348,7 @@ func TestNginx_Rejects(t *testing.T) {
 	t.Run("case-colliding keys", func(t *testing.T) {
 		s := testSnapshot()
 		s.Redirects["/pool/main/w/widget/widget_1.2.3_AMD64.deb"] = refresh.Redirect{URL: "https://x.example/w.deb"}
-		m, err := BuildManifest(s)
+		m, err := BuildManifest(s, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -359,7 +359,7 @@ func TestNginx_Rejects(t *testing.T) {
 	t.Run("dollar in location", func(t *testing.T) {
 		s := testSnapshot()
 		s.Redirects["/pool/main/d/d/d_1_amd64.deb"] = refresh.Redirect{URL: "https://x.example/d.deb?sig=$host"}
-		m, err := BuildManifest(s)
+		m, err := BuildManifest(s, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -385,5 +385,96 @@ func TestParseTargets(t *testing.T) {
 	}
 	if got := strings.Join(TargetNames(), ","); got != "cloudflare,manifest,nginx" {
 		t.Errorf("TargetNames = %s", got)
+	}
+}
+
+func TestWrite_PathPrefix(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "site")
+	snap := testSnapshot()
+	if _, err := Write(snap, Options{OutDir: dir, Targets: allTargets(t), PathPrefix: "/apt"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// Site tree lands under <out>/apt/; rule files stay at the root.
+	if got := readOut(t, dir, "apt/dists/stable/InRelease"); got != "inrelease" {
+		t.Errorf("prefixed InRelease = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dists")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("unprefixed dists/ should not exist (err=%v)", err)
+	}
+	for _, root := range []string{"_redirects", "_headers", NginxConfName, ManifestName, MarkerName} {
+		if _, err := os.Stat(filepath.Join(dir, root)); err != nil {
+			t.Errorf("%s should be at the output root: %v", root, err)
+		}
+	}
+
+	// Every rule is keyed by the prefixed public path.
+	rd := stripComments(readOut(t, dir, "_redirects"))
+	if !strings.HasPrefix(rd, "/apt/pool/main/b/bolt/bolt_0.9_arm64.deb https://cdn.example.com/bolt_0.9_arm64.deb 302\n") {
+		t.Errorf("_redirects not prefixed:\n%s", rd)
+	}
+	if strings.Contains(rd, "\n/pool/") || strings.Contains(rd, "\n/release/") {
+		t.Errorf("_redirects has unprefixed keys:\n%s", rd)
+	}
+	hd := readOut(t, dir, "_headers")
+	if !strings.Contains(hd, "/apt/dists/*\n") || !strings.Contains(hd, "/apt/pool/*\n") || strings.Contains(hd, "\n/dists/*") {
+		t.Errorf("_headers not prefixed:\n%s", hd)
+	}
+	ng := readOut(t, dir, NginxConfName)
+	if !strings.Contains(ng, `    "/apt/pool/main/b/bolt/bolt_0.9_arm64.deb" "https://cdn.example.com/bolt_0.9_arm64.deb";`) ||
+		!strings.Contains(ng, "location /apt/dists/") || !strings.Contains(ng, "alias <out>/apt/") {
+		t.Errorf("nginx conf not prefixed:\n%s", ng)
+	}
+	var m Manifest
+	if err := json.Unmarshal([]byte(readOut(t, dir, ManifestName)), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.PathPrefix != "/apt" || m.Files[0].Path != "/apt/dists/stable/InRelease" || m.Redirects[0].Path != "/apt/pool/main/b/bolt/bolt_0.9_arm64.deb" {
+		t.Errorf("manifest not prefixed: prefix=%q file0=%s redirect0=%s", m.PathPrefix, m.Files[0].Path, m.Redirects[0].Path)
+	}
+	// Cache class is decided on the unprefixed path.
+	for _, f := range m.Files {
+		if strings.Contains(f.Path, "/by-hash/") && f.Cache != CacheImmutable {
+			t.Errorf("%s cache = %q", f.Path, f.Cache)
+		}
+	}
+	// Self-referential redirect location already carries the prefix from
+	// composeSnapshot and is passed through untouched.
+	for _, r := range m.Redirects {
+		if r.Path == "/apt/release/stable/latest.deb" && !strings.HasPrefix(r.Location, "/apt/pool/") {
+			t.Errorf("latest.deb location = %q", r.Location)
+		}
+	}
+}
+
+func TestWrite_PrefixChangePrunesOldTree(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "site")
+	ts, _ := ParseTargets([]string{"manifest"})
+	snap := testSnapshot()
+	if _, err := Write(snap, Options{OutDir: dir, Targets: ts}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Write(snap, Options{OutDir: dir, Targets: ts, PathPrefix: "/apt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Pruned != len(snap.Files) {
+		t.Errorf("pruned = %d, want %d (the whole unprefixed tree)", res.Pruned, len(snap.Files))
+	}
+	for _, old := range []string{"dists", "pool", "pubkey.gpg", "release"} {
+		if _, err := os.Stat(filepath.Join(dir, old)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s should be pruned (err=%v)", old, err)
+		}
+	}
+}
+
+func TestBuildManifest_RejectsBadPrefix(t *testing.T) {
+	for _, bad := range []string{"apt", "/apt/", "/ap t", "/a:b"} {
+		if _, err := BuildManifest(testSnapshot(), bad); err == nil || !strings.Contains(err.Error(), "prefix") {
+			t.Errorf("prefix %q: err = %v", bad, err)
+		}
+	}
+	if _, err := BuildManifest(testSnapshot(), "/apt/v2"); err != nil {
+		t.Errorf("multi-segment prefix rejected: %v", err)
 	}
 }

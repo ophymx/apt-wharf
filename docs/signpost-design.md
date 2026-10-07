@@ -318,6 +318,18 @@ Nothing in composition changes; `export` runs the same import + refresh
 tick as `serve` and then hands the snapshot to `internal/signpost/export`
 instead of an HTTP listener.
 
+**`--out` is the host's document root.** The daemon is prefix-agnostic
+and relies on a reverse proxy to strip `repository.base_url`'s path; a
+static host has no such proxy, so the export applies the prefix itself.
+With `base_url: https://host/apt`, the site tree lands under
+`<out>/apt/`, every redirect and header rule is keyed by the public path
+(`/apt/pool/...`), and the manifest records `path_prefix`. Target rule
+files always sit at `<out>` itself. Serving `<out>` at the domain root
+(Cloudflare, nginx `root`) then yields exactly the URLs the bootstrap
+`.sources` file names. nginx can also mount only the subtree with
+`location /apt/ { alias <out>/apt/; }`; the `map` keys are unaffected
+because `$uri` carries the prefix either way.
+
 ```sh
 signpost export --config FILE --out DIR --target cloudflare[,nginx,manifest] [--offline]
 ```
@@ -333,8 +345,8 @@ signpost export --config FILE --out DIR --target cloudflare[,nginx,manifest] [--
 | Target       | Emits                                          | Notes |
 | ------------ | ---------------------------------------------- | ----- |
 | `cloudflare` | `_redirects`, `_headers`                       | Pages and Workers static assets parse the same files. Limits enforced at export: 2,000 static rules, 1,000 chars per line. |
-| `nginx`      | `signpost-nginx.conf`                          | An http-context `map $uri $signpost_redirect {}` plus a commented `server {}` example. nginx matches plain map keys case-insensitively, so case-colliding pool paths are refused. |
-| `manifest`   | `signpost-export.json`                         | Host-neutral JSON: every file with size, SHA256, content type, `last_modified`, and a cache class; every redirect with location and status. For scripting hosts without a built-in rule format (S3 website redirects, CDN functions). |
+| `nginx`      | `signpost-nginx.conf`                          | An http-context `map $uri $signpost_redirect {}` plus a commented `server {}` example (with `alias` guidance when a prefix is set). nginx matches plain map keys case-insensitively, so case-colliding pool paths are refused; `$` in a location is refused because map values interpolate variables. |
+| `manifest`   | `signpost-export.json`                         | Host-neutral JSON: `path_prefix`, every file with prefixed public path, size, SHA256, content type, `last_modified`, and a cache class; every redirect with location and status. For scripting hosts without a built-in rule format (S3 website redirects, CDN functions). |
 
 GitHub Pages is intentionally unsupported: it has no server-side
 redirects and apt does not follow HTML meta refresh.
@@ -384,8 +396,9 @@ not an export limitation, and fixing it changes `Filename:` in
   backed signers; `export` inherits it unchanged.
 - **`base_url` must match where the site is served.** The bootstrap
   `.sources` file and the `/release/<suite>/latest.deb` redirect both
-  bake in `repository.base_url`, including any path prefix. Serve the
-  export at exactly that URL.
+  bake in `repository.base_url`, including any path prefix, and the
+  export lays its tree out under that prefix. Serve `--out` at the
+  domain root of `base_url`'s host.
 - **`Date:` moves every run.** `Release` carries generation time, so two
   exports of unchanged content differ. Idempotent re-export (reusing the
   prior `Release` + signatures when nothing semantic moved) is a

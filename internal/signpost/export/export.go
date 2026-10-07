@@ -56,10 +56,20 @@ type marker struct {
 
 // Options controls one export.
 type Options struct {
-	// OutDir is the output root. Created if missing.
+	// OutDir is the output root, which is the host's document root: the
+	// directory a static host serves at the domain root, or nginx's
+	// `root`. Created if missing.
 	OutDir string
 	// Targets emit host-specific redirect/header files. At least one.
 	Targets []Target
+	// PathPrefix is the URL path component of repository.base_url
+	// (config.Repository.PathPrefix): "" when the repo lives at the host
+	// root, otherwise "/apt"-style with a leading slash and no trailing
+	// slash. Site files land under OutDir/<prefix>/ and every rule is
+	// keyed by the prefixed public path, so the export serves correctly
+	// when OutDir is the document root. Target-emitted files always sit
+	// at OutDir itself.
+	PathPrefix string
 }
 
 // Result reports what Write did.
@@ -81,19 +91,20 @@ func Write(snap *refresh.Snapshot, opts Options) (*Result, error) {
 		return nil, errors.New("export: at least one target is required")
 	}
 
-	m, err := BuildManifest(snap)
+	m, err := BuildManifest(snap, opts.PathPrefix)
 	if err != nil {
 		return nil, err
 	}
 
 	// Collect everything to write: site tree first, then target files.
+	// Manifest paths are already prefixed and validated.
 	out := map[string][]byte{}
-	for p, f := range snap.Files {
-		rel, err := relPath(p)
+	for _, f := range m.Files {
+		rel, err := relPath(f.Path)
 		if err != nil {
 			return nil, err
 		}
-		out[rel] = f.Data
+		out[rel] = snap.Files[f.srcPath].Data
 	}
 	for _, t := range opts.Targets {
 		files, err := t.Emit(m)

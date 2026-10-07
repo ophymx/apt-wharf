@@ -28,15 +28,19 @@ const (
 	CacheImmutable = "immutable"
 )
 
-// Manifest is the host-neutral description of an export.
+// Manifest is the host-neutral description of an export. Every Path is
+// the public URL path relative to the host root, i.e. PathPrefix already
+// prepended; deploy tooling can use paths verbatim.
 type Manifest struct {
 	SchemaVersion int              `json:"schema_version"`
 	BuiltAt       time.Time        `json:"built_at"`
+	PathPrefix    string           `json:"path_prefix"`
 	Files         []FileRecord     `json:"files"`
 	Redirects     []RedirectRecord `json:"redirects"`
 }
 
-// FileRecord describes one static file. Path is URL-absolute ("/dists/...").
+// FileRecord describes one static file. Path is URL-absolute and
+// prefixed ("/apt/dists/..." for base_url https://host/apt).
 type FileRecord struct {
 	Path         string     `json:"path"`
 	Size         int64      `json:"size"`
@@ -44,6 +48,8 @@ type FileRecord struct {
 	ContentType  string     `json:"content_type,omitempty"`
 	LastModified *time.Time `json:"last_modified,omitempty"`
 	Cache        string     `json:"cache"`
+
+	srcPath string // unprefixed snapshot key, for Write to look up bytes
 }
 
 // RedirectRecord describes one redirect. Location is either an absolute
@@ -56,21 +62,26 @@ type RedirectRecord struct {
 	Status   int    `json:"status"`
 }
 
-// BuildManifest validates the snapshot's paths and URLs and returns the
-// sorted manifest. Every target consumes this rather than the raw maps,
-// so the validation here is the single gate for "can this be exported".
-func BuildManifest(snap *refresh.Snapshot) (*Manifest, error) {
-	m := &Manifest{SchemaVersion: ManifestSchemaVersion, BuiltAt: snap.BuiltAt.UTC()}
+// BuildManifest validates the snapshot's paths and URLs, prepends prefix
+// to every path, and returns the sorted manifest. Every target consumes
+// this rather than the raw maps, so the validation here is the single
+// gate for "can this be exported".
+func BuildManifest(snap *refresh.Snapshot, prefix string) (*Manifest, error) {
+	if err := checkPrefix(prefix); err != nil {
+		return nil, fmt.Errorf("export: %w", err)
+	}
+	m := &Manifest{SchemaVersion: ManifestSchemaVersion, BuiltAt: snap.BuiltAt.UTC(), PathPrefix: prefix}
 	for p, f := range snap.Files {
-		if err := checkPath(p); err != nil {
+		if err := checkPath(prefix + p); err != nil {
 			return nil, fmt.Errorf("export: file %w", err)
 		}
 		rec := FileRecord{
-			Path:        p,
+			Path:        prefix + p,
 			Size:        int64(len(f.Data)),
 			SHA256:      hexSHA256(f.Data),
 			ContentType: f.ContentType,
 			Cache:       cacheClass(p),
+			srcPath:     p,
 		}
 		if !f.LastModified.IsZero() {
 			lm := f.LastModified.UTC()
@@ -79,7 +90,7 @@ func BuildManifest(snap *refresh.Snapshot) (*Manifest, error) {
 		m.Files = append(m.Files, rec)
 	}
 	for p, rd := range snap.Redirects {
-		if err := checkPath(p); err != nil {
+		if err := checkPath(prefix + p); err != nil {
 			return nil, fmt.Errorf("export: redirect %w", err)
 		}
 		if _, dup := snap.Files[p]; dup {
@@ -88,16 +99,33 @@ func BuildManifest(snap *refresh.Snapshot) (*Manifest, error) {
 		if err := checkLocation(rd.URL); err != nil {
 			return nil, fmt.Errorf("export: redirect %s: %w", p, err)
 		}
-		m.Redirects = append(m.Redirects, RedirectRecord{Path: p, Location: rd.URL, Status: 302})
+		m.Redirects = append(m.Redirects, RedirectRecord{Path: prefix + p, Location: rd.URL, Status: 302})
 	}
 	sort.Slice(m.Files, func(i, j int) bool { return m.Files[i].Path < m.Files[j].Path })
 	sort.Slice(m.Redirects, func(i, j int) bool { return m.Redirects[i].Path < m.Redirects[j].Path })
 	return m, nil
 }
 
-// cacheClass reports how a path may be cached. by-hash entries and pool
-// .debs are addressed by content or version and never change in place;
-// everything else is canonical metadata that must revalidate.
+// checkPrefix accepts "" or a "/seg[/seg...]" path with the same
+// character hygiene as checkPath. config validation already guarantees
+// this shape for repository.base_url; this is the package's own gate.
+func checkPrefix(prefix string) error {
+	if prefix == "" {
+		return nil
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return fmt.Errorf("path prefix %q must not end with /", prefix)
+	}
+	if err := checkPath(prefix); err != nil {
+		return fmt.Errorf("path prefix: %w", err)
+	}
+	return nil
+}
+
+// cacheClass reports how an (unprefixed) path may be cached. by-hash
+// entries and pool .debs are addressed by content or version and never
+// change in place; everything else is canonical metadata that must
+// revalidate.
 func cacheClass(p string) string {
 	if strings.Contains(p, "/by-hash/") || strings.HasPrefix(p, "/pool/") {
 		return CacheImmutable

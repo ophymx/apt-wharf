@@ -89,8 +89,9 @@ func cmdExport(args []string, log *slog.Logger) error {
 	}
 
 	res, err := export.Write(snap, export.Options{
-		OutDir:  *outDir,
-		Targets: targets,
+		OutDir:     *outDir,
+		Targets:    targets,
+		PathPrefix: cfg.Repository.PathPrefix(),
 	})
 	if err != nil {
 		return err
