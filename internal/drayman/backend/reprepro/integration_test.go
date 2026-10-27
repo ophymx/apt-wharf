@@ -85,6 +85,31 @@ Description: drayman integration test
 	if !strings.Contains(string(body), "X-Cooper-Build-Inputs-Hash: sha256:integration-hash-amd64") {
 		t.Errorf("Packages file missing expected hash field:\n%s", body)
 	}
+
+	// Remove: the removefilter formula must hit the entry exactly
+	// (verifies the $Version / Architecture formula against a real
+	// reprepro), and the cache must see it gone.
+	if err := b.Remove(ctx, pkgs[0]); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	exists, err = b.HashExists(ctx, "sha256:integration-hash-amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Error("expected post-remove HashExists=false")
+	}
+	pkgs, err = b.ListByNameArch(ctx, "hugo", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 0 {
+		t.Errorf("ListByNameArch after Remove: %+v", pkgs)
+	}
+	body, err = os.ReadFile(pkgFile)
+	if err == nil && strings.Contains(string(body), "Package: hugo") {
+		t.Errorf("Packages file still lists hugo after Remove:\n%s", body)
+	}
 }
 
 // makeFixtureDeb writes a minimal .deb to t.TempDir() with the given

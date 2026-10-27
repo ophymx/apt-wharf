@@ -172,6 +172,63 @@ Orchestrator implementations should:
   `(Package, base-version, Architecture)` exceeding a threshold,
   catching runaway rebuilds.
 
+### Retention (drayman `--retain N`)
+
+Auto-bump and new upstream releases accumulate versions in the
+target repo indefinitely on managers that keep history (aptly).
+drayman's optional retention policy bounds that, per
+`(Package, Architecture)`:
+
+- Keep the **N newest upstream versions** (ordered by
+  `CompareVersions`), and within each kept upstream version only
+  its **newest debian-revision**. Older revisions of the same
+  upstream are rebuilds with stale inputs and carry no rollback
+  value; counting upstream versions rather than full Debian versions
+  means a flapping asset (`1.0.0`, `1.0.0-1`, `1.0.0-2`) can't crowd
+  out genuinely older releases.
+- `N = 0` (the default) disables pruning. `N >= 1` never removes the
+  repo's current maximum.
+
+Scope is deliberately conservative:
+
+- Only `(Package, Architecture)` pairs named in the plan being
+  reconciled are touched, and only after the pair has *settled* this
+  run: the artifact's hash was already present (`hash_in_repo`), or
+  it was built and imported cleanly. Build/import failures,
+  `version_regression` skips, and `discover_failed` packages leave
+  their pair untouched.
+- Only entries carrying `X-Cooper-Build-Inputs-Hash` are candidates.
+  Foreign entries (manual uploads, other producers) are neither
+  counted toward N nor removed.
+- The entry whose hash matches this run's artifact is never removed,
+  even if an oddly-revisioned sibling (`1.0.0-nmu1`) sorts above it.
+
+Prunes run after every import and before the single publish, so the
+listing reflects the new entry and aptly folds adds and removes into
+one metadata regeneration. Each removal is an audit `prune` event
+(package, arch, version, hash, code, result); `drayman peek --retain N`
+and `reconcile --dry-run --retain N` print the predicted prunes as
+`<pkg>\t<arch>\tprune\t<version>: <reason>` rows. A failed removal
+makes the run exit non-zero and the package trailer `warn`, but does
+not block the publish of what was imported.
+
+Backend notes:
+
+- **aptly** keeps every imported version, so this is where retention
+  matters. Removal is `DELETE /api/repos/{name}/packages` by key;
+  aptly's internal pool keeps the file until an operator runs
+  `aptly db cleanup`, which drayman does not do.
+- **reprepro 5.3** keeps exactly one version per
+  `(Package, Architecture, Component)` and replaces it on
+  `includedeb`, deleting the unreferenced pool file. Retention is
+  effectively 1 and drayman's prune finds nothing to do.
+- **reprepro >= 5.4** adds `Limit:` in `conf/distributions`
+  (default 1, `0` = unlimited) and prunes at include time. drayman's
+  `--retain` only bites beyond that limit. Removal is
+  `removefilter <dist> 'Package (== p), $Version (== v), Architecture (== a)'`.
+
+Retention is an orchestrator knob, not part of the `Plan` contract.
+
 ## Config
 
 ### Top-level `cooper.yaml`

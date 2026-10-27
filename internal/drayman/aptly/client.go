@@ -7,8 +7,8 @@
 // reference. drayman touches a small subset: /api/repos/{name}/packages
 // (GET, plus POST/DELETE for write paths), /api/files/{dir} (POST
 // upload), /api/repos/{name}/file/{dir} (POST import), and
-// /api/publish/{prefix}/{distribution} (PUT update). Write paths are
-// in a follow-up commit.
+// /api/publish/{prefix}/{distribution} (PUT update), and
+// /api/repos/{name}/packages (DELETE by key) for retain pruning.
 package aptly
 
 import (
@@ -243,6 +243,35 @@ func (c *Client) ImportFromDir(ctx context.Context, repo, dir string, forceRepla
 		return nil, fmt.Errorf("aptly decode: %w", err)
 	}
 	return &out, nil
+}
+
+// RemovePackages deletes the packages identified by refs (aptly Keys,
+// as returned under ?format=details) from the local repository repo.
+// Mirrors `aptly repo remove`: the entries leave the repo immediately
+// but the files stay in aptly's pool until `aptly db cleanup`, and
+// the publication still lists them until the next PublishUpdate.
+func (c *Client) RemovePackages(ctx context.Context, repo string, refs []string) error {
+	body, err := json.Marshal(map[string]any{"PackageRefs": refs})
+	if err != nil {
+		return err
+	}
+	u := fmt.Sprintf("%s/api/repos/%s/packages", c.baseURL, url.PathEscape(repo))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("aptly DELETE %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }
 
 // PublishUpdateOpts controls publish-update behavior. Drayman's

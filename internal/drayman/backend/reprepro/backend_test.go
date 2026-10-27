@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
 )
 
 // stubTransport returns canned content per path. Tests construct one
@@ -239,4 +241,55 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestBackend_Remove_RunsRepreproRemovefilter(t *testing.T) {
+	st := &stubTransport{}
+	b := &Backend{transport: st, basedir: "/base", distribution: "stable", component: "main"}
+	pkg := backend.Package{Name: "hugo", Version: "0.140.0-1", Architecture: "amd64", BuildInputsHash: "sha256:x"}
+	if err := b.Remove(context.Background(), pkg); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.cmds) != 1 || st.cmds[0].name != "reprepro" {
+		t.Fatalf("cmds: %+v", st.cmds)
+	}
+	wantArgs := []string{"-b", "/base", "-C", "main", "removefilter", "stable",
+		"Package (== hugo), $Version (== 0.140.0-1), Architecture (== amd64)"}
+	if !equalSlices(st.cmds[0].args, wantArgs) {
+		t.Errorf("args: %v, want %v", st.cmds[0].args, wantArgs)
+	}
+	// No staging for a remove.
+	if len(st.staged) != 0 || len(st.removed) != 0 {
+		t.Errorf("remove must not stage files: staged=%v removed=%v", st.staged, st.removed)
+	}
+}
+
+func TestBackend_Remove_BubblesUpRepreproError(t *testing.T) {
+	st := &stubTransport{cmdErr: errors.New("exit status 249")}
+	b := &Backend{transport: st, basedir: "/base", distribution: "stable", component: "main"}
+	err := b.Remove(context.Background(), backend.Package{Name: "hugo", Version: "1", Architecture: "amd64"})
+	if err == nil || !strings.Contains(err.Error(), "removefilter") {
+		t.Fatalf("want wrapped removefilter error, got %v", err)
+	}
+}
+
+func TestBackend_Remove_InvalidatesCache(t *testing.T) {
+	st := &stubTransport{
+		listResult: []string{"/base/dists/stable/main/binary-amd64/Packages"},
+		files: map[string]string{
+			"/base/dists/stable/main/binary-amd64/Packages": "Package: hugo\nVersion: 1\nArchitecture: amd64\nX-Cooper-Build-Inputs-Hash: sha256:abc\n",
+		},
+	}
+	b := &Backend{transport: st, basedir: "/base", distribution: "stable", component: "main"}
+	if ok, _ := b.HashExists(context.Background(), "sha256:abc"); !ok {
+		t.Fatal("precondition: hash present")
+	}
+	if err := b.Remove(context.Background(), backend.Package{Name: "hugo", Version: "1", Architecture: "amd64"}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate reprepro having rewritten the index.
+	st.files["/base/dists/stable/main/binary-amd64/Packages"] = ""
+	if ok, _ := b.HashExists(context.Background(), "sha256:abc"); ok {
+		t.Error("cache not invalidated by Remove")
+	}
 }

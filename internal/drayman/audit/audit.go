@@ -2,7 +2,7 @@
 // drayman runs. cooper-design.md §"Audit & safety" makes this an
 // orchestrator concern: log every auto-bump (prior hash → new hash,
 // prior revision → new revision), every regression skip, and every
-// import/publish event so operators can review what drayman did
+// import/prune/publish event so operators can review what drayman did
 // without re-deriving it from peek output.
 //
 // The log is JSON-lines (one event per line, append-mode) so it
@@ -52,6 +52,12 @@ type Event struct {
 	DebPath     string `json:"deb_path,omitempty"`
 	DebBasename string `json:"deb_basename,omitempty"`
 
+	// Prune fields (Type == TypePrune). Package/Arch/Code/Reason are
+	// shared with decision events; Version and Hash identify the
+	// removed repo entry.
+	Version string `json:"version,omitempty"`
+	Hash    string `json:"hash,omitempty"`
+
 	// Publish fields (Type == TypePublish).
 	Backend string `json:"backend,omitempty"`
 
@@ -64,6 +70,7 @@ type Event struct {
 const (
 	TypeDecision = "decision"
 	TypeImport   = "import"
+	TypePrune    = "prune"
 	TypePublish  = "publish"
 )
 
@@ -136,6 +143,26 @@ func (l *Logger) Import(debPath, basename string, err error) error {
 		DebPath:     debPath,
 		DebBasename: basename,
 		Result:      ResultOK,
+	}
+	if err != nil {
+		e.Result = ResultError
+		e.Error = err.Error()
+	}
+	return l.write(e)
+}
+
+// Prune writes a prune event for one retain-policy removal. err is
+// nil for success.
+func (l *Logger) Prune(p policy.Prune, err error) error {
+	e := Event{
+		Type:    TypePrune,
+		Package: p.PackageName,
+		Arch:    p.Arch,
+		Code:    p.Code,
+		Reason:  p.Reason,
+		Version: p.Entry.Version,
+		Hash:    p.Entry.BuildInputsHash,
+		Result:  ResultOK,
 	}
 	if err != nil {
 		e.Result = ResultError

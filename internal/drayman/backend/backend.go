@@ -22,6 +22,13 @@ type Package struct {
 	Version         string
 	Architecture    string
 	BuildInputsHash string // X-Cooper-Build-Inputs-Hash; empty if absent
+
+	// Ref is a backend-opaque handle for this exact repo entry,
+	// populated by ListByNameArch and consumed by Remove. aptly fills
+	// it with the package Key its delete endpoint wants; reprepro
+	// leaves it empty and removes by (Name, Version, Architecture).
+	// Callers never interpret it.
+	Ref string
 }
 
 // Backend is the apt-repository manager drayman targets. Two
@@ -47,9 +54,16 @@ type Backend interface {
 	// .deb, then Publish once at the end.
 	Import(ctx context.Context, debPath string) error
 
+	// Remove deletes one entry (as returned by ListByNameArch) from
+	// the target repo. Used by the retain policy to prune superseded
+	// versions. Like Import, aptly stages the change for the next
+	// Publish while reprepro applies it atomically.
+	Remove(ctx context.Context, pkg Package) error
+
 	// Publish regenerates the repo's published Release/Packages
-	// metadata. Called once per drayman run after every Import.
-	// Backends that publish atomically per Import return nil here.
+	// metadata. Called once per drayman run after every Import and
+	// Remove. Backends that publish atomically per operation return
+	// nil here.
 	Publish(ctx context.Context) error
 }
 

@@ -419,3 +419,42 @@ func TestPublishRepo_PostsCorrectBody(t *testing.T) {
 		}
 	}
 }
+
+func TestRemovePackages_SendsDeleteWithRefs(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Name":"test-repo"}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	if err := c.RemovePackages(context.Background(), "test-repo", []string{"Pamd64 hugo 0.140.0 abc123"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/api/repos/test-repo/packages" {
+		t.Errorf("request: %s %s", gotMethod, gotPath)
+	}
+	var body struct{ PackageRefs []string }
+	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
+		t.Fatalf("body %q: %v", gotBody, err)
+	}
+	if len(body.PackageRefs) != 1 || body.PackageRefs[0] != "Pamd64 hugo 0.140.0 abc123" {
+		t.Errorf("PackageRefs: %v", body.PackageRefs)
+	}
+}
+
+func TestRemovePackages_NonOK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"no such ref"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	err := c.RemovePackages(context.Background(), "test-repo", []string{"nope"})
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("want 404 error, got %v", err)
+	}
+}

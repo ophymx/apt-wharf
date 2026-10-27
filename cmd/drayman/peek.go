@@ -16,7 +16,8 @@ import (
 
 // cmdPeek implements `drayman peek <PLAN>` — a read-only dry-run that
 // queries the target repo and prints the decision drayman would make
-// per artifact, without touching cooper or invoking any mutation.
+// per artifact (plus, with --retain, the prunes that would follow),
+// without touching cooper or invoking any mutation.
 // Backend selected by --backend (aptly | reprepro-local | reprepro-ssh).
 func cmdPeek(args []string) error {
 	fs := flag.NewFlagSet("peek", flag.ContinueOnError)
@@ -26,7 +27,11 @@ func cmdPeek(args []string) error {
 		fs.PrintDefaults()
 	}
 	bf := registerBackendFlags(fs)
+	retain := registerRetainFlag(fs)
 	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
+		return err
+	}
+	if err := validateRetain(*retain, *bf.kind, os.Stderr); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -44,13 +49,17 @@ func cmdPeek(args []string) error {
 		return fmt.Errorf("read plan: %w", err)
 	}
 
-	decisions, err := policy.Decide(context.Background(), be, p)
+	ctx := context.Background()
+	decisions, err := policy.Decide(ctx, be, p)
 	if err != nil {
 		return err
 	}
-	for _, d := range decisions {
-		fmt.Printf("%s\t%s\t%s\t%s\n", d.PackageName, d.Arch, d.Action, d.Reason)
+	printDecisionsTo(os.Stdout, decisions)
+	prunes, err := predictPrunes(ctx, be, decisions, *retain)
+	if err != nil {
+		return err
 	}
+	printPrunesTo(os.Stdout, prunes)
 	return nil
 }
 

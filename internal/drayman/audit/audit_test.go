@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ophymx/apt-wharf/internal/drayman/backend"
 	"github.com/ophymx/apt-wharf/internal/drayman/policy"
 )
 
@@ -135,5 +136,43 @@ func TestEvents_AreNewlineDelimited(t *testing.T) {
 	}
 	if nonEmpty != 3 {
 		t.Errorf("want 3 lines, got %d (raw: %q)", nonEmpty, buf.String())
+	}
+}
+
+func TestPrune_OkAndError(t *testing.T) {
+	var buf bytes.Buffer
+	l := fixedNow(&buf)
+	p := policy.Prune{
+		PackageName: "hugo", Arch: "amd64",
+		Entry:  backend.Package{Name: "hugo", Version: "0.138.0", Architecture: "amd64", BuildInputsHash: "sha256:old", Ref: "k"},
+		Code:   policy.CodePruneBeyondRetain,
+		Reason: "upstream 0.138.0 ranks #3 newest; retain=2",
+	}
+	if err := l.Prune(p, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Prune(p, errors.New("aptly 500")); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines: %d", len(lines))
+	}
+	var e Event
+	if err := json.Unmarshal([]byte(lines[0]), &e); err != nil {
+		t.Fatal(err)
+	}
+	if e.Type != TypePrune || e.Package != "hugo" || e.Arch != "amd64" || e.Version != "0.138.0" ||
+		e.Hash != "sha256:old" || e.Code != policy.CodePruneBeyondRetain || e.Result != ResultOK {
+		t.Errorf("ok event: %+v", e)
+	}
+	if strings.Contains(lines[0], `"error"`) {
+		t.Errorf("ok event must omit error: %s", lines[0])
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &e); err != nil {
+		t.Fatal(err)
+	}
+	if e.Result != ResultError || e.Error != "aptly 500" {
+		t.Errorf("error event: %+v", e)
 	}
 }

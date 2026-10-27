@@ -3,8 +3,9 @@
 //
 // reprepro is a CLI tool, not a daemon — drayman invokes it as a
 // subprocess (`reprepro -b <basedir> includedeb <dist> <file>`) per
-// import. Unlike aptly, reprepro publishes Release/Packages
-// atomically on every includedeb, so Backend.Publish is a no-op.
+// import (and `removefilter` per retain prune). Unlike aptly, reprepro
+// publishes Release/Packages atomically on every includedeb /
+// removefilter, so Backend.Publish is a no-op.
 //
 // Queries go against the on-disk dists/<dist>/<component>/binary-<arch>/Packages
 // files reprepro maintains; drayman parses them directly. No reprepro
@@ -129,16 +130,44 @@ func (b *Backend) Import(ctx context.Context, debPath string) error {
 	}
 	// Invalidate the snapshot cache so the next query sees the
 	// just-imported package.
-	b.cached = false
-	b.cache = nil
-	b.cacheErr = nil
+	b.invalidate()
 	return nil
 }
 
-// Publish is a no-op for reprepro: includedeb already regenerated
-// the published metadata atomically.
+// Remove runs `reprepro -b <basedir> -C <component> removefilter <dist>
+// <formula>` with a formula pinning Package, $Version (compared as a
+// Debian version, not alphabetically) and Architecture. An arch:all
+// entry sits in every binary-<arch> index; the formula matches it in
+// each, which is the intended whole-entry removal.
+//
+// Note that reprepro 5.3 already keeps only one version per
+// (Package, Architecture, Component) and replaces it on includedeb,
+// so the retain policy rarely finds anything to remove there. With
+// reprepro >= 5.4 the repo's own `Limit:` in conf/distributions
+// prunes first; drayman's retain only bites beyond that.
+func (b *Backend) Remove(ctx context.Context, pkg backend.Package) error {
+	formula := fmt.Sprintf("Package (== %s), $Version (== %s), Architecture (== %s)",
+		pkg.Name, pkg.Version, pkg.Architecture)
+	if _, err := b.transport.runCmd(ctx, "reprepro", "-b", b.basedir, "-C", b.component,
+		"removefilter", b.distribution, formula); err != nil {
+		return fmt.Errorf("reprepro removefilter: %w", err)
+	}
+	b.invalidate()
+	return nil
+}
+
+// Publish is a no-op for reprepro: includedeb and removefilter
+// already regenerated the published metadata atomically.
 func (b *Backend) Publish(_ context.Context) error {
 	return nil
+}
+
+// invalidate drops the Packages snapshot so the next query re-reads
+// the on-disk indices after a mutation.
+func (b *Backend) invalidate() {
+	b.cached = false
+	b.cache = nil
+	b.cacheErr = nil
 }
 
 // snapshot lazily reads every Packages file under

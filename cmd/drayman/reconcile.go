@@ -37,6 +37,7 @@ type reconcileOpts struct {
 	OutDir      string // pre-resolved absolute path
 	WorkDir     string // pre-resolved absolute path
 	DryRun      bool
+	Retain      int           // >0 enables the retain policy; see internal/drayman/policy/prune.go
 	AuditLog    *audit.Logger // optional; nil disables audit logging
 	Stdout      io.Writer
 	Stderr      io.Writer
@@ -60,8 +61,12 @@ func cmdReconcile(args []string) error {
 	cooperBin := fs.String("cooper-bin", "cooper", "path to cooper binary")
 	outDir := fs.String("out-dir", "", "where cooper builds .debs (default: ephemeral; cleaned on exit)")
 	dryRun := fs.Bool("dry-run", false, "query and decide but don't build, import, or publish")
-	auditPath := fs.String("audit-log", "", "append JSONL audit events to this path (decisions, imports, publish)")
+	auditPath := fs.String("audit-log", "", "append JSONL audit events to this path (decisions, imports, prunes, publish)")
+	retain := registerRetainFlag(fs)
 	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
+		return err
+	}
+	if err := validateRetain(*retain, *bf.kind, os.Stderr); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -129,6 +134,7 @@ func cmdReconcile(args []string) error {
 		OutDir:      cooperOutDir,
 		WorkDir:     cooperWorkDir,
 		DryRun:      *dryRun,
+		Retain:      *retain,
 		AuditLog:    auditLog,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
@@ -154,7 +160,14 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 	}
 
 	if opts.DryRun {
-		fmt.Fprintln(opts.Stdout, "dry-run: no build, upload, or publish.")
+		// Predict what retain would remove once the build decisions
+		// land, so dry-run previews the whole run.
+		prunes, err := predictPrunes(ctx, opts.Backend, decisions, opts.Retain)
+		if err != nil {
+			return err
+		}
+		printPrunesTo(opts.Stdout, prunes)
+		fmt.Fprintln(opts.Stdout, "dry-run: no build, upload, prune, or publish.")
 		return nil
 	}
 
@@ -171,6 +184,7 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 	groups := groupByRevision(decisions)
 	var anyFailed bool
 	var anyImported bool
+	importedOK := map[string]bool{} // "<package>|<arch>" → import succeeded this run
 
 	for _, rev := range sortedRevisions(groups) {
 		group := groups[rev]
@@ -200,12 +214,51 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 				s.Built++
 			}
 			anyImported = true
+			importedOK[ba.PackageName+"|"+ba.Arch] = true
+		}
+	}
+
+	// Retain policy: prune superseded versions, but only for pairs
+	// that settled this run (hash already present, or built and
+	// imported cleanly). Pairs whose build or import failed, whose
+	// plan regressed, or whose discover failed are left untouched.
+	// Runs after every import so the listing reflects the new entry,
+	// and before publish so aptly folds adds and removes into one
+	// metadata regeneration.
+	var anyPruned bool
+	for _, d := range decisions {
+		if !settledThisRun(d, importedOK) {
+			continue
+		}
+		prunes, err := policy.PrunesFor(ctx, opts.Backend, d.PackageName, d.Arch, opts.Retain, d.PlanHash)
+		if err != nil {
+			return fmt.Errorf("retain: %w", err)
+		}
+		for _, pr := range prunes {
+			removeErr := opts.Backend.Remove(ctx, pr.Entry)
+			if opts.AuditLog != nil {
+				_ = opts.AuditLog.Prune(pr, removeErr)
+			}
+			s := summaries[pr.PackageName]
+			if removeErr != nil {
+				fmt.Fprintf(opts.Stderr, "prune failed: %s %s %s: %v\n", pr.PackageName, pr.Entry.Version, pr.Arch, removeErr)
+				if s != nil {
+					s.PruneFailed++
+				}
+				anyFailed = true
+				continue
+			}
+			fmt.Fprintf(opts.Stdout, "pruned: %s %s %s (%s)\n", pr.PackageName, pr.Entry.Version, pr.Arch, pr.Code)
+			if s != nil {
+				s.Pruned++
+			}
+			anyPruned = true
 		}
 	}
 
 	printPackageTrailers(opts.Stdout, summaries)
 
-	if anyImported {
+	if anyImported || anyPruned {
 		publishErr := opts.Backend.Publish(ctx)
 		if opts.AuditLog != nil {
 			_ = opts.AuditLog.Publish(opts.BackendKind, publishErr)
@@ -219,9 +272,23 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 	}
 
 	if anyFailed {
-		return errors.New("one or more artifacts failed to build or import")
+		return errors.New("one or more artifacts failed to build, import, or prune")
 	}
 	return nil
+}
+
+// settledThisRun reports whether the repo state for d's (Package,
+// Architecture) is one drayman is confident in: the plan's artifact
+// was already present, or it was built and imported cleanly just
+// now. Only settled pairs are eligible for retain pruning.
+func settledThisRun(d policy.Decision, importedOK map[string]bool) bool {
+	switch {
+	case d.Action == policy.ActionSkip && d.Code == policy.CodeHashInRepo:
+		return true
+	case d.Action == policy.ActionBuild:
+		return importedOK[d.PackageName+"|"+d.Arch]
+	}
+	return false
 }
 
 // packageSummary accumulates per-package outcomes across the
@@ -234,13 +301,19 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 // Built = artifacts that built AND imported cleanly.
 // Failed = artifacts that failed at either the build or import step.
 //
+// Pruned = repo entries removed by the retain policy (not artifacts
+// of this plan, so not part of the Total identity below).
+// PruneFailed = retain removals the backend rejected.
+//
 // Skipped + Built + Failed is the count of "finished" artifacts;
 // equals Total at the end of a normal run.
 type packageSummary struct {
-	Total   int
-	Skipped int
-	Built   int
-	Failed  int
+	Total       int
+	Skipped     int
+	Built       int
+	Failed      int
+	Pruned      int
+	PruneFailed int
 }
 
 // initPackageSummaries seeds one entry per package named in
@@ -263,11 +336,12 @@ func initPackageSummaries(decisions []policy.Decision) map[string]*packageSummar
 }
 
 // printPackageTrailers emits one `[PACKAGE] result: ok|warn|error
-// (artifacts=N built=N skipped=N failed=N)` line per package, sorted
-// by package name. `warn` is reserved for partial success — at least
-// one artifact built AND at least one failed (or, equivalently,
-// either built+skipped > 0 alongside failed > 0). `error` is the
-// all-failed case; `ok` covers everything else.
+// (artifacts=N built=N skipped=N failed=N pruned=N)` line per
+// package, sorted by package name. `warn` is reserved for partial
+// success — at least one artifact built AND at least one failed (or,
+// equivalently, either built+skipped > 0 alongside failed > 0), or a
+// retain prune that the backend rejected. `error` is the all-failed
+// case; `ok` covers everything else.
 func printPackageTrailers(w io.Writer, summaries map[string]*packageSummary) {
 	names := make([]string, 0, len(summaries))
 	for k := range summaries {
@@ -282,9 +356,11 @@ func printPackageTrailers(w io.Writer, summaries map[string]*packageSummary) {
 			result = "warn"
 		case s.Failed > 0:
 			result = "error"
+		case s.PruneFailed > 0:
+			result = "warn"
 		}
-		fmt.Fprintf(w, "[%s] result: %s (artifacts=%d built=%d skipped=%d failed=%d)\n",
-			name, result, s.Total, s.Built, s.Skipped, s.Failed)
+		fmt.Fprintf(w, "[%s] result: %s (artifacts=%d built=%d skipped=%d failed=%d pruned=%d)\n",
+			name, result, s.Total, s.Built, s.Skipped, s.Failed, s.Pruned)
 	}
 }
 

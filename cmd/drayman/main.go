@@ -4,7 +4,8 @@
 // X-Cooper-Build-Inputs-Hash values, auto-bumps debian-revisions for
 // artifacts whose (Package, base-version, Architecture) already exists
 // with a different hash, exec's cooper build on the surviving subset,
-// uploads the resulting .debs to aptly, and triggers a publish update.
+// uploads the resulting .debs to aptly, optionally prunes versions
+// beyond --retain N, and triggers a publish update.
 //
 // See cooper-design.md §"Orchestrator dedup & version policy" for the
 // algorithm. drayman is the hauler in the apt-wharf family: cooper /
@@ -49,8 +50,8 @@ func main() {
 
 func usage(w *os.File) {
 	fmt.Fprintln(w, "usage:")
-	fmt.Fprintln(w, "  drayman reconcile <PLAN_FILE> --backend <kind> [backend flags]")
-	fmt.Fprintln(w, "  drayman peek      <PLAN_FILE> --backend <kind> [backend flags]")
+	fmt.Fprintln(w, "  drayman reconcile <PLAN_FILE> --backend <kind> [backend flags] [--retain N]")
+	fmt.Fprintln(w, "  drayman peek      <PLAN_FILE> --backend <kind> [backend flags] [--retain N]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "backends:")
 	fmt.Fprintln(w, "  aptly           --aptly-url URL --repo NAME [--publish-prefix .]")
@@ -63,5 +64,9 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "  --cooper-bin PATH     path to cooper binary (default: cooper)")
 	fmt.Fprintln(w, "  --out-dir DIR         where cooper builds .debs (default: ephemeral)")
 	fmt.Fprintln(w, "  --dry-run             query and decide but don't build, import, or publish")
-	fmt.Fprintln(w, "  --audit-log PATH      append JSONL audit events (decisions/imports/publish)")
+	fmt.Fprintln(w, "  --audit-log PATH      append JSONL audit events (decisions/imports/prunes/publish)")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "shared by peek and reconcile:")
+	fmt.Fprintln(w, "  --retain N            keep only the N newest upstream versions per (package, arch),")
+	fmt.Fprintln(w, "                        newest revision each; prunes the rest (default 0 = keep all)")
 }
