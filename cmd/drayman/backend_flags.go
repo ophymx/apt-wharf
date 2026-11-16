@@ -28,6 +28,7 @@ type backendFlags struct {
 	publishPrefix    *string
 	publishDist      *string
 	skipSigning      *bool
+	aptlyTimeout     *time.Duration
 
 	// reprepro (local + ssh share most)
 	repreproBasedir *string
@@ -45,6 +46,7 @@ func registerBackendFlags(fs *flag.FlagSet) *backendFlags {
 		publishPrefix:    fs.String("publish-prefix", ".", "(aptly) publish prefix"),
 		publishDist:      fs.String("publish-distribution", "", "(aptly) publish distribution"),
 		skipSigning:      fs.Bool("skip-signing", false, "(aptly) set Signing.Skip on publish update"),
+		aptlyTimeout:     fs.Duration("aptly-timeout", 5*time.Minute, "(aptly) how long to wait for aptly to answer each request; uploads are bounded by progress, not by this"),
 		repreproBasedir:  fs.String("reprepro-basedir", "", "(reprepro) -b argument; path to repo basedir"),
 		distribution:     fs.String("distribution", "", "(reprepro) apt distribution name"),
 		component:        fs.String("component", "main", "(reprepro) apt component"),
@@ -62,9 +64,19 @@ func (bf *backendFlags) resolveBackend() (backend.Backend, error) {
 		if *bf.aptlyURL == "" || *bf.repo == "" {
 			return nil, errors.New("--backend aptly requires --aptly-url and --repo")
 		}
-		hc := &http.Client{Timeout: 5 * time.Minute}
+		if *bf.aptlyTimeout <= 0 {
+			return nil, fmt.Errorf("--aptly-timeout must be > 0, got %s", *bf.aptlyTimeout)
+		}
+		// No http.Client.Timeout: that caps the whole request, upload
+		// included, and a multi-GB .deb would always trip it. The
+		// wait for aptly's answer is bounded per request instead; the
+		// upload itself is bounded by progress (aptly.Client's stall
+		// watchdog).
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.ResponseHeaderTimeout = *bf.aptlyTimeout
+		hc := &http.Client{Transport: tr}
 		if *bf.aptlyBearerToken != "" {
-			hc.Transport = bearerTransport{token: *bf.aptlyBearerToken, base: http.DefaultTransport}
+			hc.Transport = bearerTransport{token: *bf.aptlyBearerToken, base: tr}
 		}
 		return aptlyBackend.New(aptlyBackend.Opts{
 			BaseURL:       *bf.aptlyURL,

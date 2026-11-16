@@ -1,16 +1,23 @@
 package aptly
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeAptly returns an httptest.Server whose /api/repos/{name}/packages
@@ -206,6 +213,32 @@ func TestListByNameArch_ExcludesProvidersAndArchAll(t *testing.T) {
 	}
 }
 
+func TestListByName_AllArchesExactName(t *testing.T) {
+	pkgs := []Package{
+		{Package: "hugo", Version: "0.140.0", Architecture: "amd64", Key: "k1"},
+		{Package: "hugo-extended", Version: "0.140.0", Architecture: "amd64", Key: "k2"},
+		{Package: "hugo", Version: "0.140.0", Architecture: "arm64", Key: "k3"},
+	}
+	// A bare "<name>" is a dependency query too: Provides leak in.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query().Get("q"); q != "hugo" {
+			http.Error(w, "unexpected query "+q, http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(pkgs)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+
+	got, err := c.ListByName(context.Background(), "test-repo", "hugo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Key != "k1" || got[1].Key != "k3" {
+		t.Fatalf("want k1 and k3 (hugo, any arch), got %+v", got)
+	}
+}
+
 func TestNew_TrimsTrailingSlash(t *testing.T) {
 	c := New("http://localhost:8080/", nil)
 	if c.baseURL != "http://localhost:8080" {
@@ -274,6 +307,187 @@ func TestUploadFile(t *testing.T) {
 	}
 	if len(out) != 1 || out[0] != "incoming/demo.deb" {
 		t.Errorf("out: %v", out)
+	}
+}
+
+// A multi-GB .deb must not be buffered: the upload has to stream the
+// file with an exact Content-Length, and allocation must not scale
+// with file size. The fixture is sparse so the test stays fast.
+func TestUploadFile_StreamsLargeFile(t *testing.T) {
+	const size = 64 << 20
+	src := filepath.Join(t.TempDir(), "big_1.0_amd64.deb")
+	f, err := os.Create(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := make([]byte, 1<<20)
+	if _, err := rand.Read(head); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(head); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	wantSum := sha256.New()
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(wantSum, f); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	var gotSum []byte
+	var gotPartBytes, gotBodyBytes, gotContentLength int64
+	var gotChunked bool
+	var gotFilename string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentLength = r.ContentLength
+		gotChunked = len(r.TransferEncoding) > 0
+		body := &countingReader{r: r.Body}
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mr := multipart.NewReader(body, params["boundary"])
+		part, err := mr.NextPart()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		gotFilename = part.FileName()
+		h := sha256.New()
+		gotPartBytes, _ = io.Copy(h, part)
+		gotSum = h.Sum(nil)
+		if _, err := mr.NextPart(); err != io.EOF {
+			http.Error(w, "expected exactly one part", http.StatusBadRequest)
+			return
+		}
+		_, _ = io.Copy(io.Discard, body)
+		gotBodyBytes = body.n
+		_ = json.NewEncoder(w).Encode([]string{"d/" + gotFilename})
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if _, err := c.UploadFile(context.Background(), "d", src); err != nil {
+		t.Fatalf("UploadFile: %v", err)
+	}
+	runtime.ReadMemStats(&after)
+
+	if gotFilename != "big_1.0_amd64.deb" {
+		t.Errorf("filename: %q", gotFilename)
+	}
+	if gotPartBytes != size || !bytes.Equal(gotSum, wantSum.Sum(nil)) {
+		t.Errorf("server saw %d bytes with a different digest; want %d identical bytes", gotPartBytes, size)
+	}
+	if gotChunked || gotContentLength != gotBodyBytes {
+		t.Errorf("Content-Length=%d chunked=%v, body was %d bytes; want an exact length", gotContentLength, gotChunked, gotBodyBytes)
+	}
+	// Client and fake server share the process, so this bounds both.
+	// A buffered upload would allocate several times the file size.
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > size/4 {
+		t.Errorf("allocated %d MiB uploading a %d MiB file; upload must stream", alloc>>20, size>>20)
+	}
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// The upload is bounded by progress, not total time: a server that
+// stops reading must fail the request once the stall window passes.
+func TestUploadFile_StallIsCancelled(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "big.deb")
+	f, err := os.Create(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Large enough that the body can't fit in socket buffers.
+	if err := f.Truncate(256 << 20); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-release // never reads the body
+	}))
+	defer srv.Close()
+	defer close(release)
+	c := New(srv.URL, nil)
+	c.UploadStallTimeout = 200 * time.Millisecond
+
+	start := time.Now()
+	_, err = c.UploadFile(context.Background(), "d", src)
+	if err == nil || !strings.Contains(err.Error(), "made no progress for 200ms") {
+		t.Fatalf("want stall error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Errorf("stall took %s to surface", elapsed)
+	}
+}
+
+func TestDeleteUploadDir(t *testing.T) {
+	var gotMethod, gotPath string
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+
+	if err := c.DeleteUploadDir(context.Background(), "drayman-abc"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/api/files/drayman-abc" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	// Already gone is fine; anything else is an error.
+	status = http.StatusNotFound
+	if err := c.DeleteUploadDir(context.Background(), "drayman-abc"); err != nil {
+		t.Errorf("404 should be tolerated: %v", err)
+	}
+	status = http.StatusInternalServerError
+	if err := c.DeleteUploadDir(context.Background(), "drayman-abc"); err == nil {
+		t.Error("expected error on 500")
+	}
+}
+
+func TestDBCleanup(t *testing.T) {
+	var gotMethod, gotPath string
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`null`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+
+	if err := c.DBCleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/db/cleanup" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	status = http.StatusInternalServerError
+	if err := c.DBCleanup(context.Background()); err == nil || !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected 500 error, got %v", err)
 	}
 }
 

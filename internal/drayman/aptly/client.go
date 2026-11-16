@@ -7,8 +7,10 @@
 // reference. drayman touches a small subset: /api/repos/{name}/packages
 // (GET, plus POST/DELETE for write paths), /api/files/{dir} (POST
 // upload), /api/repos/{name}/file/{dir} (POST import), and
-// /api/publish/{prefix}/{distribution} (PUT update), and
-// /api/repos/{name}/packages (DELETE by key) for retain pruning.
+// /api/publish/{prefix}/{distribution} (PUT update),
+// /api/repos/{name}/packages (DELETE by key) for retain pruning,
+// /api/files/{dir} (DELETE) to drop a failed upload, and
+// /api/db/cleanup (POST) to reclaim pool space after pruning.
 package aptly
 
 import (
@@ -24,12 +26,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// DefaultUploadStallTimeout is the no-progress window for UploadFile.
+// Uploads are bounded by progress rather than total time: a multi-GB
+// .deb over a slow-but-live link succeeds, a stalled one fails.
+const DefaultUploadStallTimeout = 2 * time.Minute
+
+// errUploadStall is the cancel cause the upload watchdog attaches
+// when the request body makes no progress for the stall timeout.
+var errUploadStall = errors.New("upload stalled")
 
 // Client talks to a single aptly API instance.
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// UploadStallTimeout overrides DefaultUploadStallTimeout when > 0.
+	UploadStallTimeout time.Duration
 }
 
 // New constructs a Client. baseURL is the aptly API base (typically
@@ -166,6 +181,24 @@ func (c *Client) ListByNameArch(ctx context.Context, repo, name, arch string) ([
 	return out, nil
 }
 
+// ListByName returns every package in repo with the given Debian
+// package Name, across all architectures. Like ListByNameArch, the
+// dependency-query response is narrowed to exact Name matches so
+// Provides-only packages don't leak in.
+func (c *Client) ListByName(ctx context.Context, repo, name string) ([]Package, error) {
+	pkgs, err := c.QueryPackages(ctx, repo, name)
+	if err != nil {
+		return nil, err
+	}
+	out := pkgs[:0]
+	for _, p := range pkgs {
+		if p.Package == name {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
 // UploadFile uploads a single .deb to aptly's staging directory dir
 // via the File Upload API. Aptly creates dir if absent. Returns the
 // list of staged paths aptly reports (typically one entry of the form
@@ -174,35 +207,57 @@ func (c *Client) ListByNameArch(ctx context.Context, repo, name, arch string) ([
 // The multipart field name is "file" — matches aptly's example and is
 // the form aptly's handler accepts. (aptly is permissive about field
 // names but "file" is the documented one.)
+//
+// The file is streamed, never buffered: the multipart head (boundary
+// plus part headers) and tail (closing boundary) are built on their
+// own and the file is read between them, so memory stays flat for
+// multi-GB .debs while the request still carries an exact
+// Content-Length. A watchdog cancels the request if the body makes no
+// progress for the stall timeout; once the body is fully sent, the
+// wait for aptly's answer is governed by the http.Client alone.
 func (c *Client) UploadFile(ctx context.Context, dir, localPath string) ([]string, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-
-	var body bytes.Buffer
-	mp := multipart.NewWriter(&body)
-	part, err := mp.CreateFormFile("file", filepath.Base(localPath))
+	st, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.Copy(part, f); err != nil {
+
+	var head bytes.Buffer
+	mp := multipart.NewWriter(&head)
+	if _, err := mp.CreateFormFile("file", filepath.Base(localPath)); err != nil {
 		return nil, err
 	}
-	if err := mp.Close(); err != nil {
-		return nil, err
+	tail := "\r\n--" + mp.Boundary() + "--\r\n"
+	contentLength := int64(head.Len()) + st.Size() + int64(len(tail))
+
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	d := c.UploadStallTimeout
+	if d <= 0 {
+		d = DefaultUploadStallTimeout
 	}
+	sr := &stallReader{r: f, d: d}
+	sr.timer = time.AfterFunc(d, func() { cancel(errUploadStall) })
+	defer sr.timer.Stop()
 
 	u := fmt.Sprintf("%s/api/files/%s", c.baseURL, url.PathEscape(dir))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u,
+		io.MultiReader(&head, sr, strings.NewReader(tail)))
 	if err != nil {
 		return nil, err
 	}
+	req.ContentLength = contentLength
 	req.Header.Set("Content-Type", mp.FormDataContentType())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if errors.Is(context.Cause(ctx), errUploadStall) {
+			return nil, fmt.Errorf("aptly POST %s: upload of %s made no progress for %s", u, filepath.Base(localPath), d)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -215,6 +270,51 @@ func (c *Client) UploadFile(ctx context.Context, dir, localPath string) ([]strin
 		return nil, fmt.Errorf("aptly decode: %w", err)
 	}
 	return out, nil
+}
+
+// stallReader wraps the upload source and rearms a watchdog on every
+// read that makes progress. When the watchdog fires it cancels the
+// request context with the errUploadStall cause. The watchdog is
+// disarmed at EOF: from there the transfer is done and only aptly's
+// answer is outstanding.
+type stallReader struct {
+	r     io.Reader
+	d     time.Duration
+	timer *time.Timer
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	switch {
+	case err == io.EOF:
+		s.timer.Stop()
+	case n > 0:
+		s.timer.Reset(s.d)
+	}
+	return n, err
+}
+
+// DeleteUploadDir removes the staging directory dir and anything
+// still in it. aptly only deletes the files an import consumed, so a
+// failed upload or import would otherwise strand its .debs in the
+// upload area. A directory that is already gone is not an error.
+func (c *Client) DeleteUploadDir(ctx context.Context, dir string) error {
+	u := fmt.Sprintf("%s/api/files/%s", c.baseURL, url.PathEscape(dir))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusNotFound {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("aptly DELETE %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }
 
 // ImportReport mirrors aptly's POST /api/repos/{name}/file/{dir}
@@ -286,6 +386,30 @@ func (c *Client) RemovePackages(ctx context.Context, repo string, refs []string)
 	if resp.StatusCode/100 != 2 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("aptly DELETE %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// DBCleanup mirrors `aptly db cleanup`: it deletes package entries
+// and pool files that no local repo, snapshot, or publication
+// references any more. This is what actually frees the disk after
+// RemovePackages. It acts on the whole aptly instance, not just the
+// repo drayman is bound to.
+func (c *Client) DBCleanup(ctx context.Context) error {
+	u := c.baseURL + "/api/db/cleanup"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("aptly POST %s: %d %s", req.URL, resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
