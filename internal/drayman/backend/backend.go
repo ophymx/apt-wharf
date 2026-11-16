@@ -54,11 +54,16 @@ type Backend interface {
 	// --arch). Empty result is not an error.
 	ListByName(ctx context.Context, name string) ([]Package, error)
 
-	// Import places a built .deb into the target repo. Some
+	// Import places built .debs into the target repo. Some
 	// backends (reprepro) publish atomically; others (aptly) stage
-	// the file for a later Publish. drayman calls Import for each
-	// .deb, then Publish once at the end.
-	Import(ctx context.Context, debPath string) error
+	// the files for a later Publish. Several paths are handed to the
+	// backend as one operation, so packages that belong together
+	// land together as far as the backend allows; an error means the
+	// batch as a whole did not land cleanly, though some of it may
+	// have. reconcile calls Import per .deb for per-artifact
+	// attribution, `drayman import` once for everything; both then
+	// Publish once at the end.
+	Import(ctx context.Context, debPaths ...string) error
 
 	// Remove deletes one entry (as returned by ListByNameArch) from
 	// the target repo. Used by the retain policy to prune superseded

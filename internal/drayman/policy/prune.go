@@ -33,6 +33,12 @@ import (
 // Callers decide *which* (Package, Architecture) pairs to apply this
 // to; see cmd/drayman's reconcile loop, which only prunes pairs that
 // settled this run (hash already present, or built and imported OK).
+//
+// `drayman import` handles packages built outside cooper, which carry
+// no hash at all. For the pairs it is handed it uses the *All
+// variants below: every entry of the pair is a candidate, and the
+// run's own versions are protected by version instead of by hash.
+// The hash-only scope above is unchanged for reconcile.
 
 // Prune codes for Prune.Code.
 const (
@@ -59,18 +65,48 @@ type Prune struct {
 //
 // Pure function: no I/O. PrunesFor wraps it with the backend query.
 func PlanPrunes(existing []backend.Package, retain int, keepHash string) []Prune {
+	return planPrunes(existing, retain,
+		func(p backend.Package) bool { return p.BuildInputsHash != "" },
+		func(p backend.Package) bool { return keepHash != "" && p.BuildInputsHash == keepHash })
+}
+
+// PlanPrunesAll is PlanPrunes for a pair whose entries carry no
+// X-Cooper-Build-Inputs-Hash (prebuilt packages brought in by
+// `drayman import`): every entry is a candidate, hashed or not, and
+// entries at any of keepVersions (compared as dpkg compares them) are
+// never removed. The keep-N-upstreams / newest-revision rule is the
+// same, so a rebuild at "4.2-repack3" supersedes "4.2-repack2".
+//
+// Only hand this a pair the caller owns outright: unlike PlanPrunes
+// it will remove entries drayman did not put there.
+func PlanPrunesAll(existing []backend.Package, retain int, keepVersions []string) []Prune {
+	return planPrunes(existing, retain,
+		func(backend.Package) bool { return true },
+		func(p backend.Package) bool {
+			for _, v := range keepVersions {
+				if plan.CompareVersions(p.Version, v) == 0 {
+					return true
+				}
+			}
+			return false
+		})
+}
+
+// planPrunes is the shared retention core. candidate selects which
+// entries count toward N and may be removed; keep vetoes the removal
+// of an entry the rule would otherwise drop.
+func planPrunes(existing []backend.Package, retain int, candidate, keep func(backend.Package) bool) []Prune {
 	if retain <= 0 || len(existing) == 0 {
 		return nil
 	}
 
-	// Candidates: cooper-built entries only, deduplicated. reprepro
-	// lists an arch:all entry once per binary-<arch> index; one
-	// Remove covers all of them.
+	// Candidates, deduplicated. reprepro lists an arch:all entry
+	// once per binary-<arch> index; one Remove covers all of them.
 	type key struct{ version, ref string }
 	seen := map[key]bool{}
 	var cands []backend.Package
 	for _, p := range existing {
-		if p.BuildInputsHash == "" {
+		if !candidate(p) {
 			continue
 		}
 		k := key{p.Version, p.Ref}
@@ -117,7 +153,7 @@ func PlanPrunes(existing []backend.Package, retain int, keepHash string) []Prune
 			default:
 				continue
 			}
-			if keepHash != "" && p.BuildInputsHash == keepHash {
+			if keep(p) {
 				continue
 			}
 			out = append(out, pr)
@@ -145,6 +181,29 @@ func PrunesFor(ctx context.Context, q backend.Querier, name, arch string, retain
 	if retain <= 0 {
 		return nil, nil
 	}
+	all, err := listPair(ctx, q, name, arch, extra)
+	if err != nil {
+		return nil, err
+	}
+	return PlanPrunes(all, retain, keepHash), nil
+}
+
+// PrunesForAll is PrunesFor over PlanPrunesAll: the hashless-inclusive
+// policy `drayman import` applies to the pairs it was handed.
+func PrunesForAll(ctx context.Context, q backend.Querier, name, arch string, retain int, keepVersions []string, extra ...backend.Package) ([]Prune, error) {
+	if retain <= 0 {
+		return nil, nil
+	}
+	all, err := listPair(ctx, q, name, arch, extra)
+	if err != nil {
+		return nil, err
+	}
+	return PlanPrunesAll(all, retain, keepVersions), nil
+}
+
+// listPair is the listing step behind PrunesFor and PrunesForAll: the
+// repo's entries for exactly (name, arch), plus extra.
+func listPair(ctx context.Context, q backend.Querier, name, arch string, extra []backend.Package) ([]backend.Package, error) {
 	existing, err := q.ListByNameArch(ctx, name, arch)
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: list by name/arch: %w", name, arch, err)
@@ -156,7 +215,7 @@ func PrunesFor(ctx context.Context, q backend.Querier, name, arch string, retain
 		}
 	}
 	all = append(all, extra...)
-	return PlanPrunes(all, retain, keepHash), nil
+	return all, nil
 }
 
 // PlannedVersion is the full Debian version a build decision will

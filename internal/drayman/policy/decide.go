@@ -86,7 +86,9 @@ type Decision struct {
 	// Audit context. Populated based on Code; see field-level comments.
 
 	// PlanVersion is the artifact's bare version from the discover plan.
-	// Set on CodeVersionRegression, CodeBuildNew, CodeBuildBump.
+	// Set on CodeVersionRegression, CodeBuildNew, CodeBuildBump. For
+	// import decisions (CodeVersionInRepo, CodeImportPrebuilt) it is
+	// the prebuilt .deb's full version.
 	PlanVersion string
 	// PlanHash is the artifact's build_inputs_hash from the discover plan.
 	// Set on CodeHashInRepo, CodeVersionRegression, CodeBuildNew, CodeBuildBump.

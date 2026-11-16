@@ -37,7 +37,14 @@ type stubBackend struct {
 	publishErr         error
 	cleanupErr         error
 
+	// landOnImport makes Import update listings; silentlyDropped
+	// names basenames it accepts without listing (reprepro declining
+	// a superseded version exits 0).
+	landOnImport    bool
+	silentlyDropped map[string]bool
+
 	imports      []string          // deb paths in call order
+	importCalls  int               // Import invocations (a batch counts once)
 	removes      []backend.Package // entries passed to Remove, in call order
 	publishCount int
 	cleanupCount int
@@ -92,10 +99,30 @@ func (s *stubBackend) ListByName(_ context.Context, name string) ([]backend.Pack
 	return out, nil
 }
 
-func (s *stubBackend) Import(_ context.Context, debPath string) error {
-	s.imports = append(s.imports, debPath)
-	if err, ok := s.importErr[filepath.Base(debPath)]; ok {
-		return err
+// Import records every path, then fails the whole call if any of
+// them has an injected error (a batch does not land cleanly). With
+// landOnImport set, each path's (name, version, arch) — parsed from
+// the conventional <name>_<version>_<arch>.deb basename — is added to
+// the listings, as a real backend's re-list would show.
+func (s *stubBackend) Import(_ context.Context, debPaths ...string) error {
+	s.imports = append(s.imports, debPaths...)
+	s.importCalls++
+	for _, debPath := range debPaths {
+		if err, ok := s.importErr[filepath.Base(debPath)]; ok {
+			return err
+		}
+	}
+	if s.landOnImport {
+		for _, debPath := range debPaths {
+			parts := strings.Split(strings.TrimSuffix(filepath.Base(debPath), ".deb"), "_")
+			if len(parts) != 3 || s.silentlyDropped[filepath.Base(debPath)] {
+				continue
+			}
+			key := parts[0] + "|" + parts[2]
+			s.listings[key] = append(s.listings[key], backend.Package{
+				Name: parts[0], Version: parts[1], Architecture: parts[2], Ref: "imported-" + parts[1],
+			})
+		}
 	}
 	return nil
 }

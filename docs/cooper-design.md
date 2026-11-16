@@ -241,6 +241,85 @@ Backend notes:
 
 Retention is an orchestrator knob, not part of the `Plan` contract.
 
+### Prebuilt packages (drayman `import`)
+
+Not every package can come through cooper. A vendor may ship an
+installer that a separate script repacks into finished `.deb`s: nfpm
+is never involved, the build is not reproducible, the download may
+need a login, and the output can run to several GB. Teaching cooper
+a foreign-builder mode for that was considered and rejected; instead
+`drayman import <DEB>...` hauls `.deb`s that something else built,
+alongside the plan-driven `reconcile`.
+
+Identity and dedup:
+
+- Each file is identified by its control file's
+  `(Package, Version, Architecture)`; only the ar headers and the
+  control member are read, never the data member.
+- A triple the repo already lists is **skipped** (`version_in_repo`).
+  Versions compare as dpkg compares them. This replaces hash dedup:
+  these packages carry no `X-Cooper-Build-Inputs-Hash`.
+- There is no auto-bump (drayman can't rebuild the package at a new
+  revision) and deliberately **no `--force`**: a same-version
+  re-import would swap different bytes in under a version clients
+  may already have installed. To replace a build, ship a new version
+  — a repack script that versions its output
+  `<upstream>-repack<N>` does that on every script change.
+- The same triple twice, or two files sharing a basename, is a usage
+  error before anything is uploaded.
+
+Landing:
+
+- Everything to import goes to the backend as **one batch**
+  (`Backend.Import(paths...)`): aptly gets every upload followed by a
+  single import-from-dir, reprepro a single `includedeb` with all
+  files. Packages that belong together (an application split into
+  `bigapp` and `bigapp-data` to stay under a size limit, say)
+  therefore land together as far as the backend allows.
+- If the batch fails, nothing is pruned and no publish is requested.
+  On aptly that means this run exposes no half-landed set: whatever
+  did reach the repo stays unpublished until the next publish, and
+  the re-run skips it and publishes the lot. reprepro publishes per
+  operation, so there the guarantee is only the single invocation.
+- "Accepted" is verified against the repo before it counts: after
+  the batch, each pair is re-listed and a version the repo does not
+  show is a failure (`import failed: ... does not list ...`).
+  reprepro exits 0 when it declines a version it considers
+  superseded, or files one under a different component.
+- Then one publish, as in reconcile. A run that imported and pruned
+  nothing does not publish.
+
+Retention (`import --retain N`) applies the same rule as above —
+N newest upstream versions, newest revision each — with two
+differences that follow from the missing hash:
+
+- **Every** entry of a pair the run names is a candidate, hashed or
+  not. The scope is the pairs handed to this invocation and nothing
+  else; `reconcile --retain` still only ever touches cooper-built
+  entries.
+- The run's own versions are protected by version rather than by
+  hash, so deliberately importing an older release never deletes it.
+
+`SplitDebianRevision("4.2-repack3")` yields upstream `4.2`, so a
+rebuild of the same upstream release under a newer script supersedes
+the older build instead of using up one of the N slots.
+`--aptly-db-cleanup` matters most here: each pruned release is
+several GB that only a db cleanup frees.
+
+Uploads to aptly are streamed (multipart head and tail built around
+the file, exact `Content-Length`), so memory does not scale with
+package size, and are bounded by progress — a 2-minute no-progress
+watchdog — rather than by total time. `--aptly-timeout` (default 5m)
+bounds how long each request waits for aptly's answer once the body
+is sent; raise it if importing or publishing multi-GB packages takes
+aptly longer than that. A reverse proxy in front of the aptly API
+needs matching limits (body size, read timeouts) of its own.
+
+Audit events are the same types reconcile writes: a `decision` per
+file (`action: import|skip`, `code: prebuilt|version_in_repo`,
+`plan_version` carrying the `.deb`'s version), an `import` per file
+with its verified outcome, then `prune`, `publish`, and `cleanup`.
+
 ### Asking and re-publishing (drayman `has`, `publish`)
 
 Two small verbs round out the orchestrator for callers that are not
@@ -254,12 +333,15 @@ a plan-driven reconcile:
   the contract: `0` present, `10` missing, `1` could not tell
   (transport, auth, unknown repo, usage). The split matters to a
   pre-build check: "missing" means go build, "could not tell" must
-  not, or a backend outage becomes a rebuild loop.
+  not, or a backend outage becomes a rebuild loop. It is the
+  idempotency anchor for `import`'s expensive builds: ask first,
+  build only on `10`. Note it answers for the repo's contents, which
+  on aptly can be ahead of the publication after a failed publish.
 - `drayman publish` regenerates the published metadata without
-  importing anything. reconcile publishes only when the run changed
-  the repo, so a run whose imports landed but whose publish then
-  failed has nothing left to trigger a retry — the next run sees
-  every hash present. `publish` is that retry (a no-op on reprepro,
+  importing anything. reconcile and import publish only when the run
+  changed the repo, so a run whose imports landed but whose publish
+  then failed has nothing left to trigger a retry — the next run
+  sees everything present. `publish` is that retry (a no-op on reprepro,
   which publishes per operation). With `--aptly-db-cleanup` it also
   re-runs a cleanup.
 

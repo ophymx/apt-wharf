@@ -11,7 +11,7 @@ import (
 	"github.com/ophymx/apt-wharf/internal/drayman/policy"
 )
 
-// registerRetainFlag binds --retain, shared by peek and reconcile.
+// registerRetainFlag binds --retain, shared by peek, reconcile, and import.
 // 0 (the default) leaves every version in place — today's behavior.
 func registerRetainFlag(fs *flag.FlagSet) *int {
 	return fs.Int("retain", 0, "keep only the N newest upstream versions per (package, arch), newest revision each; 0 = keep everything")

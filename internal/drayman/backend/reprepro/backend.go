@@ -127,27 +127,39 @@ func (b *Backend) ListByName(ctx context.Context, name string) ([]backend.Packag
 	return out, nil
 }
 
-// Import runs `reprepro -b <basedir> includedeb <dist> <file>` on
-// the target. For the ssh transport, debPath is first scp'd to a
-// temp location on the remote host.
+// Import runs `reprepro -b <basedir> includedeb <dist> <file>...` on
+// the target, one invocation for all debPaths. For the ssh transport,
+// each file is first scp'd to a temp location on the remote host.
 //
 // reprepro publishes atomically on every includedeb, so the
-// repo's published metadata reflects the new package immediately —
+// repo's published metadata reflects the new packages immediately —
 // no separate Publish step is needed.
-func (b *Backend) Import(ctx context.Context, debPath string) error {
-	remote, err := b.transport.stageFile(ctx, debPath)
-	if err != nil {
-		return fmt.Errorf("stage %s: %w", debPath, err)
+//
+// reprepro exits 0 when it declines a file it considers superseded
+// ("Skipping inclusion of ... as it has already ..."), so a nil
+// return means "accepted", not "listed"; callers that must know
+// re-list afterwards.
+func (b *Backend) Import(ctx context.Context, debPaths ...string) error {
+	if len(debPaths) == 0 {
+		return nil
 	}
-	defer func() {
-		_ = b.transport.removeFile(ctx, remote)
-	}()
-	if _, err := b.transport.runCmd(ctx, "reprepro", "-b", b.basedir, "includedeb", b.distribution, remote); err != nil {
+	args := []string{"-b", b.basedir, "includedeb", b.distribution}
+	for _, debPath := range debPaths {
+		remote, err := b.transport.stageFile(ctx, debPath)
+		if err != nil {
+			return fmt.Errorf("stage %s: %w", debPath, err)
+		}
+		defer func() {
+			_ = b.transport.removeFile(ctx, remote)
+		}()
+		args = append(args, remote)
+	}
+	// Invalidate the snapshot cache either way: a failed multi-file
+	// includedeb may still have added the files before the bad one.
+	defer b.invalidate()
+	if _, err := b.transport.runCmd(ctx, "reprepro", args...); err != nil {
 		return fmt.Errorf("reprepro includedeb: %w", err)
 	}
-	// Invalidate the snapshot cache so the next query sees the
-	// just-imported package.
-	b.invalidate()
 	return nil
 }
 

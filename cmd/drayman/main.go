@@ -7,7 +7,8 @@
 // uploads the resulting .debs to aptly, optionally prunes versions
 // beyond --retain N, and triggers a publish update.
 //
-// Beside that reconcile flow (and its read-only preview, peek), `has`
+// Beside that reconcile flow (and its read-only preview, peek),
+// `import` hauls .debs that something other than cooper built, `has`
 // answers whether the repo already carries a given package version,
 // and `publish` regenerates the published metadata on its own.
 //
@@ -36,6 +37,8 @@ func main() {
 		err = cmdReconcile(os.Args[2:])
 	case "peek":
 		err = cmdPeek(os.Args[2:])
+	case "import":
+		err = cmdImport(os.Args[2:])
 	case "has":
 		err = cmdHas(os.Args[2:])
 	case "publish":
@@ -64,11 +67,13 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "usage:")
 	fmt.Fprintln(w, "  drayman reconcile <PLAN_FILE> --backend <kind> [backend flags] [--retain N]")
 	fmt.Fprintln(w, "  drayman peek      <PLAN_FILE> --backend <kind> [backend flags] [--retain N]")
+	fmt.Fprintln(w, "  drayman import    <DEB>...    --backend <kind> [backend flags] [--retain N]")
 	fmt.Fprintln(w, "  drayman has       --name NAME --version VERSION [--arch ARCH] --backend <kind> [backend flags]")
 	fmt.Fprintln(w, "  drayman publish   --backend <kind> [backend flags]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  reconcile  build what a cooper/chandler/staves plan adds and import it")
 	fmt.Fprintln(w, "  peek       print the decisions reconcile would make; changes nothing")
+	fmt.Fprintln(w, "  import     import .debs built outside cooper, skipping versions already in the repo")
 	fmt.Fprintln(w, "  has        exit 0 if the repo has that version, 10 if not, 1 if it couldn't tell")
 	fmt.Fprintln(w, "  publish    regenerate published metadata only (retry after a failed publish)")
 	fmt.Fprintln(w)
@@ -82,13 +87,17 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "  reprepro-ssh    --ssh-dest user@host --reprepro-basedir DIR")
 	fmt.Fprintln(w, "                  --distribution DIST [--component main]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "reconcile common flags:")
+	fmt.Fprintln(w, "reconcile flags:")
 	fmt.Fprintln(w, "  --cooper-bin PATH     path to cooper binary (default: cooper)")
 	fmt.Fprintln(w, "  --out-dir DIR         where cooper builds .debs (default: ephemeral)")
-	fmt.Fprintln(w, "  --dry-run             query and decide but don't build, import, or publish")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "shared by reconcile and import:")
+	fmt.Fprintln(w, "  --dry-run             query and decide but don't build, import, prune, or publish")
 	fmt.Fprintln(w, "  --audit-log PATH      append JSONL audit events (decisions/imports/prunes/publish/cleanup)")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "shared by peek and reconcile:")
+	fmt.Fprintln(w, "shared by reconcile, peek, and import:")
 	fmt.Fprintln(w, "  --retain N            keep only the N newest upstream versions per (package, arch),")
-	fmt.Fprintln(w, "                        newest revision each; prunes the rest (default 0 = keep all)")
+	fmt.Fprintln(w, "                        newest revision each; prunes the rest (default 0 = keep all).")
+	fmt.Fprintln(w, "                        reconcile/peek only ever prune cooper-built entries; import")
+	fmt.Fprintln(w, "                        prunes any entry of the (package, arch) pairs it was handed")
 }

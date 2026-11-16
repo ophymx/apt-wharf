@@ -244,26 +244,13 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 			anyFailed = true
 			continue
 		}
-		for _, pr := range prunes {
-			removeErr := opts.Backend.Remove(ctx, pr.Entry)
-			if opts.AuditLog != nil {
-				_ = opts.AuditLog.Prune(pr, removeErr)
-			}
-			s := summaries[pr.PackageName]
-			if removeErr != nil {
-				fmt.Fprintf(opts.Stderr, "prune failed: %s %s %s: %v\n", pr.PackageName, pr.Entry.Version, pr.Arch, removeErr)
-				if s != nil {
-					s.PruneFailed++
-				}
-				anyFailed = true
-				continue
-			}
-			fmt.Fprintf(opts.Stdout, "pruned: %s %s %s (%s)\n", pr.PackageName, pr.Entry.Version, pr.Arch, pr.Code)
-			if s != nil {
-				s.Pruned++
-			}
-			anyPruned = true
+		pruned, failed := removePrunes(ctx, opts.Backend, opts.AuditLog, opts.Stdout, opts.Stderr, prunes)
+		if s := summaries[d.PackageName]; s != nil {
+			s.Pruned += pruned
+			s.PruneFailed += failed
 		}
+		anyPruned = anyPruned || pruned > 0
+		anyFailed = anyFailed || failed > 0
 	}
 
 	printPackageTrailers(opts.Stdout, summaries)
@@ -280,6 +267,26 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 		return errors.New("one or more artifacts failed to build, import, or prune")
 	}
 	return nil
+}
+
+// removePrunes executes prunes against be, auditing and printing each
+// outcome, and returns how many entries were removed and how many
+// removals the backend rejected. A rejection doesn't stop the rest.
+func removePrunes(ctx context.Context, be backend.Backend, log *audit.Logger, stdout, stderr io.Writer, prunes []policy.Prune) (pruned, failed int) {
+	for _, pr := range prunes {
+		removeErr := be.Remove(ctx, pr.Entry)
+		if log != nil {
+			_ = log.Prune(pr, removeErr)
+		}
+		if removeErr != nil {
+			fmt.Fprintf(stderr, "prune failed: %s %s %s: %v\n", pr.PackageName, pr.Entry.Version, pr.Arch, removeErr)
+			failed++
+			continue
+		}
+		fmt.Fprintf(stdout, "pruned: %s %s %s (%s)\n", pr.PackageName, pr.Entry.Version, pr.Arch, pr.Code)
+		pruned++
+	}
+	return pruned, failed
 }
 
 // publishAndCleanup is the tail of a run that changed the repo: one

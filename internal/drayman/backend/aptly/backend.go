@@ -100,20 +100,35 @@ func toBackendPackages(pkgs []aptly.Package) []backend.Package {
 	return out
 }
 
-// Import uploads the .deb into the staging directory and immediately
-// promotes it into the local repo. Drayman calls this once per
-// artifact; the per-file overhead is small (one upload + one
-// import-from-dir request per call).
-func (b *Backend) Import(ctx context.Context, debPath string) error {
-	if _, err := b.client.UploadFile(ctx, b.stagingDir, debPath); err != nil {
-		return err
+// Import uploads every .deb to the aptly staging directory, then
+// promotes them into the local repo with one import-from-dir request,
+// so a batch lands in a single aptly operation. reconcile calls this
+// per artifact, `drayman import` once for the whole set.
+//
+// On any failure the staging directory is dropped: aptly only deletes
+// the files an import consumed, so a rejected (or never-imported)
+// upload would otherwise sit in the upload area — and be swept into,
+// and fail, the next import that reuses the directory.
+func (b *Backend) Import(ctx context.Context, debPaths ...string) (err error) {
+	if len(debPaths) == 0 {
+		return nil
+	}
+	defer func() {
+		if err != nil {
+			_ = b.client.DeleteUploadDir(context.WithoutCancel(ctx), b.stagingDir)
+		}
+	}()
+	for _, debPath := range debPaths {
+		if _, err := b.client.UploadFile(ctx, b.stagingDir, debPath); err != nil {
+			return err
+		}
 	}
 	rep, err := b.client.ImportFromDir(ctx, b.repo, b.stagingDir, true)
 	if err != nil {
 		return err
 	}
 	if len(rep.FailedFiles) > 0 {
-		return errImport{files: rep.FailedFiles}
+		return errImport{files: rep.FailedFiles, warnings: rep.Report.Warnings}
 	}
 	return nil
 }
@@ -165,11 +180,17 @@ func (b *Backend) Publish(ctx context.Context) error {
 	})
 }
 
-// errImport surfaces the names aptly reported as failed-to-import.
+// errImport surfaces the names aptly reported as failed-to-import,
+// with the report's warnings: those carry the actual reason.
 type errImport struct {
-	files []string
+	files    []string
+	warnings []string
 }
 
 func (e errImport) Error() string {
-	return "aptly import failed: " + strings.Join(e.files, ", ")
+	msg := "aptly import failed: " + strings.Join(e.files, ", ")
+	if len(e.warnings) > 0 {
+		msg += " (" + strings.Join(e.warnings, "; ") + ")"
+	}
+	return msg
 }

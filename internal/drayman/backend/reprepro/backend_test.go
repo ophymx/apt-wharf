@@ -186,6 +186,31 @@ func TestBackend_Import_RunsRepreproIncludedeb(t *testing.T) {
 	}
 }
 
+func TestBackend_Import_BatchIsOneIncludedeb(t *testing.T) {
+	st := &stubTransport{}
+	b := &Backend{transport: st, basedir: "/base", distribution: "stable", component: "main"}
+	if err := b.Import(context.Background(), "/out/bigapp_4.2_amd64.deb", "/out/bigapp-data_4.2_amd64.deb"); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.cmds) != 1 {
+		t.Fatalf("want 1 reprepro invocation for the batch, got %d", len(st.cmds))
+	}
+	wantArgs := []string{"-b", "/base", "includedeb", "stable",
+		"/tmp/staged-/out/bigapp_4.2_amd64.deb", "/tmp/staged-/out/bigapp-data_4.2_amd64.deb"}
+	if !equalSlices(st.cmds[0].args, wantArgs) {
+		t.Errorf("args: %v, want %v", st.cmds[0].args, wantArgs)
+	}
+	if len(st.staged) != 2 || len(st.removed) != 2 {
+		t.Errorf("stage/remove counts: staged=%d removed=%d", len(st.staged), len(st.removed))
+	}
+
+	// No paths, no subprocess.
+	st.cmds = nil
+	if err := b.Import(context.Background()); err != nil || len(st.cmds) != 0 {
+		t.Errorf("empty Import: err=%v cmds=%d", err, len(st.cmds))
+	}
+}
+
 func TestBackend_Import_BubblesUpRepreproError(t *testing.T) {
 	st := &stubTransport{cmdErr: errors.New("reprepro: distribution missing")}
 	b := &Backend{transport: st, basedir: "/base", distribution: "stable", component: "main"}
