@@ -62,7 +62,7 @@ func cmdReconcile(args []string) error {
 	cooperBin := fs.String("cooper-bin", "cooper", "path to cooper binary")
 	outDir := fs.String("out-dir", "", "where cooper builds .debs (default: ephemeral; cleaned on exit)")
 	dryRun := fs.Bool("dry-run", false, "query and decide but don't build, import, or publish")
-	auditPath := fs.String("audit-log", "", "append JSONL audit events to this path (decisions, imports, prunes, publish)")
+	auditPath := fs.String("audit-log", "", "append JSONL audit events to this path (decisions, imports, prunes, publish, cleanup)")
 	retain := registerRetainFlag(fs)
 	if err := fs.Parse(cli.ReorderArgs(fs, args)); err != nil {
 		return err

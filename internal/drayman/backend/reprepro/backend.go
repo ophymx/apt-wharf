@@ -110,6 +110,23 @@ func (b *Backend) ListByNameArch(ctx context.Context, name, arch string) ([]back
 	return out, nil
 }
 
+// ListByName returns every record in the distribution with the given
+// Name, across architectures. An arch:all entry appears once per
+// binary-<arch> index it is listed in.
+func (b *Backend) ListByName(ctx context.Context, name string) ([]backend.Package, error) {
+	pkgs, err := b.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []backend.Package
+	for _, p := range pkgs {
+		if p.Name == name {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
 // Import runs `reprepro -b <basedir> includedeb <dist> <file>` on
 // the target. For the ssh transport, debPath is first scp'd to a
 // temp location on the remote host.

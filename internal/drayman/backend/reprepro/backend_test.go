@@ -149,6 +149,18 @@ Architecture: arm64
 	if !contains(versions, "0.140.0") || !contains(versions, "0.140.0-1") {
 		t.Errorf("versions: %v", versions)
 	}
+
+	// ListByName spans every binary-<arch> index.
+	got, err = b.ListByName(context.Background(), "hugo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("ListByName: got %d entries, want 3 (amd64 x2 + arm64)", len(got))
+	}
+	if got, _ := b.ListByName(context.Background(), "terraform"); len(got) != 0 {
+		t.Errorf("ListByName(terraform): %+v, want none", got)
+	}
 }
 
 func TestBackend_Import_RunsRepreproIncludedeb(t *testing.T) {

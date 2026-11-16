@@ -75,6 +75,18 @@ func (b *Backend) ListByNameArch(ctx context.Context, name, arch string) ([]back
 	if err != nil {
 		return nil, err
 	}
+	return toBackendPackages(pkgs), nil
+}
+
+func (b *Backend) ListByName(ctx context.Context, name string) ([]backend.Package, error) {
+	pkgs, err := b.client.ListByName(ctx, b.repo, name)
+	if err != nil {
+		return nil, err
+	}
+	return toBackendPackages(pkgs), nil
+}
+
+func toBackendPackages(pkgs []aptly.Package) []backend.Package {
 	out := make([]backend.Package, len(pkgs))
 	for i, p := range pkgs {
 		out[i] = backend.Package{
@@ -85,7 +97,7 @@ func (b *Backend) ListByNameArch(ctx context.Context, name, arch string) ([]back
 			Ref:             p.Key,
 		}
 	}
-	return out, nil
+	return out
 }
 
 // Import uploads the .deb into the staging directory and immediately

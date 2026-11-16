@@ -48,6 +48,12 @@ type Backend interface {
 	// an error.
 	ListByNameArch(ctx context.Context, name, arch string) ([]Package, error)
 
+	// ListByName returns every package in the target repo with the
+	// given Debian Name, across all architectures. Used where the
+	// caller doesn't pin an architecture (`drayman has` without
+	// --arch). Empty result is not an error.
+	ListByName(ctx context.Context, name string) ([]Package, error)
+
 	// Import places a built .deb into the target repo. Some
 	// backends (reprepro) publish atomically; others (aptly) stage
 	// the file for a later Publish. drayman calls Import for each
@@ -84,4 +90,5 @@ type Cleaner interface {
 type Querier interface {
 	HashExists(ctx context.Context, hash string) (bool, error)
 	ListByNameArch(ctx context.Context, name, arch string) ([]Package, error)
+	ListByName(ctx context.Context, name string) ([]Package, error)
 }

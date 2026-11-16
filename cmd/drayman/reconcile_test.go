@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -67,6 +68,28 @@ func (s *stubBackend) ListByNameArch(_ context.Context, name, arch string) ([]ba
 		return nil, s.listErrAfterImport
 	}
 	return s.listings[name+"|"+arch], nil
+}
+
+// ListByName flattens every listing whose entries carry name, in
+// sorted key order so output is deterministic.
+func (s *stubBackend) ListByName(_ context.Context, name string) ([]backend.Package, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	keys := make([]string, 0, len(s.listings))
+	for k := range s.listings {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []backend.Package
+	for _, k := range keys {
+		for _, p := range s.listings[k] {
+			if p.Name == name {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *stubBackend) Import(_ context.Context, debPath string) error {

@@ -34,6 +34,21 @@ func (s *stubQuerier) ListByNameArch(_ context.Context, name, arch string) ([]ba
 	return s.listByNameArch[name+"|"+arch], nil
 }
 
+func (s *stubQuerier) ListByName(_ context.Context, name string) ([]backend.Package, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	var out []backend.Package
+	for _, pkgs := range s.listByNameArch {
+		for _, p := range pkgs {
+			if p.Name == name {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
+}
+
 // fixturePlan returns a one-package one-arch plan whose only artifact's
 // hash and bare version we pin so tests can drive decisions.
 func fixturePlan(name, arch, bareVersion, hash string) *plan.Plan {

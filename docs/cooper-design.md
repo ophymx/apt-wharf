@@ -241,6 +241,28 @@ Backend notes:
 
 Retention is an orchestrator knob, not part of the `Plan` contract.
 
+### Asking and re-publishing (drayman `has`, `publish`)
+
+Two small verbs round out the orchestrator for callers that are not
+a plan-driven reconcile:
+
+- `drayman has --name N --version V [--arch A]` reports whether the
+  target repo carries that exact `(Package, Version)` — on the named
+  architecture, or on any when `--arch` is omitted. Versions compare
+  as dpkg compares them, and only exact `Package` matches count (a
+  package that merely `Provides` the name does not). Exit status is
+  the contract: `0` present, `10` missing, `1` could not tell
+  (transport, auth, unknown repo, usage). The split matters to a
+  pre-build check: "missing" means go build, "could not tell" must
+  not, or a backend outage becomes a rebuild loop.
+- `drayman publish` regenerates the published metadata without
+  importing anything. reconcile publishes only when the run changed
+  the repo, so a run whose imports landed but whose publish then
+  failed has nothing left to trigger a retry — the next run sees
+  every hash present. `publish` is that retry (a no-op on reprepro,
+  which publishes per operation). With `--aptly-db-cleanup` it also
+  re-runs a cleanup.
+
 ## Config
 
 ### Top-level `cooper.yaml`

@@ -7,6 +7,10 @@
 // uploads the resulting .debs to aptly, optionally prunes versions
 // beyond --retain N, and triggers a publish update.
 //
+// Beside that reconcile flow (and its read-only preview, peek), `has`
+// answers whether the repo already carries a given package version,
+// and `publish` regenerates the published metadata on its own.
+//
 // See cooper-design.md §"Orchestrator dedup & version policy" for the
 // algorithm. drayman is the hauler in the apt-wharf family: cooper /
 // chandler / staves produce reproducible .debs, drayman hauls them
@@ -14,6 +18,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -31,6 +36,10 @@ func main() {
 		err = cmdReconcile(os.Args[2:])
 	case "peek":
 		err = cmdPeek(os.Args[2:])
+	case "has":
+		err = cmdHas(os.Args[2:])
+	case "publish":
+		err = cmdPublish(os.Args[2:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 		return
@@ -43,6 +52,9 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
+		if ec, ok := errors.AsType[exitCodeError](err); ok {
+			os.Exit(ec.code)
+		}
 		fmt.Fprintln(os.Stderr, "drayman:", err)
 		os.Exit(1)
 	}
@@ -52,6 +64,13 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "usage:")
 	fmt.Fprintln(w, "  drayman reconcile <PLAN_FILE> --backend <kind> [backend flags] [--retain N]")
 	fmt.Fprintln(w, "  drayman peek      <PLAN_FILE> --backend <kind> [backend flags] [--retain N]")
+	fmt.Fprintln(w, "  drayman has       --name NAME --version VERSION [--arch ARCH] --backend <kind> [backend flags]")
+	fmt.Fprintln(w, "  drayman publish   --backend <kind> [backend flags]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  reconcile  build what a cooper/chandler/staves plan adds and import it")
+	fmt.Fprintln(w, "  peek       print the decisions reconcile would make; changes nothing")
+	fmt.Fprintln(w, "  has        exit 0 if the repo has that version, 10 if not, 1 if it couldn't tell")
+	fmt.Fprintln(w, "  publish    regenerate published metadata only (retry after a failed publish)")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "backends:")
 	fmt.Fprintln(w, "  aptly           --aptly-url URL --repo NAME [--publish-prefix .]")
@@ -67,7 +86,7 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "  --cooper-bin PATH     path to cooper binary (default: cooper)")
 	fmt.Fprintln(w, "  --out-dir DIR         where cooper builds .debs (default: ephemeral)")
 	fmt.Fprintln(w, "  --dry-run             query and decide but don't build, import, or publish")
-	fmt.Fprintln(w, "  --audit-log PATH      append JSONL audit events (decisions/imports/prunes/publish)")
+	fmt.Fprintln(w, "  --audit-log PATH      append JSONL audit events (decisions/imports/prunes/publish/cleanup)")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "shared by peek and reconcile:")
 	fmt.Fprintln(w, "  --retain N            keep only the N newest upstream versions per (package, arch),")
