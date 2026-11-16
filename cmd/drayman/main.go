@@ -57,6 +57,8 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "  aptly           --aptly-url URL --repo NAME [--publish-prefix .]")
 	fmt.Fprintln(w, "                  --publish-distribution DIST [--skip-signing]")
 	fmt.Fprintln(w, "                  [--aptly-timeout 5m]  per-request wait; uploads are bounded by progress")
+	fmt.Fprintln(w, "                  [--aptly-db-cleanup]  after a run that pruned, drop unreferenced pool")
+	fmt.Fprintln(w, "                                        files (acts on the whole aptly instance)")
 	fmt.Fprintln(w, "  reprepro-local  --reprepro-basedir DIR --distribution DIST [--component main]")
 	fmt.Fprintln(w, "  reprepro-ssh    --ssh-dest user@host --reprepro-basedir DIR")
 	fmt.Fprintln(w, "                  --distribution DIST [--component main]")

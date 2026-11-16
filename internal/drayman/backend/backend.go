@@ -67,6 +67,18 @@ type Backend interface {
 	Publish(ctx context.Context) error
 }
 
+// Cleaner is implemented by backends that keep a removed entry's
+// file around until an explicit garbage-collection pass. aptly is
+// the one today: Remove drops the repo entry, and only `db cleanup`
+// deletes the pool file. reprepro deletes unreferenced files itself
+// and does not implement it.
+type Cleaner interface {
+	// Cleanup reclaims storage no longer referenced by any repo
+	// entry. It may act beyond the bound repo (aptly's cleanup is
+	// instance-wide).
+	Cleanup(ctx context.Context) error
+}
+
 // Querier is the read-only subset of Backend used by the dedup
 // policy. Defined here so tests can stub it without a full Backend.
 type Querier interface {

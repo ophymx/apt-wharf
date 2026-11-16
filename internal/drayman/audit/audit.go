@@ -2,8 +2,8 @@
 // drayman runs. cooper-design.md §"Audit & safety" makes this an
 // orchestrator concern: log every auto-bump (prior hash → new hash,
 // prior revision → new revision), every regression skip, and every
-// import/prune/publish event so operators can review what drayman did
-// without re-deriving it from peek output.
+// import/prune/publish/cleanup event so operators can review what
+// drayman did without re-deriving it from peek output.
 //
 // The log is JSON-lines (one event per line, append-mode) so it
 // composes with jq, logrotate, and tail -F. Events are
@@ -58,7 +58,7 @@ type Event struct {
 	Version string `json:"version,omitempty"`
 	Hash    string `json:"hash,omitempty"`
 
-	// Publish fields (Type == TypePublish).
+	// Publish and cleanup fields (Type == TypePublish, TypeCleanup).
 	Backend string `json:"backend,omitempty"`
 
 	// Generic fields.
@@ -72,6 +72,7 @@ const (
 	TypeImport   = "import"
 	TypePrune    = "prune"
 	TypePublish  = "publish"
+	TypeCleanup  = "cleanup"
 )
 
 // Result values for Event.Result.
@@ -162,6 +163,21 @@ func (l *Logger) Prune(p policy.Prune, err error) error {
 		Reason:  p.Reason,
 		Version: p.Entry.Version,
 		Hash:    p.Entry.BuildInputsHash,
+		Result:  ResultOK,
+	}
+	if err != nil {
+		e.Result = ResultError
+		e.Error = err.Error()
+	}
+	return l.write(e)
+}
+
+// Cleanup writes a cleanup event for a backend storage reclaim
+// (aptly db cleanup). err is nil for success.
+func (l *Logger) Cleanup(backend string, err error) error {
+	e := Event{
+		Type:    TypeCleanup,
+		Backend: backend,
 		Result:  ResultOK,
 	}
 	if err != nil {

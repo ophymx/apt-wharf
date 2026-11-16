@@ -38,6 +38,7 @@ type reconcileOpts struct {
 	WorkDir     string // pre-resolved absolute path
 	DryRun      bool
 	Retain      int           // >0 enables the retain policy; see internal/drayman/policy/prune.go
+	Cleanup     bool          // reclaim backend storage after a run that pruned (--aptly-db-cleanup)
 	AuditLog    *audit.Logger // optional; nil disables audit logging
 	Stdout      io.Writer
 	Stderr      io.Writer
@@ -135,6 +136,7 @@ func cmdReconcile(args []string) error {
 		WorkDir:     cooperWorkDir,
 		DryRun:      *dryRun,
 		Retain:      *retain,
+		Cleanup:     *bf.aptlyDBCleanup,
 		AuditLog:    auditLog,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
@@ -267,14 +269,9 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 	printPackageTrailers(opts.Stdout, summaries)
 
 	if anyImported || anyPruned {
-		publishErr := opts.Backend.Publish(ctx)
-		if opts.AuditLog != nil {
-			_ = opts.AuditLog.Publish(opts.BackendKind, publishErr)
+		if err := publishAndCleanup(ctx, opts.Backend, opts.BackendKind, opts.AuditLog, opts.Stdout, opts.Cleanup && anyPruned); err != nil {
+			return err
 		}
-		if publishErr != nil {
-			return fmt.Errorf("publish: %w", publishErr)
-		}
-		fmt.Fprintln(opts.Stdout, "publish updated")
 	} else {
 		fmt.Fprintln(opts.Stdout, "nothing to import (all artifacts already in repo)")
 	}
@@ -282,6 +279,36 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 	if anyFailed {
 		return errors.New("one or more artifacts failed to build, import, or prune")
 	}
+	return nil
+}
+
+// publishAndCleanup is the tail of a run that changed the repo: one
+// Publish, then — when cleanup is set — the backend's storage
+// reclaim. Cleanup comes second on purpose: until the publish, the
+// publication still references the files the prunes dropped. A
+// backend that isn't a backend.Cleaner has nothing to reclaim.
+func publishAndCleanup(ctx context.Context, be backend.Backend, kind string, log *audit.Logger, stdout io.Writer, cleanup bool) error {
+	publishErr := be.Publish(ctx)
+	if log != nil {
+		_ = log.Publish(kind, publishErr)
+	}
+	if publishErr != nil {
+		return fmt.Errorf("publish: %w", publishErr)
+	}
+	fmt.Fprintln(stdout, "publish updated")
+
+	cleaner, ok := be.(backend.Cleaner)
+	if !cleanup || !ok {
+		return nil
+	}
+	cleanupErr := cleaner.Cleanup(ctx)
+	if log != nil {
+		_ = log.Cleanup(kind, cleanupErr)
+	}
+	if cleanupErr != nil {
+		return fmt.Errorf("db cleanup (the publish itself succeeded): %w", cleanupErr)
+	}
+	fmt.Fprintln(stdout, "db cleanup done")
 	return nil
 }
 

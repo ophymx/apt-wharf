@@ -217,8 +217,13 @@ Backend notes:
 
 - **aptly** keeps every imported version, so this is where retention
   matters. Removal is `DELETE /api/repos/{name}/packages` by key;
-  aptly's internal pool keeps the file until an operator runs
-  `aptly db cleanup`, which drayman does not do. aptly answers the
+  aptly's internal pool keeps the file until a db cleanup, so pruning
+  alone trims the index, not the disk. `--aptly-db-cleanup` opts in
+  to running it (`POST /api/db/cleanup`) after the publish of any run
+  that pruned; it is off by default because the cleanup acts on the
+  whole aptly instance, not just the repo drayman is bound to. A
+  failed cleanup is an audit `cleanup` event with `result: error` and
+  a non-zero exit; the publish before it stands. aptly answers the
   `<name> {<arch>}` listing as a dependency query, so it also returns
   packages that merely `Provides: <name>` and arch:all packages for
   any concrete arch; drayman narrows the listing to exact

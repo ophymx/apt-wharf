@@ -34,10 +34,13 @@ type stubBackend struct {
 	importErr          map[string]error // keyed by basename; missing key → nil
 	removeErr          map[string]error // keyed by version; missing key → nil
 	publishErr         error
+	cleanupErr         error
 
 	imports      []string          // deb paths in call order
 	removes      []backend.Package // entries passed to Remove, in call order
 	publishCount int
+	cleanupCount int
+	ops          []string // "publish" / "cleanup" in call order
 }
 
 func newStubBackend() *stubBackend {
@@ -84,7 +87,14 @@ func (s *stubBackend) Remove(_ context.Context, pkg backend.Package) error {
 
 func (s *stubBackend) Publish(_ context.Context) error {
 	s.publishCount++
+	s.ops = append(s.ops, "publish")
 	return s.publishErr
+}
+
+func (s *stubBackend) Cleanup(_ context.Context) error {
+	s.cleanupCount++
+	s.ops = append(s.ops, "cleanup")
+	return s.cleanupErr
 }
 
 // makePlan builds a discover-style plan with one artifact per (name, arch).
@@ -773,6 +783,86 @@ func TestRunReconcile_RetainListErrorStillPublishes(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "[hugo] result: warn (artifacts=1 built=1 skipped=0 failed=0 pruned=0)") {
 		t.Errorf("trailer: %q", stdout.String())
+	}
+}
+
+// cleanupFixture is a settled re-run (hash in repo) where retain=1
+// prunes 0.138.0 and 0.139.0.
+func cleanupFixture(t *testing.T) (*stubBackend, *plan.Plan) {
+	t.Helper()
+	be, p := retainFixture(t)
+	hash := p.Packages[0].Artifacts[0].Deb.BuildInputsHash
+	be.hashes[hash] = true
+	be.listings["hugo|amd64"] = append(be.listings["hugo|amd64"],
+		backend.Package{Name: "hugo", Version: "0.140.0", Architecture: "amd64", BuildInputsHash: hash, Ref: "k140"})
+	return be, p
+}
+
+func TestRunReconcile_CleanupRunsAfterPublishWhenPruned(t *testing.T) {
+	be, p := cleanupFixture(t)
+	var stdout, stderr, logBuf bytes.Buffer
+	opts := runOpts(be, p, (&stubCooperBuildScript{}).Fn(), &stdout, &stderr)
+	opts.Retain = 1
+	opts.Cleanup = true
+	opts.AuditLog = audit.NewWriter(&logBuf)
+
+	if err := runReconcile(context.Background(), opts); err != nil {
+		t.Fatalf("runReconcile: %v", err)
+	}
+	if strings.Join(be.ops, ",") != "publish,cleanup" {
+		t.Fatalf("ops=%v, want publish then cleanup", be.ops)
+	}
+	if !strings.Contains(stdout.String(), "db cleanup done") {
+		t.Errorf("stdout: %q", stdout.String())
+	}
+	if !strings.Contains(logBuf.String(), `"type":"cleanup","backend":"stub","result":"ok"`) {
+		t.Errorf("audit log missing cleanup event: %s", logBuf.String())
+	}
+}
+
+func TestRunReconcile_CleanupSkippedWithoutPrunesOrFlag(t *testing.T) {
+	// Flag set, but the run only imports: nothing was pruned.
+	be, p := retainFixture(t)
+	var stdout, stderr bytes.Buffer
+	opts := runOpts(be, p, (&stubCooperBuildScript{}).Fn(), &stdout, &stderr)
+	opts.Cleanup = true
+	if err := runReconcile(context.Background(), opts); err != nil {
+		t.Fatalf("runReconcile: %v", err)
+	}
+	if be.publishCount != 1 || be.cleanupCount != 0 {
+		t.Errorf("import-only run: publish=%d cleanup=%d, want 1 and 0", be.publishCount, be.cleanupCount)
+	}
+
+	// Run prunes, but the flag is off.
+	be, p = cleanupFixture(t)
+	opts = runOpts(be, p, (&stubCooperBuildScript{}).Fn(), &stdout, &stderr)
+	opts.Retain = 1
+	if err := runReconcile(context.Background(), opts); err != nil {
+		t.Fatalf("runReconcile: %v", err)
+	}
+	if len(be.removes) != 2 || be.cleanupCount != 0 {
+		t.Errorf("flag off: removes=%d cleanup=%d, want 2 and 0", len(be.removes), be.cleanupCount)
+	}
+}
+
+func TestRunReconcile_CleanupErrorIsNonZeroAfterPublish(t *testing.T) {
+	be, p := cleanupFixture(t)
+	be.cleanupErr = errors.New("aptly 500")
+	var stdout, stderr, logBuf bytes.Buffer
+	opts := runOpts(be, p, (&stubCooperBuildScript{}).Fn(), &stdout, &stderr)
+	opts.Retain = 1
+	opts.Cleanup = true
+	opts.AuditLog = audit.NewWriter(&logBuf)
+
+	err := runReconcile(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "db cleanup") {
+		t.Fatalf("want db cleanup error, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), "publish updated") {
+		t.Errorf("publish must have completed first: %q", stdout.String())
+	}
+	if !strings.Contains(logBuf.String(), `"type":"cleanup","backend":"stub","result":"error"`) {
+		t.Errorf("audit log missing failed cleanup event: %s", logBuf.String())
 	}
 }
 

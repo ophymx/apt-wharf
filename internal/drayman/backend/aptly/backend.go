@@ -108,13 +108,22 @@ func (b *Backend) Import(ctx context.Context, debPath string) error {
 
 // Remove deletes the entry from the local repo by its aptly Key
 // (carried in pkg.Ref). The published tree still lists it until the
-// next Publish; aptly's internal pool keeps the file until an
-// operator runs `aptly db cleanup`, which drayman does not do.
+// next Publish; aptly's internal pool keeps the file until a db
+// cleanup (Cleanup, or `aptly db cleanup` on the host).
 func (b *Backend) Remove(ctx context.Context, pkg backend.Package) error {
 	if pkg.Ref == "" {
 		return fmt.Errorf("aptly remove %s %s %s: entry has no aptly key", pkg.Name, pkg.Version, pkg.Architecture)
 	}
 	return b.client.RemovePackages(ctx, b.repo, []string{pkg.Ref})
+}
+
+// Cleanup runs aptly's db cleanup, which deletes pool files (and
+// package entries) no repo, snapshot, or publication references any
+// more. It is what frees the disk after Remove, and it acts on the
+// whole aptly instance rather than just the bound repo. Call it after
+// Publish: until then the publication still references pruned files.
+func (b *Backend) Cleanup(ctx context.Context) error {
+	return b.client.DBCleanup(ctx)
 }
 
 // Publish regenerates the published Release/Packages files for the

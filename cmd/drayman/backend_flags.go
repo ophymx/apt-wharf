@@ -29,6 +29,7 @@ type backendFlags struct {
 	publishDist      *string
 	skipSigning      *bool
 	aptlyTimeout     *time.Duration
+	aptlyDBCleanup   *bool
 
 	// reprepro (local + ssh share most)
 	repreproBasedir *string
@@ -47,6 +48,7 @@ func registerBackendFlags(fs *flag.FlagSet) *backendFlags {
 		publishDist:      fs.String("publish-distribution", "", "(aptly) publish distribution"),
 		skipSigning:      fs.Bool("skip-signing", false, "(aptly) set Signing.Skip on publish update"),
 		aptlyTimeout:     fs.Duration("aptly-timeout", 5*time.Minute, "(aptly) how long to wait for aptly to answer each request; uploads are bounded by progress, not by this"),
+		aptlyDBCleanup:   fs.Bool("aptly-db-cleanup", false, "(aptly) after a run that pruned, run aptly's db cleanup so removed .debs leave the pool; acts on the whole aptly instance"),
 		repreproBasedir:  fs.String("reprepro-basedir", "", "(reprepro) -b argument; path to repo basedir"),
 		distribution:     fs.String("distribution", "", "(reprepro) apt distribution name"),
 		component:        fs.String("component", "main", "(reprepro) apt component"),
@@ -59,6 +61,9 @@ func registerBackendFlags(fs *flag.FlagSet) *backendFlags {
 // from parsed flag values, or returns an error naming the missing
 // required flags.
 func (bf *backendFlags) resolveBackend() (backend.Backend, error) {
+	if *bf.aptlyDBCleanup && *bf.kind != "aptly" {
+		return nil, fmt.Errorf("--aptly-db-cleanup only applies to --backend aptly, not %q (reprepro deletes unreferenced files itself)", *bf.kind)
+	}
 	switch *bf.kind {
 	case "aptly":
 		if *bf.aptlyURL == "" || *bf.repo == "" {
