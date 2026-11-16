@@ -209,15 +209,22 @@ one metadata regeneration. Each removal is an audit `prune` event
 (package, arch, version, hash, code, result); `drayman peek --retain N`
 and `reconcile --dry-run --retain N` print the predicted prunes as
 `<pkg>\t<arch>\tprune\t<version>: <reason>` rows. A failed removal
-makes the run exit non-zero and the package trailer `warn`, but does
-not block the publish of what was imported.
+(or a failed re-listing of the pair ahead of it) makes the run exit
+non-zero and the package trailer `warn`, but does not block the
+publish of what was imported.
 
 Backend notes:
 
 - **aptly** keeps every imported version, so this is where retention
   matters. Removal is `DELETE /api/repos/{name}/packages` by key;
   aptly's internal pool keeps the file until an operator runs
-  `aptly db cleanup`, which drayman does not do.
+  `aptly db cleanup`, which drayman does not do. aptly answers the
+  `<name> {<arch>}` listing as a dependency query, so it also returns
+  packages that merely `Provides: <name>` and arch:all packages for
+  any concrete arch; drayman narrows the listing to exact
+  `(Package, Architecture)` matches before both the auto-bump and the
+  retention decision, so a `hugo-extended` providing `hugo` is never
+  bumped over or pruned on `hugo`'s behalf.
 - **reprepro 5.3** keeps exactly one version per
   `(Package, Architecture, Component)` and replaces it on
   `includedeb`, deleting the unreferenced pool file. Retention is

@@ -56,6 +56,32 @@ func matches(p Package, q string) bool {
 	return p.Package == name && p.Architecture == arch
 }
 
+// fakeAptlyDepQuery mimics how a real aptly answers "<name> {<arch>}":
+// as a dependency query, which also returns packages that Provide
+// <name> and arch:all packages for any concrete <arch>. provides maps
+// a package Key to the name it Provides.
+func fakeAptlyDepQuery(t *testing.T, pkgs []Package, provides map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.SplitN(r.URL.Query().Get("q"), " {", 2)
+		if len(parts) != 2 {
+			http.Error(w, "unsupported query", http.StatusBadRequest)
+			return
+		}
+		name, arch := parts[0], strings.TrimSuffix(parts[1], "}")
+		out := []Package{}
+		for _, p := range pkgs {
+			nameOK := p.Package == name || provides[p.Key] == name
+			archOK := p.Architecture == arch || p.Architecture == "all"
+			if nameOK && archOK {
+				out = append(out, p)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+	}))
+}
+
 func TestQueryPackages_FormatDetails(t *testing.T) {
 	pkgs := []Package{
 		{
@@ -145,6 +171,38 @@ func TestListByNameArch(t *testing.T) {
 		if !wantKeys[p.Key] {
 			t.Errorf("unexpected key: %q", p.Key)
 		}
+	}
+}
+
+// aptly's dependency-query semantics leak Provides-only and arch:all
+// packages into "<name> {<arch>}" results (observed on aptly 1.6.1).
+// ListByNameArch must hand back exact (Package, Architecture) matches
+// only: anything else gets bumped over or pruned by mistake.
+func TestListByNameArch_ExcludesProvidersAndArchAll(t *testing.T) {
+	pkgs := []Package{
+		{Package: "hugo", Version: "0.140.0", Architecture: "amd64", Key: "k1"},
+		{Package: "hugo-extended", Version: "0.140.0-7", Architecture: "amd64", Key: "k2"},
+		{Package: "hugo", Version: "0.139.0", Architecture: "all", Key: "k3"},
+		{Package: "hugo", Version: "0.140.0", Architecture: "arm64", Key: "k4"},
+	}
+	srv := fakeAptlyDepQuery(t, pkgs, map[string]string{"k2": "hugo"})
+	defer srv.Close()
+	c := New(srv.URL, nil)
+
+	got, err := c.ListByNameArch(context.Background(), "test-repo", "hugo", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Key != "k1" {
+		t.Fatalf("want only k1 (hugo amd64), got %+v", got)
+	}
+
+	got, err = c.ListByNameArch(context.Background(), "test-repo", "hugo", "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Key != "k3" {
+		t.Fatalf("want only k3 (hugo all), got %+v", got)
 	}
 }
 

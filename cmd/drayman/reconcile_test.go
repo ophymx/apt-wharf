@@ -26,11 +26,14 @@ type stubBackend struct {
 	// ListByNameArch responses keyed by "<name>|<arch>".
 	listings map[string][]backend.Package
 
-	hashErr    error
-	listErr    error
-	importErr  map[string]error // keyed by basename; missing key → nil
-	removeErr  map[string]error // keyed by version; missing key → nil
-	publishErr error
+	hashErr error
+	listErr error
+	// listErrAfterImport fails ListByNameArch only once an Import has
+	// happened: Decide's listing succeeds, the retain re-list doesn't.
+	listErrAfterImport error
+	importErr          map[string]error // keyed by basename; missing key → nil
+	removeErr          map[string]error // keyed by version; missing key → nil
+	publishErr         error
 
 	imports      []string          // deb paths in call order
 	removes      []backend.Package // entries passed to Remove, in call order
@@ -56,6 +59,9 @@ func (s *stubBackend) HashExists(_ context.Context, h string) (bool, error) {
 func (s *stubBackend) ListByNameArch(_ context.Context, name, arch string) ([]backend.Package, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
+	}
+	if s.listErrAfterImport != nil && len(s.imports) > 0 {
+		return nil, s.listErrAfterImport
 	}
 	return s.listings[name+"|"+arch], nil
 }
@@ -740,6 +746,33 @@ func TestRunReconcile_RetainRemoveErrorIsWarnAndNonZero(t *testing.T) {
 	}
 	if results[2] != audit.ResultError || results[3] != audit.ResultOK {
 		t.Errorf("prune results %v", results)
+	}
+}
+
+func TestRunReconcile_RetainListErrorStillPublishes(t *testing.T) {
+	// The retain re-list failing after a clean import must not strand
+	// that import unpublished: same contract as a rejected removal.
+	be, p := retainFixture(t)
+	be.listErrAfterImport = errors.New("aptly 502")
+	script := &stubCooperBuildScript{}
+	var stdout, stderr bytes.Buffer
+	opts := runOpts(be, p, script.Fn(), &stdout, &stderr)
+	opts.Retain = 1
+
+	if err := runReconcile(context.Background(), opts); err == nil {
+		t.Fatal("expected non-zero result from failed retain listing")
+	}
+	if len(be.imports) != 1 || be.publishCount != 1 {
+		t.Fatalf("imports=%v publishCount=%d, want 1 import and 1 publish", be.imports, be.publishCount)
+	}
+	if got := removedVersions(be); len(got) != 0 {
+		t.Errorf("removed %v, want none", got)
+	}
+	if !strings.Contains(stderr.String(), "prune failed: hugo amd64: list by name/arch: aptly 502") {
+		t.Errorf("stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "[hugo] result: warn (artifacts=1 built=1 skipped=0 failed=0 pruned=0)") {
+		t.Errorf("trailer: %q", stdout.String())
 	}
 }
 

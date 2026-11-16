@@ -232,7 +232,15 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 		}
 		prunes, err := policy.PrunesFor(ctx, opts.Backend, d.PackageName, d.Arch, opts.Retain, d.PlanHash)
 		if err != nil {
-			return fmt.Errorf("retain: %w", err)
+			// Same contract as a rejected removal: the pair keeps
+			// its history, the run exits non-zero, and the publish
+			// of what was imported still happens below.
+			fmt.Fprintf(opts.Stderr, "prune failed: %v\n", err)
+			if s := summaries[d.PackageName]; s != nil {
+				s.PruneFailed++
+			}
+			anyFailed = true
+			continue
 		}
 		for _, pr := range prunes {
 			removeErr := opts.Backend.Remove(ctx, pr.Entry)

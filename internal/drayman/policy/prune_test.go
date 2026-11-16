@@ -153,6 +153,22 @@ func TestPrunesFor_MergesExtraAndQueries(t *testing.T) {
 	assertVersions(t, got, "1.0.0")
 }
 
+func TestPrunesFor_IgnoresOtherPairsInListing(t *testing.T) {
+	// A loose backend listing (aptly's dependency query) can hand back
+	// a Provides-only sibling and an arch:all entry. Neither belongs
+	// to (hugo, amd64): they must not count toward N or be removed.
+	provider := backend.Package{Name: "hugo-extended", Version: "3.0.0-7", Architecture: "amd64", BuildInputsHash: "sha256:ext", Ref: "ref-ext"}
+	archAll := backend.Package{Name: "hugo", Version: "0.5.0", Architecture: "all", BuildInputsHash: "sha256:all", Ref: "ref-all"}
+	q := &stubQuerier{listByNameArch: map[string][]backend.Package{
+		"hugo|amd64": {hp("1.0.0"), hp("2.0.0"), hp("3.0.0"), provider, archAll},
+	}}
+	got, err := PrunesFor(context.Background(), q, "hugo", "amd64", 2, "sha256:3.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertVersions(t, got, "1.0.0")
+}
+
 func TestPrunesFor_DisabledSkipsQuery(t *testing.T) {
 	q := &stubQuerier{listErr: errors.New("must not be called")}
 	got, err := PrunesFor(context.Background(), q, "hugo", "amd64", 0, "")

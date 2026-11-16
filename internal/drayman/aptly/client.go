@@ -144,9 +144,26 @@ func encodeAptlyPrefix(prefix string) string {
 // ListByNameArch returns every package in repo with the given Debian
 // package Name and Architecture. drayman uses this to enumerate the
 // versions of (Package, Architecture) for max-revision computation
-// during auto-bump.
+// during auto-bump, and as the candidate set for retain pruning.
+//
+// aptly evaluates "<name> {<arch>}" as a dependency query, so the
+// response also carries packages that merely `Provides: <name>` and
+// arch:all packages for any concrete <arch>. Those are different
+// (Package, Architecture) pairs — letting them through would bump
+// over, or prune, somebody else's entries — so the result is narrowed
+// to exact matches here.
 func (c *Client) ListByNameArch(ctx context.Context, repo, name, arch string) ([]Package, error) {
-	return c.QueryPackages(ctx, repo, fmt.Sprintf("%s {%s}", name, arch))
+	pkgs, err := c.QueryPackages(ctx, repo, fmt.Sprintf("%s {%s}", name, arch))
+	if err != nil {
+		return nil, err
+	}
+	out := pkgs[:0]
+	for _, p := range pkgs {
+		if p.Package == name && p.Architecture == arch {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // UploadFile uploads a single .deb to aptly's staging directory dir

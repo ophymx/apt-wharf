@@ -134,6 +134,13 @@ func PlanPrunes(existing []backend.Package, retain int, keepHash string) []Prune
 // caller expects to be present but that aren't in the repo yet —
 // used by peek/dry-run to predict the post-import outcome), and
 // returns PlanPrunes over the union.
+//
+// Entries whose Name or Architecture differ from the requested pair
+// are dropped before planning. Backends are expected to return exact
+// matches, but removal is destructive and a loose listing (aptly's
+// dependency query also answers with Provides-only and arch:all
+// packages) must never let one pair's retention delete another's
+// entries.
 func PrunesFor(ctx context.Context, q backend.Querier, name, arch string, retain int, keepHash string, extra ...backend.Package) ([]Prune, error) {
 	if retain <= 0 {
 		return nil, nil
@@ -143,7 +150,11 @@ func PrunesFor(ctx context.Context, q backend.Querier, name, arch string, retain
 		return nil, fmt.Errorf("%s %s: list by name/arch: %w", name, arch, err)
 	}
 	all := make([]backend.Package, 0, len(existing)+len(extra))
-	all = append(all, existing...)
+	for _, p := range existing {
+		if p.Name == name && p.Architecture == arch {
+			all = append(all, p)
+		}
+	}
 	all = append(all, extra...)
 	return PlanPrunes(all, retain, keepHash), nil
 }
