@@ -482,10 +482,17 @@ func (c *Client) PublishUpdate(ctx context.Context, prefix, distribution string,
 // SourceRepo is the local repository's name; SkipSigning mirrors the
 // PublishUpdate flag and pins the publication's signing state for
 // every subsequent update.
+//
+// Architectures pins the publication's architecture list. Leave it
+// empty to let aptly infer the list from the repo's packages — which
+// it cannot do while the repo holds only arch:all packages (keyring
+// and config packages typically are), failing the publish with
+// "unable to figure out list of architectures".
 type PublishRepoOpts struct {
-	SourceRepo   string
-	Distribution string
-	SkipSigning  bool
+	SourceRepo    string
+	Distribution  string
+	SkipSigning   bool
+	Architectures []string
 }
 
 // PublishRepo creates the publication at (prefix, opts.Distribution)
@@ -494,9 +501,10 @@ type PublishRepoOpts struct {
 // from "regenerate published metadata" (PUT /api/publish/{prefix}/{dist}),
 // and the PUT 404s when no publication exists yet.
 //
-// Architectures are deliberately omitted from the body — aptly infers
-// them from the source repo's current package set. Component defaults
-// to "main" (aptly's default when Sources[].Component is omitted).
+// Architectures are omitted from the body unless opts.Architectures
+// names them — aptly then infers them from the source repo's current
+// package set. Component defaults to "main" (aptly's default when
+// Sources[].Component is omitted).
 func (c *Client) PublishRepo(ctx context.Context, prefix string, opts PublishRepoOpts) error {
 	body := map[string]any{
 		"SourceKind":   "local",
@@ -505,6 +513,9 @@ func (c *Client) PublishRepo(ctx context.Context, prefix string, opts PublishRep
 	}
 	if opts.SkipSigning {
 		body["Signing"] = map[string]any{"Skip": true}
+	}
+	if len(opts.Architectures) > 0 {
+		body["Architectures"] = opts.Architectures
 	}
 	buf, err := json.Marshal(body)
 	if err != nil {

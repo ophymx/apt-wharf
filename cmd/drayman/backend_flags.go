@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ophymx/apt-wharf/internal/drayman/backend"
@@ -27,6 +28,7 @@ type backendFlags struct {
 	repo             *string
 	publishPrefix    *string
 	publishDist      *string
+	publishArches    *string
 	skipSigning      *bool
 	aptlyTimeout     *time.Duration
 	aptlyDBCleanup   *bool
@@ -46,6 +48,7 @@ func registerBackendFlags(fs *flag.FlagSet) *backendFlags {
 		repo:             fs.String("repo", "", "(aptly) local repository name"),
 		publishPrefix:    fs.String("publish-prefix", ".", "(aptly) publish prefix"),
 		publishDist:      fs.String("publish-distribution", "", "(aptly) publish distribution"),
+		publishArches:    fs.String("publish-architectures", "", "(aptly) comma-separated architectures for the first publish of a new distribution; needed when the repo holds only arch:all packages"),
 		skipSigning:      fs.Bool("skip-signing", false, "(aptly) set Signing.Skip on publish update"),
 		aptlyTimeout:     fs.Duration("aptly-timeout", 5*time.Minute, "(aptly) how long to wait for aptly to answer each request; uploads are bounded by progress, not by this"),
 		aptlyDBCleanup:   fs.Bool("aptly-db-cleanup", false, "(aptly) after a run that pruned, run aptly's db cleanup so removed .debs leave the pool; acts on the whole aptly instance"),
@@ -89,6 +92,7 @@ func (bf *backendFlags) resolveBackend() (backend.Backend, error) {
 			Repo:          *bf.repo,
 			PublishPrefix: *bf.publishPrefix,
 			Distribution:  *bf.publishDist,
+			Architectures: splitList(*bf.publishArches),
 			StagingDir:    "drayman-" + newRunID(),
 			SkipSigning:   *bf.skipSigning,
 		}), nil
@@ -105,6 +109,17 @@ func (bf *backendFlags) resolveBackend() (backend.Backend, error) {
 	default:
 		return nil, fmt.Errorf("unknown --backend %q (want: aptly, reprepro-local, reprepro-ssh)", *bf.kind)
 	}
+}
+
+// splitList parses a comma-separated flag value, dropping blanks.
+func splitList(s string) []string {
+	var out []string
+	for part := range strings.SplitSeq(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // publishRequiresDistribution returns true when the chosen backend's

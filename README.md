@@ -216,6 +216,12 @@ not cooper built them. Uploads to aptly are streamed, so a multi-GB
 If a publish fails after the imports landed, `drayman publish $APTLY`
 retries just the publish.
 
+The first publish of a new aptly distribution lets aptly work out the
+architecture list from the packages. It can't when they are all
+`Architecture: all` (keyring and config packages usually are) and
+fails with "unable to figure out list of architectures"; pass
+`--publish-architectures amd64,arm64` for that first publish.
+
 The policy behind all of this — dedup, auto-bump, retention, prebuilt
 imports — is specified in
 [`docs/cooper-design.md`](./docs/cooper-design.md) under

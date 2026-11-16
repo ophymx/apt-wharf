@@ -690,6 +690,21 @@ func TestPublishRepo_PostsCorrectBody(t *testing.T) {
 			t.Errorf("body missing %s; got %s", want, gotBody)
 		}
 	}
+	// Left to aptly's inference unless asked for.
+	if strings.Contains(gotBody, "Architectures") {
+		t.Errorf("Architectures must be omitted when unset; got %s", gotBody)
+	}
+
+	if err := c.PublishRepo(context.Background(), ".", PublishRepoOpts{
+		SourceRepo:    "shakedown",
+		Distribution:  "stable",
+		Architectures: []string{"amd64", "arm64"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotBody, `"Architectures":["amd64","arm64"]`) {
+		t.Errorf("body missing explicit architectures; got %s", gotBody)
+	}
 }
 
 func TestRemovePackages_SendsDeleteWithRefs(t *testing.T) {

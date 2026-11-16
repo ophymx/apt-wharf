@@ -24,6 +24,7 @@ type Backend struct {
 	distribution string
 	stagingDir   string // upload directory name aptly stages files under
 	skipSigning  bool
+	firstPublish []string // architectures for the first-publish bootstrap; nil = let aptly infer
 }
 
 // Opts configures a new aptly Backend.
@@ -44,6 +45,11 @@ type Opts struct {
 	// SkipSigning passes Signing.Skip on the publish-update request.
 	// Used when the aptly server's gpg config is disabled.
 	SkipSigning bool
+	// Architectures is the architecture list for the first publish
+	// of a distribution that doesn't exist yet. Optional: aptly
+	// infers it from the repo's packages, but can't when those are
+	// all arch:all. Ignored once the publication exists.
+	Architectures []string
 	// HTTPClient is the http.Client used for aptly API calls. Optional;
 	// when nil, http.DefaultClient is used. Production callers typically
 	// set a longer Timeout than the default (uploads can be slow);
@@ -63,6 +69,7 @@ func New(opts Opts) *Backend {
 		distribution: opts.Distribution,
 		stagingDir:   opts.StagingDir,
 		skipSigning:  opts.SkipSigning,
+		firstPublish: opts.Architectures,
 	}
 }
 
@@ -174,9 +181,10 @@ func (b *Backend) Publish(ctx context.Context) error {
 		return err
 	}
 	return b.client.PublishRepo(ctx, b.prefix, aptly.PublishRepoOpts{
-		SourceRepo:   b.repo,
-		Distribution: b.distribution,
-		SkipSigning:  b.skipSigning,
+		SourceRepo:    b.repo,
+		Distribution:  b.distribution,
+		SkipSigning:   b.skipSigning,
+		Architectures: b.firstPublish,
 	})
 }
 

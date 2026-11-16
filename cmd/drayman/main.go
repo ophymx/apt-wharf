@@ -80,6 +80,8 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "backends:")
 	fmt.Fprintln(w, "  aptly           --aptly-url URL --repo NAME [--publish-prefix .]")
 	fmt.Fprintln(w, "                  --publish-distribution DIST [--skip-signing]")
+	fmt.Fprintln(w, "                  [--publish-architectures amd64,arm64]  for the first publish of a new")
+	fmt.Fprintln(w, "                                        distribution holding only arch:all packages")
 	fmt.Fprintln(w, "                  [--aptly-timeout 5m]  per-request wait; uploads are bounded by progress")
 	fmt.Fprintln(w, "                  [--aptly-db-cleanup]  after a run that pruned, drop unreferenced pool")
 	fmt.Fprintln(w, "                                        files (acts on the whole aptly instance)")
