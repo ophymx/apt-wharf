@@ -23,7 +23,7 @@ at the upstream URLs without re-hosting them.
 | [`cooper`](./cmd/cooper) | CLI. Turns GitHub-released binaries into reproducible `.deb` files via a two-phase JSON contract (`discover` → `plan.json` → `build`). Execs `nfpm pkg` for the actual Debian packaging. |
 | [`chandler`](./cmd/chandler) | CLI. Turns the `curl URL \| sudo tee ...` keyring + sources install ritual into a reproducible keyring + `.sources` `.deb`. Fetches keys over HTTPS, dearmors in-process, renders deb822. |
 | [`staves`](./cmd/staves) | CLI. Packs locally-checked-in files (configs, systemd units, scripts) into a `.deb` via cooper's build pipeline. `source_date_epoch` is a content-hash of the resolved nfpm subtree + every aux file's source bytes (git-independent). |
-| [`drayman`](./cmd/drayman) | CLI. Consumes cooper / chandler / staves output, dedups against the target apt repo by `X-Cooper-Build-Inputs-Hash`, applies revision auto-bump policy, and pushes `.debs` into aptly or reprepro. |
+| [`drayman`](./cmd/drayman) | CLI. Consumes cooper / chandler / staves output, dedups against the target apt repo by `X-Cooper-Build-Inputs-Hash`, applies revision auto-bump policy, and pushes `.debs` into aptly or reprepro. Also imports `.deb`s built elsewhere, and prunes old versions with `--retain N`. |
 
 The names are a cooperage metaphor: a *cooper* assembles barrels from
 *staves* (planks), a *chandler* supplies ships with provisions, a
@@ -138,6 +138,88 @@ Replace `cooper discover ...` with `chandler discover ./examples/hashicorp/chand
 or `staves discover ./examples/staves-demo/staves.yaml` to feed cooper from a
 different producer. See [`examples/README.md`](./examples/README.md) for the
 per-example walkthrough.
+
+## Publishing with drayman
+
+`drayman` lands packages in an aptly or reprepro repository. Pick the
+backend with `--backend aptly | reprepro-local | reprepro-ssh`; the
+examples below use these aptly flags:
+
+```sh
+# sh/bash; zsh doesn't split unquoted variables, so use ${=APTLY} there.
+APTLY="--backend aptly --aptly-url http://localhost:8080 --repo main --publish-distribution stable"
+```
+
+### From a plan: `reconcile` and `peek`
+
+`reconcile` reads a discover plan, skips every artifact whose
+`X-Cooper-Build-Inputs-Hash` is already in the repo, runs
+`cooper build` on the rest (auto-bumping the debian-revision when the
+same upstream version exists with different inputs), imports the
+results, and publishes once. `peek` prints the same decisions and
+changes nothing.
+
+```sh
+cooper discover ./examples/hugo/cooper.yaml -o plan.json
+
+drayman peek      plan.json $APTLY     # what would happen
+drayman reconcile plan.json $APTLY --audit-log /var/log/drayman.jsonl
+```
+
+Each package ends with a line CI can grep:
+`[hugo] result: ok (artifacts=2 built=2 skipped=0 failed=0 pruned=0)`
+(`warn` for partial success, `error` when everything failed). The exit
+status is non-zero if anything failed to build, import, or prune.
+
+### Retention: `--retain N`
+
+aptly keeps every version it is given. `--retain N` keeps, per
+(package, architecture), the N newest upstream versions and only the
+newest debian-revision of each, and removes the rest after the
+imports and before the publish.
+
+```sh
+drayman peek      plan.json $APTLY --retain 3   # lists the prunes too
+drayman reconcile plan.json $APTLY --retain 3 --aptly-db-cleanup
+```
+
+Only entries built by cooper are ever removed, and only for packages
+the plan names and that settled cleanly in this run. On aptly,
+removing an entry does not delete the file: add `--aptly-db-cleanup`
+to free the disk. That cleanup covers the whole aptly instance, which
+is why it is opt-in. reprepro keeps one version per package on its
+own (5.3) or follows `Limit:` (5.4+), so `--retain` rarely has
+anything to do there.
+
+### Packages built elsewhere: `has` and `import`
+
+Some packages can't go through cooper — a vendor installer that a
+script repacks into `.deb`s, for instance. For those, `has` is the
+cheap "do I need to build this?" check and `import` publishes the
+result:
+
+```sh
+drayman has --name bigapp --version 4.2-repack3 $APTLY
+# exit 0: already in the repo   10: missing, go build   1: couldn't tell
+
+drayman import out/*.deb $APTLY --retain 2 --aptly-db-cleanup
+```
+
+`import` reads each file's `Package`, `Version` and `Architecture`,
+skips any version the repo already lists, sends the rest to the
+backend as one batch, and publishes once. A version that is already
+there is never replaced; ship a new version instead. With `--retain`
+it prunes older versions of the packages it was handed, whether or
+not cooper built them. Uploads to aptly are streamed, so a multi-GB
+`.deb` needs no more memory than a small one.
+
+If a publish fails after the imports landed, `drayman publish $APTLY`
+retries just the publish.
+
+The policy behind all of this — dedup, auto-bump, retention, prebuilt
+imports — is specified in
+[`docs/cooper-design.md`](./docs/cooper-design.md) under
+*Orchestrator dedup & version policy*.
 
 ## Reproducibility
 

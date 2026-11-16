@@ -19,7 +19,11 @@ Five related command-line tools share one Go module
 - **`drayman`** (`cmd/drayman`) — orchestrator that consumes cooper's (or
   any compatible producer's) discover JSON, dedups against the target apt
   repo by `X-Cooper-Build-Inputs-Hash`, applies revision auto-bump policy,
-  and pushes resulting `.debs` into aptly or reprepro.
+  and pushes resulting `.debs` into aptly or reprepro (`reconcile` /
+  `peek`). `--retain N` prunes superseded versions. `import` hauls
+  `.deb`s built outside cooper, keyed on (Package, Version,
+  Architecture) instead of the hash; `has` and `publish` are the
+  small verbs around it.
 - **`staves`** (`cmd/staves`) — discover-only CLI that packs locally-checked-in
   files (configs, systemd units, scripts) into a `plan.Plan` for `cooper build`.
   Source kind `local`; `source_date_epoch` is a content-hash of the resolved
@@ -59,9 +63,13 @@ behavior in either tool.
   mode), trust model (HTTPS-only, no fingerprint pinning), deb822
   rendering, conffile policy, version model.
 
-drayman and staves are designed in-conversation only as of this writing;
-their source-of-truth is the code under `internal/drayman/` and
+drayman and staves have no design doc of their own; their
+source-of-truth is the code under `internal/drayman/` and
 `internal/staves/` plus the `plan.Plan` contract in `pkg/plan/`.
+drayman's policy (dedup, auto-bump, retention, prebuilt imports,
+`has` / `publish`) is specified in `docs/cooper-design.md` under
+*Orchestrator dedup & version policy*; keep that section in step with
+`internal/drayman/policy/`.
 
 When you change observable behavior, update the relevant design doc in the
 same change. When the implementation diverges from the doc, treat that as
